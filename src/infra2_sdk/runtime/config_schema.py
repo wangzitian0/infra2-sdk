@@ -68,9 +68,16 @@ class EnvironmentManifest:
             raise ValueError(f"unsupported environment manifest version {self.contract_version}")
         if not self.source:
             raise ValueError("source is required")
-        env_names = [field.env for field in self.fields]
-        if len(env_names) != len(set(env_names)):
-            raise ValueError("duplicate canonical environment variable")
+        owners: dict[str, str] = {}
+        for field in self.fields:
+            for env_name in (field.env, *field.aliases):
+                owner = owners.get(env_name)
+                if owner is not None:
+                    raise ValueError(
+                        f"environment variable {env_name!r} is shared by {owner!r} "
+                        f"and {field.field!r}"
+                    )
+                owners[env_name] = field.field
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -161,13 +168,17 @@ def environment_manifest_from_model(
     model_fields = getattr(model, "model_fields", None)
     if not isinstance(model_fields, Mapping):
         raise TypeError("model must expose Pydantic v2 model_fields")
+    model_config = getattr(model, "model_config", {})
+    env_prefix = model_config.get("env_prefix", "") if isinstance(model_config, Mapping) else ""
+    if not isinstance(env_prefix, str):
+        env_prefix = ""
     fields: list[EnvironmentField] = []
     for name, info in model_fields.items():
         validation_aliases = list(_validation_aliases(getattr(info, "validation_alias", None)))
         canonical = (
             validation_aliases[0]
             if validation_aliases
-            else str(getattr(info, "alias", None) or name).upper()
+            else f"{env_prefix}{getattr(info, 'alias', None) or name}".upper()
         )
         aliases = validation_aliases[1:]
         extra = getattr(info, "json_schema_extra", None) or {}

@@ -1,6 +1,6 @@
 import pytest
 from pydantic import AliasChoices, Field, SecretStr
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from infra2_sdk.runtime.config_schema import (
     JSON_SCHEMA_DIALECT,
@@ -25,6 +25,13 @@ class SettingsWithMalformedMetadata(BaseSettings):
     value: str = Field(default="", json_schema_extra={"extra_keys": None})
 
 
+class PrefixedSettings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="APP_")
+
+    database_url: str
+    token: str = Field(validation_alias="TOKEN")
+
+
 def test_pydantic_model_renders_open_schema_and_manifest() -> None:
     schema = settings_json_schema(Settings, title="Example settings")
     assert schema["$schema"] == JSON_SCHEMA_DIALECT
@@ -42,6 +49,10 @@ def test_pydantic_model_renders_open_schema_and_manifest() -> None:
     assert manifest.to_json_schema()["required"] == ["DATABASE_URL"]
     assert manifest.to_dict()["contract_version"] == 1
     assert EnvironmentManifest.from_dict(manifest.to_dict()) == manifest
+
+    prefixed = environment_manifest_from_model(PrefixedSettings)
+    assert prefixed.fields[0].env == "APP_DATABASE_URL"
+    assert prefixed.fields[1].env == "TOKEN"
 
 
 def test_environment_validation_resolves_aliases_without_values() -> None:
@@ -62,10 +73,18 @@ def test_environment_validation_resolves_aliases_without_values() -> None:
 def test_manifest_validation_rejects_ambiguous_contracts() -> None:
     with pytest.raises(ValueError, match="duplicate environment alias"):
         EnvironmentField("token", "TOKEN", aliases=("TOKEN",))
-    with pytest.raises(ValueError, match="duplicate canonical"):
+    with pytest.raises(ValueError, match="environment variable"):
         EnvironmentManifest(
             source="bad",
             fields=(EnvironmentField("a", "KEY"), EnvironmentField("b", "KEY")),
+        )
+    with pytest.raises(ValueError, match="shared"):
+        EnvironmentManifest(
+            source="bad",
+            fields=(
+                EnvironmentField("a", "FIRST", aliases=("SHARED",)),
+                EnvironmentField("b", "SHARED"),
+            ),
         )
     with pytest.raises(ValueError, match="unsupported"):
         EnvironmentManifest(source="bad", fields=(), contract_version=2)
