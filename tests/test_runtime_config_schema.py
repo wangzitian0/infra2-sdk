@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     )
 
 
+class SettingsWithMalformedMetadata(BaseSettings):
+    value: str = Field(default="", json_schema_extra={"extra_keys": None})
+
+
 def test_pydantic_model_renders_open_schema_and_manifest() -> None:
     schema = settings_json_schema(Settings, title="Example settings")
     assert schema["$schema"] == JSON_SCHEMA_DIALECT
@@ -76,3 +80,5 @@ def test_non_pydantic_models_are_rejected() -> None:
         settings_json_schema(object)
     with pytest.raises(TypeError, match="model_fields"):
         environment_manifest_from_model(object)
+    manifest = environment_manifest_from_model(SettingsWithMalformedMetadata)
+    assert manifest.fields[0].aliases == ()

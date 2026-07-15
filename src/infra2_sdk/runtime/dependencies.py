@@ -29,6 +29,13 @@ class Dependency:
     deployed_backend: str = ""
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "kind", DependencyKind(self.kind))
+        object.__setattr__(
+            self,
+            "required_in",
+            frozenset(resolve_environment_tier(tier) for tier in self.required_in),
+        )
+        object.__setattr__(self, "env_vars", frozenset(self.env_vars))
         if not self.name or not self.name.replace("_", "").isalnum():
             raise ValueError("dependency name must be a non-empty identifier")
         if not self.required_in:

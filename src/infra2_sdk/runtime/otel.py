@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from infra2_sdk.runtime._optional import require
+from infra2_sdk.runtime.environment import resolve_environment_tier
 from infra2_sdk.runtime.identity import RuntimeIdentity
 
 
@@ -22,6 +23,7 @@ class OtelSettings:
     export_interval_millis: int = 60_000
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "environment", resolve_environment_tier(self.environment).value)
         if not self.service_name:
             raise ValueError("service_name is required")
         if self.enabled and not self.endpoint:

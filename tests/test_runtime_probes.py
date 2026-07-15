@@ -76,6 +76,7 @@ async def test_runner_supports_sync_async_errors_and_timeouts() -> None:
 
 def test_probe_wire_round_trip_and_required_gate() -> None:
     result = ProbeResult("database", DependencyStatus.PRESENT, "ok", 1.5)
+    assert ProbeResult("database", "present").present
     assert ProbeResult.from_dict(result.to_dict()) == result
     assert result.json_schema()["properties"]["status"]["enum"] == ["present", "absent"]
     assert_required_dependencies(manifest(), "staging", (result,))

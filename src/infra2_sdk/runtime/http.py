@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
 
+from infra2_sdk import __version__
 from infra2_sdk.runtime._optional import require
 from infra2_sdk.runtime.probes import DependencyStatus, ProbeResult
 
@@ -22,7 +23,7 @@ class HttpClientSettings:
     max_connections: int = 100
     max_keepalive_connections: int = 20
     connect_retries: int = 0
-    user_agent: str = "infra2-sdk/0.2"
+    user_agent: str = f"infra2-sdk/{__version__}"
     follow_redirects: bool = False
 
     def __post_init__(self) -> None:

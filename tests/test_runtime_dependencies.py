@@ -28,6 +28,14 @@ def test_dependency_manifest_round_trip_and_tier_lookup() -> None:
     schema = DependencyManifest.json_schema()
     assert schema["$schema"].endswith("2020-12/schema")
     assert schema["properties"]["contract_version"] == {"const": 1}
+    normalized = Dependency(
+        "cache",
+        "code_dominant",
+        frozenset({"staging"}),
+        frozenset({"REDIS_URL"}),
+    )
+    assert normalized.kind is DependencyKind.CODE_DOMINANT
+    assert normalized.required_in == frozenset({EnvironmentTier.STAGING})
 
 
 @pytest.mark.parametrize(

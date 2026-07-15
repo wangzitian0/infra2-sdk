@@ -29,6 +29,7 @@ class ProbeResult:
     duration_ms: float = 0.0
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "status", DependencyStatus(self.status))
         if not self.name:
             raise ValueError("probe name is required")
         if self.duration_ms < 0:

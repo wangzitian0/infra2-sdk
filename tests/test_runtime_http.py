@@ -3,6 +3,7 @@ from email.utils import format_datetime
 
 import pytest
 
+from infra2_sdk import __version__
 from infra2_sdk.runtime.http import (
     HttpCheck,
     HttpClientSettings,
@@ -32,16 +33,20 @@ class Client:
 
 def test_standard_http_clients_and_retry_policy() -> None:
     sync_client = create_http_client(headers={"X-Test": "1"})
-    assert sync_client.headers["user-agent"] == "infra2-sdk/0.2"
+    assert sync_client.headers["user-agent"] == f"infra2-sdk/{__version__}"
     assert sync_client.headers["x-test"] == "1"
     sync_client.close()
-    async_client = create_http_client(async_client=True)
-    assert async_client.headers["user-agent"] == "infra2-sdk/0.2"
 
     assert retryable_request("GET", 503)
     assert retryable_request("POST", 429, has_idempotency_key=True)
     assert not retryable_request("POST", 503)
     assert not retryable_request("GET", 404)
+
+
+async def test_standard_async_http_client_closes_cleanly() -> None:
+    async_client = create_http_client(async_client=True)
+    assert async_client.headers["user-agent"] == f"infra2-sdk/{__version__}"
+    await async_client.aclose()
 
 
 async def test_http_probe_reports_status_and_errors() -> None:

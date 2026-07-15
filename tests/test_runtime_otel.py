@@ -15,6 +15,8 @@ def test_disabled_bootstrap_has_no_global_or_background_side_effects() -> None:
     providers = configure_telemetry(settings)
     assert providers.tracer_provider is None
     providers.shutdown()
+    with pytest.raises(ValueError, match="unknown environment"):
+        OtelSettings(service_name="api", environment="typo", enabled=False)
 
 
 def test_identity_populates_standard_resource_attributes() -> None:

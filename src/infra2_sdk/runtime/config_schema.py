@@ -174,7 +174,10 @@ def environment_manifest_from_model(
         if not isinstance(extra, Mapping):
             extra = {}
         annotation = getattr(info, "annotation", None)
-        for extra_key in extra.get("extra_keys", ()):
+        extra_keys = extra.get("extra_keys", ())
+        if not isinstance(extra_keys, (list, tuple, set, frozenset)):
+            extra_keys = ()
+        for extra_key in extra_keys:
             if isinstance(extra_key, str) and extra_key not in aliases:
                 aliases.append(extra_key)
         injected = bool(extra.get("injected") or extra.get("vault"))
