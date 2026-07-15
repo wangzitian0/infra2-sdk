@@ -65,11 +65,11 @@ def resolve_environment_tier(
         return EnvironmentTier.LOCAL_DEV
     if normalized in _LOCAL_TEST_ALIASES:
         return EnvironmentTier.GITHUB_CI if github_actions else EnvironmentTier.LOCAL_TEST
-    if normalized == EnvironmentTier.GITHUB_CI:
+    if normalized == EnvironmentTier.GITHUB_CI.value:
         return EnvironmentTier.GITHUB_CI
-    if normalized == EnvironmentTier.PREVIEW:
+    if normalized == EnvironmentTier.PREVIEW.value:
         return EnvironmentTier.PREVIEW
-    if normalized == EnvironmentTier.STAGING:
+    if normalized == EnvironmentTier.STAGING.value:
         return EnvironmentTier.STAGING
     if normalized in _PRODUCTION_ALIASES:
         return EnvironmentTier.PRODUCTION

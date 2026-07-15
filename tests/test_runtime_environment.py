@@ -14,6 +14,7 @@ from infra2_sdk.runtime.environment import (
         ("development", EnvironmentTier.LOCAL_DEV),
         ("local-ci", EnvironmentTier.LOCAL_TEST),
         ("local_test", EnvironmentTier.LOCAL_TEST),
+        ("github_ci", EnvironmentTier.GITHUB_CI),
         ("preview", EnvironmentTier.PREVIEW),
         ("staging", EnvironmentTier.STAGING),
         ("prod", EnvironmentTier.PRODUCTION),
