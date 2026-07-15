@@ -1,0 +1,26 @@
+version: 1
+stages:
+  local.advisory:
+    order: 0
+    definition: Developer-local feedback that aids iteration but does not block merge.
+  github_ci.merge_authority:
+    order: 1
+    definition: GitHub CI proof required before code merges or a consumer trusts the SHA.
+  preview.runtime:
+    order: 2
+    definition: PR preview runtime proof outside the merge-authority CI job set.
+  staging.release_validation:
+    order: 3
+    definition: Staging validation of a release tag before any production promotion.
+  staging.provider_regression:
+    order: 4
+    definition: Staging regression against real external providers.
+  prod.release_integrity:
+    order: 5
+    definition: Production release integrity and post-deploy runtime proof.
+  ops.scheduled_cleanup:
+    order: 6
+    definition: Scheduled operational reconcile, cleanup, and drift detection.
+  manual.adjudication:
+    order: 7
+    definition: Human adjudication or manually triggered evidence gates.
