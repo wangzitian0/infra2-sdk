@@ -25,6 +25,12 @@ jobs:
       - run: ruff format --check .
       - run: pytest --cov --cov-report=term-missing
       - run: python -m build
+      - name: Smoke-test release wheel
+        run: |
+          python -m venv .wheel-smoke
+          .wheel-smoke/bin/python -m pip install dist/*.whl
+          .wheel-smoke/bin/python -c "import infra2_sdk.runtime; import infra2_sdk.runtime.s3; import infra2_sdk.runtime.postgres; import infra2_sdk.runtime.http; import infra2_sdk.runtime.otel"
+          .wheel-smoke/bin/python -m pip check
       - name: Publish immutable GitHub release artifacts
         env:
           GH_TOKEN: ${{ github.token }}
