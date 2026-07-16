@@ -15,9 +15,10 @@ from infra2_sdk.runtime.s3 import (
 
 
 class Client:
-    def __init__(self, *, error=None) -> None:
+    def __init__(self, *, error=None, region_name=None) -> None:
         self.error = error
         self.created = None
+        self.meta = type("Meta", (), {"region_name": region_name})()
 
     def head_bucket(self, **kwargs):
         if self.error:
@@ -124,6 +125,7 @@ def test_plain_aws_environment_preserves_the_boto3_provider_chain() -> None:
         ({"S3_BUCKET": "portable-artifacts", "AWS_SESSION_TOKEN": "token"}, "session token"),
         ({"S3_BUCKET": "portable-artifacts", "AWS_ENDPOINT_URL_S3": "minio:9000"}, "http"),
         ({"S3_BUCKET": "portable-artifacts", "AWS_ENDPOINT_URL_S3": "https://"}, "host"),
+        ({"S3_BUCKET": "portable-artifacts", "AWS_ENDPOINT_URL_S3": "https://:9000"}, "host"),
         (
             {"S3_BUCKET": "portable-artifacts", "AWS_ENDPOINT_URL_S3": "https://bad host"},
             "host",
@@ -155,6 +157,16 @@ def test_probe_and_bucket_primitives() -> None:
     }
     with pytest.raises(NotFound):
         ensure_bucket(settings, client=Client(error=NotFound()), allow_create=False)
+
+
+def test_bucket_creation_uses_region_resolved_by_boto_client() -> None:
+    settings = S3Settings(bucket="runtime-canary")
+    missing = Client(error=NotFound(), region_name="eu-west-1")
+    ensure_bucket(settings, client=missing, allow_create=True)
+    assert missing.created == {
+        "Bucket": "runtime-canary",
+        "CreateBucketConfiguration": {"LocationConstraint": "eu-west-1"},
+    }
 
 
 def test_read_redact_and_error_classification() -> None:

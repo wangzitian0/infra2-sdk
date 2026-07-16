@@ -1,8 +1,13 @@
+from typing import get_type_hints
+
 import pytest
 
 from infra2_sdk.runtime.environ import (
     EnvironmentConflictError,
     RuntimeEnvKey,
+    env_bool,
+    env_float,
+    env_int,
     resolve_env,
     runtime_env_contract,
 )
@@ -71,3 +76,8 @@ def test_runtime_env_registry_is_versioned_unique_and_platform_neutral() -> None
     serialized = str(contract).upper()
     for forbidden in ("INFRA2", "IAC_REF", "VAULT", "DOKPLOY"):
         assert forbidden not in serialized
+
+
+def test_typed_env_helpers_accept_registry_keys_in_the_public_contract() -> None:
+    for helper in (env_int, env_float, env_bool):
+        assert get_type_hints(helper)["key"] == str | RuntimeEnvKey

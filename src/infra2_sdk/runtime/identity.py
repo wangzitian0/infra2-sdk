@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from infra2_sdk.runtime._otel_env import parse_resource_attributes, resource_attribute
+from infra2_sdk.runtime._otel_env import load_resource_attributes
 from infra2_sdk.runtime.environment import (
     EnvironmentTier,
     normalize_deployment_environment,
@@ -120,14 +120,10 @@ class RuntimeIdentity:
         from infra2_sdk.runtime.environment import environment_from_env, strict_environment_from_env
 
         runtime = strict_environment_from_env(environ) if strict else environment_from_env(environ)
-        attributes = parse_resource_attributes(
+        attributes, deployment_environment = load_resource_attributes(
             resolve_runtime_env(environ, RuntimeEnvKey.OTEL_RESOURCE_ATTRIBUTES, default="").value
-            or ""
-        )
-        deployment_environment = resource_attribute(
-            attributes,
-            "deployment.environment.name",
-            "deployment.environment",
+            or "",
+            strict=strict,
         )
         service_name = resolve_runtime_env(
             environ,

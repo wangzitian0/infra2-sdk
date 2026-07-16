@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from urllib.parse import unquote_to_bytes
+from warnings import warn
 
 _INVALID_PERCENT_ESCAPE_RE = re.compile(r"%(?![0-9a-fA-F]{2})")
 
@@ -51,6 +52,28 @@ def resource_attribute(
         joined = ", ".join(name for name, _ in present)
         raise ValueError(f"conflicting OTEL_RESOURCE_ATTRIBUTES values: {joined}")
     return present[0][1] if present else None
+
+
+def load_resource_attributes(
+    value: str,
+    *,
+    strict: bool,
+) -> tuple[dict[str, str], str | None]:
+    """Load optional OTel attributes, discarding the whole invalid value when non-strict."""
+
+    try:
+        attributes = parse_resource_attributes(value)
+        deployment_environment = resource_attribute(
+            attributes,
+            "deployment.environment.name",
+            "deployment.environment",
+        )
+    except ValueError as exc:
+        if strict:
+            raise
+        warn(f"invalid OTEL_RESOURCE_ATTRIBUTES: {exc}", RuntimeWarning, stacklevel=3)
+        return {}, None
+    return attributes, deployment_environment
 
 
 def parse_otel_boolean(value: str | None, *, default: bool = False) -> bool:

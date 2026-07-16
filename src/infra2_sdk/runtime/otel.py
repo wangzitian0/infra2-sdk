@@ -9,9 +9,8 @@ from warnings import warn
 
 from infra2_sdk.runtime._optional import require
 from infra2_sdk.runtime._otel_env import (
+    load_resource_attributes,
     parse_otel_boolean,
-    parse_resource_attributes,
-    resource_attribute,
 )
 from infra2_sdk.runtime.environ import RuntimeEnvKey, env_int, resolve_runtime_env
 from infra2_sdk.runtime.environment import (
@@ -102,23 +101,15 @@ class OtelSettings:
         except ValueError as exc:
             if strict:
                 raise
-            warn(str(exc), RuntimeWarning, stacklevel=2)
+            warn(f"invalid OTEL_SDK_DISABLED: {exc}", RuntimeWarning, stacklevel=2)
             disabled = False
         raw_attributes = (
             resolve_runtime_env(environ, RuntimeEnvKey.OTEL_RESOURCE_ATTRIBUTES, default="").value
             or ""
         )
-        try:
-            attributes = parse_resource_attributes(raw_attributes)
-        except ValueError as exc:
-            if strict:
-                raise
-            warn(str(exc), RuntimeWarning, stacklevel=2)
-            attributes = {}
-        deployment_environment = resource_attribute(
-            attributes,
-            "deployment.environment.name",
-            "deployment.environment",
+        attributes, deployment_environment = load_resource_attributes(
+            raw_attributes,
+            strict=strict,
         )
         if deployment_environment and not environment_value:
             inferred_tier = resolve_environment_tier(deployment_environment)
@@ -137,15 +128,22 @@ class OtelSettings:
             RuntimeEnvKey.SERVICE_VERSION,
             default=attributes.get("service.version", "unknown"),
         ).value
+        instance_id = resolve_runtime_env(
+            environ,
+            RuntimeEnvKey.INSTANCE_ID,
+            default=attributes.get("service.instance.id", ""),
+        ).value
         assert service_name is not None and service_version is not None
+        effective_endpoint = None if disabled else endpoint
         return cls(
             service_name=service_name,
-            endpoint=endpoint,
+            endpoint=effective_endpoint,
             service_version=service_version,
             environment=runtime.tier.value,
             deployment_environment=deployment_environment or runtime.name,
+            instance_id=instance_id or "",
             resource_attributes=attributes,
-            enabled=bool(endpoint) and not disabled,
+            enabled=bool(effective_endpoint),
             export_interval_millis=env_int(
                 environ, RuntimeEnvKey.OTEL_METRIC_EXPORT_INTERVAL, default=60_000
             ),

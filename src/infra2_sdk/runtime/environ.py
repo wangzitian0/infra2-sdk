@@ -180,7 +180,7 @@ def resolve_env(
 
 def env_int(
     environ: Mapping[str, str] | None,
-    key: str,
+    key: str | RuntimeEnvKey,
     *,
     default: int,
     aliases: tuple[str, ...] = (),
@@ -196,7 +196,7 @@ def env_int(
 
 def env_float(
     environ: Mapping[str, str] | None,
-    key: str,
+    key: str | RuntimeEnvKey,
     *,
     default: float,
     aliases: tuple[str, ...] = (),
@@ -215,7 +215,7 @@ def env_float(
 
 def env_bool(
     environ: Mapping[str, str] | None,
-    key: str,
+    key: str | RuntimeEnvKey,
     *,
     default: bool,
     aliases: tuple[str, ...] = (),
