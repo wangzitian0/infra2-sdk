@@ -5,11 +5,22 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import unquote
+from warnings import warn
 
 from infra2_sdk.runtime._optional import require
-from infra2_sdk.runtime.environ import RuntimeEnvKey, env_bool, env_int, resolve_runtime_env
-from infra2_sdk.runtime.environment import environment_from_env, resolve_environment_tier
+from infra2_sdk.runtime._otel_env import (
+    parse_otel_boolean,
+    parse_resource_attributes,
+    resource_attribute,
+)
+from infra2_sdk.runtime.environ import RuntimeEnvKey, env_int, resolve_runtime_env
+from infra2_sdk.runtime.environment import (
+    RuntimeEnvironment,
+    environment_from_env,
+    normalize_deployment_environment,
+    resolve_environment_tier,
+    strict_environment_from_env,
+)
 from infra2_sdk.runtime.identity import RuntimeIdentity
 
 
@@ -28,9 +39,7 @@ class OtelSettings:
     def __post_init__(self) -> None:
         tier = resolve_environment_tier(self.environment)
         object.__setattr__(self, "environment", tier.value)
-        display = self.deployment_environment.strip().lower() or tier.value
-        if resolve_environment_tier(display) is not tier:
-            raise ValueError("deployment_environment must resolve to environment tier")
+        display = normalize_deployment_environment(self.deployment_environment, tier)
         object.__setattr__(self, "deployment_environment", display)
         if not self.service_name:
             raise ValueError("service_name is required")
@@ -69,27 +78,64 @@ class OtelSettings:
         )
 
     @classmethod
-    def from_env(cls, environ: Mapping[str, str] | None = None) -> OtelSettings:
-        runtime = environment_from_env(environ)
-        service_name = resolve_runtime_env(
-            environ,
-            RuntimeEnvKey.SERVICE_NAME,
-            required=True,
-        ).value
+    def from_env(
+        cls,
+        environ: Mapping[str, str] | None = None,
+        *,
+        strict: bool = False,
+    ) -> OtelSettings:
+        runtime = strict_environment_from_env(environ) if strict else environment_from_env(environ)
+        environment_value = resolve_runtime_env(environ, RuntimeEnvKey.ENVIRONMENT).value
+        service_name = (
+            resolve_runtime_env(
+                environ,
+                RuntimeEnvKey.SERVICE_NAME,
+                default="",
+            ).value
+            or ""
+        )
         endpoint = resolve_runtime_env(environ, RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT).value
-        disabled = env_bool(environ, RuntimeEnvKey.OTEL_SDK_DISABLED, default=False)
-        attributes = parse_resource_attributes(
+        try:
+            disabled = parse_otel_boolean(
+                resolve_runtime_env(environ, RuntimeEnvKey.OTEL_SDK_DISABLED).value
+            )
+        except ValueError as exc:
+            if strict:
+                raise
+            warn(str(exc), RuntimeWarning, stacklevel=2)
+            disabled = False
+        raw_attributes = (
             resolve_runtime_env(environ, RuntimeEnvKey.OTEL_RESOURCE_ATTRIBUTES, default="").value
             or ""
         )
-        for key in ("deployment.environment", "deployment.environment.name"):
-            declared = attributes.get(key)
-            if declared and declared.strip().lower() != runtime.name:
-                raise ValueError(f"OTEL_RESOURCE_ATTRIBUTES {key} disagrees with ENVIRONMENT")
+        try:
+            attributes = parse_resource_attributes(raw_attributes)
+        except ValueError as exc:
+            if strict:
+                raise
+            warn(str(exc), RuntimeWarning, stacklevel=2)
+            attributes = {}
+        deployment_environment = resource_attribute(
+            attributes,
+            "deployment.environment.name",
+            "deployment.environment",
+        )
+        if deployment_environment and not environment_value:
+            inferred_tier = resolve_environment_tier(deployment_environment)
+            runtime = RuntimeEnvironment(
+                normalize_deployment_environment(deployment_environment, inferred_tier),
+                inferred_tier,
+            )
+        elif deployment_environment:
+            deployment_environment = normalize_deployment_environment(
+                deployment_environment,
+                runtime.tier,
+            )
+        service_name = service_name or attributes.get("service.name", "unknown_service")
         service_version = resolve_runtime_env(
             environ,
             RuntimeEnvKey.SERVICE_VERSION,
-            default="unknown",
+            default=attributes.get("service.version", "unknown"),
         ).value
         assert service_name is not None and service_version is not None
         return cls(
@@ -97,7 +143,7 @@ class OtelSettings:
             endpoint=endpoint,
             service_version=service_version,
             environment=runtime.tier.value,
-            deployment_environment=runtime.name,
+            deployment_environment=deployment_environment or runtime.name,
             resource_attributes=attributes,
             enabled=bool(endpoint) and not disabled,
             export_interval_millis=env_int(
@@ -130,26 +176,6 @@ def resource_attributes(settings: OtelSettings) -> dict[str, str]:
     }
     if settings.instance_id:
         attributes["service.instance.id"] = settings.instance_id
-    return attributes
-
-
-def parse_resource_attributes(value: str) -> dict[str, str]:
-    """Parse the standard OTEL_RESOURCE_ATTRIBUTES comma-separated encoding."""
-
-    if not value.strip():
-        return {}
-    attributes: dict[str, str] = {}
-    for item in value.split(","):
-        if "=" not in item:
-            raise ValueError("OTEL_RESOURCE_ATTRIBUTES entries must use key=value")
-        key, raw = item.split("=", 1)
-        key = key.strip()
-        decoded = unquote(raw.strip())
-        if not key or not decoded:
-            raise ValueError("OTEL_RESOURCE_ATTRIBUTES entries must be non-empty")
-        if key in attributes:
-            raise ValueError(f"OTEL_RESOURCE_ATTRIBUTES repeats {key!r}")
-        attributes[key] = decoded
     return attributes
 
 

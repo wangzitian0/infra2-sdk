@@ -8,7 +8,12 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from infra2_sdk.runtime.environment import EnvironmentTier, resolve_environment_tier
+from infra2_sdk.runtime._otel_env import parse_resource_attributes, resource_attribute
+from infra2_sdk.runtime.environment import (
+    EnvironmentTier,
+    normalize_deployment_environment,
+    resolve_environment_tier,
+)
 
 _SHA40_RE = re.compile(r"\A[0-9a-f]{40}\Z")
 _SHA256_RE = re.compile(r"\A[0-9a-f]{64}\Z")
@@ -34,9 +39,7 @@ class RuntimeIdentity:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "environment", resolve_environment_tier(self.environment))
-        display = self.deployment_environment.strip().lower() or self.environment.value
-        if resolve_environment_tier(display) is not self.environment:
-            raise ValueError("deployment_environment must resolve to environment tier")
+        display = normalize_deployment_environment(self.deployment_environment, self.environment)
         object.__setattr__(self, "deployment_environment", display)
         if not self.service_name.strip() or not self.service_version.strip():
             raise ValueError("service_name and service_version are required")
@@ -68,6 +71,21 @@ class RuntimeIdentity:
         if missing:
             raise ValueError(f"protected runtime identity is missing: {', '.join(missing)}")
 
+    def validate_deployed(self) -> None:
+        """Require commit identity in every platform tier and full identity when protected."""
+
+        if (
+            self.environment
+            in {
+                EnvironmentTier.PREVIEW,
+                EnvironmentTier.STAGING,
+                EnvironmentTier.PRODUCTION,
+            }
+            and self.commit_sha == "unknown"
+        ):
+            raise ValueError("deployed runtime identity is missing commit_sha")
+        self.validate_protected()
+
     def to_dict(self) -> dict[str, str]:
         data = asdict(self)
         data["environment"] = self.environment.value
@@ -90,13 +108,27 @@ class RuntimeIdentity:
         )
 
     @classmethod
-    def from_env(cls, environ: Mapping[str, str] | None = None) -> RuntimeIdentity:
+    def from_env(
+        cls,
+        environ: Mapping[str, str] | None = None,
+        *,
+        strict: bool = False,
+    ) -> RuntimeIdentity:
         """Build identity from deploy_v2-derived results or equivalent standalone env."""
 
         from infra2_sdk.runtime.environ import RuntimeEnvKey, resolve_runtime_env
-        from infra2_sdk.runtime.environment import environment_from_env
+        from infra2_sdk.runtime.environment import environment_from_env, strict_environment_from_env
 
-        runtime = environment_from_env(environ)
+        runtime = strict_environment_from_env(environ) if strict else environment_from_env(environ)
+        attributes = parse_resource_attributes(
+            resolve_runtime_env(environ, RuntimeEnvKey.OTEL_RESOURCE_ATTRIBUTES, default="").value
+            or ""
+        )
+        deployment_environment = resource_attribute(
+            attributes,
+            "deployment.environment.name",
+            "deployment.environment",
+        )
         service_name = resolve_runtime_env(
             environ,
             RuntimeEnvKey.SERVICE_NAME,
@@ -105,17 +137,17 @@ class RuntimeIdentity:
         service_version = resolve_runtime_env(
             environ,
             RuntimeEnvKey.SERVICE_VERSION,
-            default="unknown",
+            default=attributes.get("service.version", "unknown"),
         ).value
         commit_sha = resolve_runtime_env(
             environ, RuntimeEnvKey.GIT_COMMIT_SHA, default="unknown"
         ).value
         assert service_name is not None and service_version is not None and commit_sha is not None
-        return cls(
+        identity = cls(
             service_name=service_name,
             service_version=service_version,
             environment=runtime.tier,
-            deployment_environment=runtime.name,
+            deployment_environment=deployment_environment or runtime.name,
             commit_sha=commit_sha,
             image_digest=resolve_runtime_env(environ, RuntimeEnvKey.IMAGE_DIGEST, default="").value
             or "",
@@ -127,9 +159,16 @@ class RuntimeIdentity:
             or "",
             release_id=resolve_runtime_env(environ, RuntimeEnvKey.RELEASE_ID, default="").value
             or "",
-            instance_id=resolve_runtime_env(environ, RuntimeEnvKey.INSTANCE_ID, default="").value
+            instance_id=resolve_runtime_env(
+                environ,
+                RuntimeEnvKey.INSTANCE_ID,
+                default=attributes.get("service.instance.id", ""),
+            ).value
             or "",
         )
+        if strict:
+            identity.validate_deployed()
+        return identity
 
     def to_standard_otel_resource_attributes(self) -> dict[str, str]:
         """Return only provider-neutral OpenTelemetry semantic coordinates."""

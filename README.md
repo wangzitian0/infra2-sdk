@@ -78,6 +78,18 @@ database = PostgresSettings.from_env()
 s3 = create_s3_client(S3Settings.from_env())
 ```
 
+Deployed conformance checks opt into fail-closed loading instead of inheriting local defaults:
+
+```python
+runtime = environment_from_env(required=True)
+identity = RuntimeIdentity.from_env(strict=True)
+```
+
+Strict identity loading requires a real commit SHA in every deployed tier and the complete
+digest/configuration/release identity in staging and production. Non-strict loaders follow
+OpenTelemetry's error-handling model: malformed optional OTel values are reported as runtime
+warnings and discarded instead of blocking an application that has telemetry disabled.
+
 ## Environment contract
 
 `runtime_env_contract()` is the machine-readable source for canonical names, compatibility
@@ -95,10 +107,17 @@ created, and secret values never appear in errors. Missing OTLP configuration di
 telemetry without affecting application startup. Missing S3 credentials leaves boto3's standard
 credential chain intact.
 
+Missing S3 region and addressing-style values also remain unset so boto3 can use its standard
+profile, workload-identity, and service defaults. S3-compatible deployments that require path
+addressing set `S3_ADDRESSING_STYLE=path` explicitly.
+
 `ENVIRONMENT` has two dimensions. `RuntimeEnvironment.tier` controls behavior using the six
 portable tiers. `RuntimeEnvironment.name` preserves the deployment display identity. Therefore
 deploy_v2 aliases such as `pr-42`, `branch-main`, `commit-1ab32d5`, and `tag-v1-2-3` all resolve
-to tier `preview` without losing their telemetry label.
+to tier `preview` as compatibility inputs. New producers set `ENVIRONMENT=preview` and carry an
+arbitrary display identity through the standard
+`OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=<name>` attribute. The SDK does not impose
+an infra2 naming grammar on that display identity.
 
 ### deploy_v2 boundary
 

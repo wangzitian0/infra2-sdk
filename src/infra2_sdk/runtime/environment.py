@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -98,16 +99,63 @@ def resolve_environment_tier(
     raise ValueError(f"unknown environment: {value!r}")
 
 
-def environment_from_env(environ: Mapping[str, str] | None = None) -> RuntimeEnvironment:
-    """Resolve deploy_v2 and standalone environments without knowing their producer."""
+def environment_from_env(
+    environ: Mapping[str, str] | None = None,
+    *,
+    required: bool = False,
+    github_actions: bool | None = None,
+    unknown: str | UnknownEnvironmentPolicy = UnknownEnvironmentPolicy.ERROR,
+) -> RuntimeEnvironment:
+    """Resolve locally, optionally requiring an explicit deployed environment."""
 
     resolved = resolve_runtime_env(
         environ,
         RuntimeEnvKey.ENVIRONMENT,
-        default=EnvironmentTier.LOCAL_DEV.value,
+        default=None if required else EnvironmentTier.LOCAL_DEV.value,
+        required=required,
     )
     assert resolved.value is not None
-    tier = resolve_environment_tier(resolved.value)
+    values = os.environ if environ is None else environ
+    if github_actions is None:
+        github_actions = values.get("GITHUB_ACTIONS", "").strip().lower() == "true"
+    tier = resolve_environment_tier(
+        resolved.value,
+        github_actions=github_actions,
+        unknown=unknown,
+    )
     raw_name = resolved.value.strip().lower()
     name = raw_name if tier is EnvironmentTier.PREVIEW and raw_name != "preview" else tier.value
     return RuntimeEnvironment(name=name, tier=tier)
+
+
+def strict_environment_from_env(
+    environ: Mapping[str, str] | None = None,
+    *,
+    github_actions: bool | None = None,
+    unknown: str | UnknownEnvironmentPolicy = UnknownEnvironmentPolicy.ERROR,
+) -> RuntimeEnvironment:
+    """Require an explicit environment for deployed/protected runtime validation."""
+
+    return environment_from_env(
+        environ,
+        required=True,
+        github_actions=github_actions,
+        unknown=unknown,
+    )
+
+
+def normalize_deployment_environment(
+    value: str,
+    tier: str | EnvironmentTier,
+) -> str:
+    """Validate a display identity without imposing a platform's preview naming scheme."""
+
+    resolved_tier = resolve_environment_tier(tier)
+    display = value.strip().lower()
+    if not display:
+        return resolved_tier.value
+    if resolved_tier is EnvironmentTier.PREVIEW:
+        return display
+    if resolve_environment_tier(display) is not resolved_tier:
+        raise ValueError("deployment_environment disagrees with environment tier")
+    return resolved_tier.value
