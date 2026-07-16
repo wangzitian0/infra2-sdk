@@ -139,6 +139,8 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
 - Semantic versions describe the public Python and serialized JSON contracts.
 - Additive fields and enum values require a minor release.
 - Removing or changing an existing field requires a major release.
+- New runtime dataclass fields are keyword-only so additive releases do not rebind existing
+  positional arguments.
 - Receivers must reject unsupported `contract_version` values before side effects.
 - Repository submodules are development workspace pointers, not package dependencies.
 - Importing any runtime module performs no network I/O and mutates no global provider state.

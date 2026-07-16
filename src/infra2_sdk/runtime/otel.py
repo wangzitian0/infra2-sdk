@@ -29,7 +29,7 @@ class OtelSettings:
     endpoint: str | None = None
     service_version: str = "unknown"
     environment: str = "local_dev"
-    deployment_environment: str = ""
+    deployment_environment: str = field(default="", kw_only=True)
     instance_id: str = ""
     resource_attributes: Mapping[str, str] = field(default_factory=dict)
     enabled: bool = True
