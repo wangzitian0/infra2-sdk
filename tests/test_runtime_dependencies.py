@@ -68,3 +68,7 @@ def test_manifest_rejects_duplicates_and_bad_wire_values() -> None:
         Dependency.from_dict(raw)
     with pytest.raises(ValueError, match="unsupported"):
         DependencyManifest((), contract_version=2)
+    with pytest.raises(ValueError, match="integer"):
+        DependencyManifest((), contract_version=True)
+    with pytest.raises(ValueError, match="integer"):
+        DependencyManifest.from_dict({"contract_version": True, "dependencies": []})

@@ -7,6 +7,9 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from infra2_sdk._wire import parse_contract_version, require_contract_version
+from infra2_sdk.runtime.environ import EnvironmentConflictError
+
 JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 ENVIRONMENT_MANIFEST_VERSION = 1
 
@@ -64,8 +67,11 @@ class EnvironmentManifest:
     contract_version: int = ENVIRONMENT_MANIFEST_VERSION
 
     def __post_init__(self) -> None:
-        if self.contract_version != ENVIRONMENT_MANIFEST_VERSION:
-            raise ValueError(f"unsupported environment manifest version {self.contract_version}")
+        require_contract_version(
+            self.contract_version,
+            ENVIRONMENT_MANIFEST_VERSION,
+            description="environment manifest version",
+        )
         if not self.source:
             raise ValueError("source is required")
         owners: dict[str, str] = {}
@@ -88,10 +94,11 @@ class EnvironmentManifest:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> EnvironmentManifest:
-        try:
-            contract_version = int(raw.get("contract_version", 0))
-        except (TypeError, ValueError):
-            raise ValueError("contract_version must be an integer") from None
+        contract_version = parse_contract_version(
+            raw,
+            ENVIRONMENT_MANIFEST_VERSION,
+            description="environment manifest version",
+        )
         fields = raw.get("fields")
         if not isinstance(fields, list) or any(not isinstance(value, Mapping) for value in fields):
             raise ValueError("fields must be an array of objects")
@@ -226,14 +233,20 @@ def validate_environment(
     missing: list[str] = []
     resolved: dict[str, str] = {}
     for field in manifest.fields:
+        present: list[tuple[str, str]] = []
         for candidate in (field.env, *field.aliases):
             value = environ.get(candidate)
             if isinstance(value, str) and value.strip():
-                resolved[field.env] = candidate
-                break
-        else:
-            if field.required or (require_injected and field.injected):
-                missing.append(field.env)
+                present.append((candidate, value if field.sensitive else value.strip()))
+        if len({value for _, value in present}) > 1:
+            names = ", ".join(name for name, _ in present)
+            raise EnvironmentConflictError(
+                f"conflicting environment variables for {field.env}: {names}"
+            )
+        if present:
+            resolved[field.env] = present[0][0]
+        elif field.required or (require_injected and field.injected):
+            missing.append(field.env)
     return EnvironmentValidation(tuple(sorted(missing)), resolved)
 
 

@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 from infra2_sdk.runtime._optional import require
 from infra2_sdk.runtime.environ import RuntimeEnvKey, env_int, resolve_runtime_env
@@ -73,7 +74,7 @@ def probe_postgres(
         return ProbeResult(
             "database",
             DependencyStatus.ABSENT,
-            f"{type(exc).__name__}: {exc}",
+            f"{type(exc).__name__}: {_redact_error(str(exc), settings)}",
             _elapsed(started),
         )
 
@@ -96,3 +97,18 @@ class PostgresCheck:
 
 def _elapsed(started: float) -> float:
     return (time.perf_counter() - started) * 1000
+
+
+def _redact_error(detail: str, settings: PostgresSettings) -> str:
+    redacted = detail
+    for dsn in sorted({settings.dsn, settings.psycopg_dsn}, key=len, reverse=True):
+        if dsn:
+            redacted = redacted.replace(dsn, "<redacted-postgres-dsn>")
+    try:
+        password = urlsplit(settings.psycopg_dsn).password
+    except ValueError:
+        password = None
+    if password:
+        redacted = redacted.replace(password, "<redacted>")
+        redacted = redacted.replace(unquote(password), "<redacted>")
+    return redacted

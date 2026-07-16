@@ -78,6 +78,19 @@ async def test_async_check_and_failure_evidence() -> None:
     assert "OSError: down" in result.detail
 
 
+def test_failure_evidence_redacts_database_credentials() -> None:
+    dsn = "postgresql+asyncpg://user:super-secret@db/app"
+
+    def connect(*_args, **_kwargs):
+        raise RuntimeError(f"connection failed for {dsn}")
+
+    result = probe_postgres(PostgresSettings(dsn), connector=connect)
+    assert result.status is DependencyStatus.ABSENT
+    assert "super-secret" not in result.detail
+    assert dsn not in result.detail
+    assert "<redacted-postgres-dsn>" in result.detail
+
+
 @pytest.mark.parametrize(
     "dsn,timeout,message",
     [

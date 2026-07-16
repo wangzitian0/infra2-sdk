@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from infra2_sdk._wire import parse_contract_version, require_contract_version
 from infra2_sdk.runtime.environment import EnvironmentTier, resolve_environment_tier
 
 DEPENDENCY_MANIFEST_VERSION = 1
@@ -82,8 +83,11 @@ class DependencyManifest:
         *,
         contract_version: int = DEPENDENCY_MANIFEST_VERSION,
     ) -> None:
-        if contract_version != DEPENDENCY_MANIFEST_VERSION:
-            raise ValueError(f"unsupported dependency manifest version {contract_version}")
+        require_contract_version(
+            contract_version,
+            DEPENDENCY_MANIFEST_VERSION,
+            description="dependency manifest version",
+        )
         self.contract_version = contract_version
         values = tuple(dependencies)
         names = [dependency.name for dependency in values]
@@ -158,10 +162,11 @@ class DependencyManifest:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> DependencyManifest:
-        try:
-            contract_version = int(raw.get("contract_version", 0))
-        except (TypeError, ValueError):
-            raise ValueError("contract_version must be an integer") from None
+        contract_version = parse_contract_version(
+            raw,
+            DEPENDENCY_MANIFEST_VERSION,
+            description="dependency manifest version",
+        )
         dependencies = raw.get("dependencies")
         if not isinstance(dependencies, list):
             raise ValueError("dependencies must be an array")

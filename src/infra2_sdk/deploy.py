@@ -8,6 +8,8 @@ from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Any
 
+from infra2_sdk._wire import parse_contract_version, require_contract_version
+
 CONTRACT_VERSION = 1
 _REQUEST_ID_RE = re.compile(r"\A[a-zA-Z0-9][a-zA-Z0-9._:-]{7,127}\Z")
 _SERVICE_RE = re.compile(r"\A[a-z][a-z0-9_]*/[a-z][a-z0-9_]*\Z")
@@ -82,10 +84,11 @@ class DeployRequest:
         evidence = raw.get("evidence")
         if not isinstance(evidence, Mapping):
             raise ValueError("evidence must be an object")
-        try:
-            contract_version = int(raw.get("contract_version", 0))
-        except (TypeError, ValueError):
-            raise ValueError("contract_version must be an integer") from None
+        contract_version = parse_contract_version(
+            raw,
+            CONTRACT_VERSION,
+            description="contract_version",
+        )
         return cls(
             contract_version=contract_version,
             request_id=_string(raw, "request_id"),
@@ -109,8 +112,11 @@ class DeployStatus:
     contract_version: int = CONTRACT_VERSION
 
     def __post_init__(self) -> None:
-        if self.contract_version != CONTRACT_VERSION:
-            raise ValueError(f"unsupported contract_version {self.contract_version}")
+        require_contract_version(
+            self.contract_version,
+            CONTRACT_VERSION,
+            description="contract_version",
+        )
         if not _REQUEST_ID_RE.match(self.request_id):
             raise ValueError("invalid request_id")
         if self.state == DeployState.SUCCEEDED and not self.evidence_url:
@@ -125,10 +131,11 @@ class DeployStatus:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> DeployStatus:
-        try:
-            contract_version = int(raw.get("contract_version", 0))
-        except (TypeError, ValueError):
-            raise ValueError("contract_version must be an integer") from None
+        contract_version = parse_contract_version(
+            raw,
+            CONTRACT_VERSION,
+            description="contract_version",
+        )
         return cls(
             contract_version=contract_version,
             request_id=_string(raw, "request_id"),
@@ -140,8 +147,11 @@ class DeployStatus:
 
 
 def validate_deploy_request(request: DeployRequest) -> None:
-    if request.contract_version != CONTRACT_VERSION:
-        raise ValueError(f"unsupported contract_version {request.contract_version}")
+    require_contract_version(
+        request.contract_version,
+        CONTRACT_VERSION,
+        description="contract_version",
+    )
     if not _REQUEST_ID_RE.match(request.request_id):
         raise ValueError("request_id must be 8-128 URL-safe characters")
     if not _SERVICE_RE.match(request.service):

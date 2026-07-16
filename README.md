@@ -61,11 +61,18 @@ storage, database, HTTP, or telemetry abstractions:
 
 - S3 returns a boto3/botocore client. Object keys, immutability, checksums, lifecycle, and
   public access remain application policy.
-- PostgreSQL accepts a PostgreSQL URI and performs only a `SELECT 1` reachability probe.
+- PostgreSQL accepts a PostgreSQL URI and performs only a `SELECT 1` reachability probe. Failure
+  evidence redacts the configured DSN and password before it enters logs or alerts.
 - HTTP returns an httpx client. Provider retry budgets and idempotency policy remain with the
   caller.
 - OpenTelemetry configures OTLP/HTTP providers and W3C Trace Context propagation only when
-  explicitly requested.
+  explicitly requested. OTLP endpoints require a valid HTTP(S) host, reject embedded credentials
+  and fragments, and preserve query parameters when deriving per-signal paths.
+
+`run_probes()` bounds both async checks and the caller-visible lifetime of sync checks. Timed-out
+sync work runs only in a daemon thread and cannot delay CLI shutdown, but Python cannot cancel its
+underlying blocking I/O. Every sync adapter therefore also configures a protocol-level timeout;
+custom sync checks must do the same.
 
 ```python
 from infra2_sdk.runtime import RuntimeIdentity, environment_from_env
@@ -141,7 +148,8 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
 - Removing or changing an existing field requires a major release.
 - New runtime dataclass fields are keyword-only so additive releases do not rebind existing
   positional arguments.
-- Receivers must reject unsupported `contract_version` values before side effects.
+- Receivers must require a JSON integer `contract_version` and reject booleans or unsupported
+  values before side effects.
 - Repository submodules are development workspace pointers, not package dependencies.
 - Importing any runtime module performs no network I/O and mutates no global provider state.
 - v0.2 ownership constants and `vault=True` manifest metadata remain compatibility-only; new

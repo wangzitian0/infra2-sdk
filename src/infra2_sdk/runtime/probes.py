@@ -6,8 +6,12 @@ import asyncio
 import inspect
 import time
 from collections.abc import Awaitable, Iterable, Mapping
+from contextlib import suppress
+from contextvars import copy_context
 from dataclasses import asdict, dataclass
 from enum import StrEnum
+from functools import partial
+from threading import Thread
 from typing import Any, Protocol, runtime_checkable
 
 from infra2_sdk.runtime.dependencies import DependencyManifest
@@ -107,7 +111,7 @@ async def run_probes(
             if inspect.iscoroutinefunction(check.probe):
                 result = await check.probe()
             else:
-                result = await asyncio.to_thread(check.probe)
+                result = await _run_sync_probe(check.probe, name=check.name)
             if inspect.isawaitable(result):
                 result = await result
             if not isinstance(result, ProbeResult):
@@ -135,6 +139,38 @@ async def run_probes(
             )
 
     return tuple(await asyncio.gather(*(bounded(check) for check in values)))
+
+
+async def _run_sync_probe(probe, *, name: str):
+    """Run a sync probe without making CLI shutdown wait for timed-out worker threads."""
+
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+    context = copy_context()
+
+    def publish(*, result=None, error: Exception | None = None) -> None:
+        if future.done():
+            return
+        if error is not None:
+            future.set_exception(error)
+        else:
+            future.set_result(result)
+
+    def worker() -> None:
+        try:
+            result = context.run(probe)
+        except Exception as exc:  # noqa: BLE001 - forwarded to the async runner
+            callback = partial(publish, error=exc)
+        except BaseException as exc:  # pragma: no cover - defensive thread boundary
+            error = RuntimeError(f"sync probe aborted with {type(exc).__name__}")
+            callback = partial(publish, error=error)
+        else:
+            callback = partial(publish, result=result)
+        with suppress(RuntimeError):
+            loop.call_soon_threadsafe(callback)
+
+    Thread(target=worker, name=f"infra2-probe-{name}", daemon=True).start()
+    return await future
 
 
 def assert_required_dependencies(
