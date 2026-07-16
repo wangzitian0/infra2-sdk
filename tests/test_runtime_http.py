@@ -43,6 +43,25 @@ def test_standard_http_clients_and_retry_policy() -> None:
     assert not retryable_request("GET", 404)
 
 
+def test_http_settings_load_from_generic_env() -> None:
+    settings = HttpClientSettings.from_env(
+        {
+            "HTTP_TIMEOUT_SECONDS": "20",
+            "HTTP_CONNECT_TIMEOUT_SECONDS": "3",
+            "HTTP_MAX_CONNECTIONS": "50",
+            "HTTP_MAX_KEEPALIVE_CONNECTIONS": "10",
+            "HTTP_CONNECT_RETRIES": "2",
+            "HTTP_FOLLOW_REDIRECTS": "true",
+        }
+    )
+    assert settings.timeout_seconds == 20
+    assert settings.connect_timeout_seconds == 3
+    assert settings.max_connections == 50
+    assert settings.max_keepalive_connections == 10
+    assert settings.connect_retries == 2
+    assert settings.follow_redirects is True
+
+
 async def test_standard_async_http_client_closes_cleanly() -> None:
     async_client = create_http_client(async_client=True)
     assert async_client.headers["user-agent"] == f"infra2-sdk/{__version__}"

@@ -19,6 +19,54 @@ def test_disabled_bootstrap_has_no_global_or_background_side_effects() -> None:
         OtelSettings(service_name="api", environment="typo", enabled=False)
 
 
+def test_otel_settings_load_standard_env_and_preserve_preview_display_name() -> None:
+    settings = OtelSettings.from_env(
+        {
+            "ENVIRONMENT": "pr-42",
+            "OTEL_SERVICE_NAME": "api",
+            "SERVICE_VERSION": "a1b2c3d",
+            "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318",
+            "OTEL_RESOURCE_ATTRIBUTES": (
+                "deployment.environment=pr-42,team.name=finance%20platform"
+            ),
+            "OTEL_METRIC_EXPORT_INTERVAL": "30000",
+        }
+    )
+    assert settings.environment == "preview"
+    assert settings.deployment_environment == "pr-42"
+    assert settings.resource_attributes["team.name"] == "finance platform"
+    assert settings.export_interval_millis == 30_000
+    assert resource_attributes(settings)["deployment.environment.name"] == "pr-42"
+
+
+def test_otel_is_transparently_disabled_without_endpoint_or_by_standard_flag() -> None:
+    no_endpoint = OtelSettings.from_env({"OTEL_SERVICE_NAME": "api"})
+    assert no_endpoint.enabled is False
+    disabled = OtelSettings.from_env(
+        {
+            "OTEL_SERVICE_NAME": "api",
+            "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318",
+            "OTEL_SDK_DISABLED": "true",
+        }
+    )
+    assert disabled.enabled is False
+
+
+def test_otel_rejects_malformed_or_mismatched_resource_environment() -> None:
+    with pytest.raises(ValueError, match="OTEL_RESOURCE_ATTRIBUTES"):
+        OtelSettings.from_env(
+            {"OTEL_SERVICE_NAME": "api", "OTEL_RESOURCE_ATTRIBUTES": "missing-equals"}
+        )
+    with pytest.raises(ValueError, match="disagrees"):
+        OtelSettings.from_env(
+            {
+                "ENVIRONMENT": "staging",
+                "OTEL_SERVICE_NAME": "api",
+                "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment=production",
+            }
+        )
+
+
 def test_identity_populates_standard_resource_attributes() -> None:
     identity = RuntimeIdentity(
         service_name="api",

@@ -60,6 +60,59 @@ def test_standard_client_factory_returns_session_client() -> None:
     assert kwargs["config"].s3["addressing_style"] == "path"
 
 
+def test_s3_settings_load_standard_env_without_infra2_context() -> None:
+    settings = S3Settings.from_env(
+        {
+            "OBJECT_STORAGE_PROTOCOL": "s3",
+            "S3_BUCKET": "portable-artifacts",
+            "AWS_ENDPOINT_URL_S3": "https://objects.example.test",
+            "AWS_REGION": "ap-southeast-1",
+            "AWS_ACCESS_KEY_ID": "key",
+            "AWS_SECRET_ACCESS_KEY": "secret",
+            "S3_ADDRESSING_STYLE": "virtual",
+            "S3_CONNECT_TIMEOUT_SECONDS": "7.5",
+            "S3_READ_TIMEOUT_SECONDS": "12",
+        }
+    )
+    assert settings.endpoint_url == "https://objects.example.test"
+    assert settings.region_name == "ap-southeast-1"
+    assert settings.addressing_style == "virtual"
+    assert settings.connect_timeout_seconds == 7.5
+    assert settings.read_timeout_seconds == 12
+
+
+def test_s3_legacy_aliases_and_default_credential_chain() -> None:
+    settings = S3Settings.from_env(
+        {
+            "S3_BUCKET": "portable-artifacts",
+            "S3_ENDPOINT": "http://minio:9000",
+            "S3_REGION": "us-east-2",
+        }
+    )
+    assert settings.endpoint_url == "http://minio:9000"
+    assert settings.region_name == "us-east-2"
+    assert settings.access_key_id is None
+
+
+@pytest.mark.parametrize(
+    "environ,message",
+    [
+        ({"S3_BUCKET": "portable-artifacts", "OBJECT_STORAGE_PROTOCOL": "gcs"}, "unsupported"),
+        (
+            {"S3_BUCKET": "portable-artifacts", "S3_CONNECT_TIMEOUT_SECONDS": "fast"},
+            "floating-point",
+        ),
+        ({"S3_BUCKET": "portable-artifacts", "S3_CONNECT_TIMEOUT_SECONDS": "nan"}, "finite"),
+        ({"S3_BUCKET": "portable-artifacts", "AWS_ACCESS_KEY_ID": "key"}, "provided together"),
+        ({"S3_BUCKET": "portable-artifacts", "AWS_SESSION_TOKEN": "token"}, "session token"),
+        ({"S3_BUCKET": "portable-artifacts", "AWS_ENDPOINT_URL_S3": "minio:9000"}, "http"),
+    ],
+)
+def test_s3_from_env_rejects_invalid_configuration(environ, message) -> None:
+    with pytest.raises(ValueError, match=message):
+        S3Settings.from_env(environ)
+
+
 def test_probe_and_bucket_primitives() -> None:
     settings = S3Settings(bucket="runtime-canary", region_name="ap-southeast-1")
     healthy = Client()

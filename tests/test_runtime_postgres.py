@@ -48,6 +48,26 @@ def test_dsn_normalization_and_probe() -> None:
     assert calls[0][1]["connect_timeout"] == 5
 
 
+def test_postgres_settings_load_from_standard_env() -> None:
+    settings = PostgresSettings.from_env(
+        {
+            "DATABASE_URL": "postgresql+asyncpg://user:secret@db/app",
+            "DATABASE_CONNECT_TIMEOUT_SECONDS": "9",
+        }
+    )
+    assert settings.psycopg_dsn == "postgresql://user:secret@db/app"
+    assert settings.connect_timeout_seconds == 9
+
+
+def test_postgres_from_env_requires_dsn_and_integer_timeout() -> None:
+    with pytest.raises(ValueError, match="DATABASE_URL is required"):
+        PostgresSettings.from_env({})
+    with pytest.raises(ValueError, match="integer"):
+        PostgresSettings.from_env(
+            {"DATABASE_URL": "postgresql://db/app", "DATABASE_CONNECT_TIMEOUT_SECONDS": "5.5"}
+        )
+
+
 async def test_async_check_and_failure_evidence() -> None:
     settings = PostgresSettings("postgresql://db/app")
     result = await PostgresCheck(

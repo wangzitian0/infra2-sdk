@@ -1,29 +1,27 @@
 # infra2-sdk
 
-Versioned, side-effect-free contracts shared by
+Versioned, side-effect-free runtime contracts shared by
 [`infra2`](https://github.com/wangzitian0/infra2),
 [`finance_report`](https://github.com/wangzitian0/finance_report), and
 [`truealpha`](https://github.com/wangzitian0/truealpha).
 
-The SDK is the dependency boundary between applications and infrastructure. It owns data
-models, validation, serialization, and thin adapters over open runtime protocols. It does
-**not** own infrastructure execution: Dokploy/Vault clients, compose files, service discovery,
-deployment mutation, backups, and host operations remain in `infra2`.
+The SDK is a long-lived application dependency, not an infra2 client. It owns a stable
+environment-variable vocabulary, validation, serialization, and thin adapters over open
+runtime protocols. A standalone process passes ordinary environment variables; infra2 may
+derive the same variables from its multi-environment deployment coordinate. Both paths execute
+the same local SDK code.
+
+The SDK performs no infrastructure execution. Dokploy/Vault clients, compose files, service
+discovery, deployment mutation, backups, and host operations remain outside this package. No
+`INFRA2_*`, Vault, or Dokploy value is required to load runtime settings.
 
 ## Install
 
-Until the first tag is published, install from a pinned Git commit:
+Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@<commit>"
-```
-
-After release, consumers should pin a tag and update deliberately:
-
-```bash
-python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v0.2.0"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v0.3.0"
 ```
 
 ## Modules
@@ -35,6 +33,7 @@ python -m pip install \
 | `infra2_sdk.deploy` | Versioned deploy request/status wire contract |
 | `infra2_sdk.refs` | Pure Git ref classification and resolution |
 | `infra2_sdk.runtime.environment` | Canonical six-tier environment vocabulary and aliases |
+| `infra2_sdk.runtime.environ` | Versioned canonical env registry and conflict-safe resolution |
 | `infra2_sdk.runtime.config_schema` | JSON Schema 2020-12 and environment injection manifests |
 | `infra2_sdk.runtime.dependencies` | Dependency declaration and per-tier requirements |
 | `infra2_sdk.runtime.probes` | Sync/async probe contract, runner, and required-dependency gate |
@@ -50,9 +49,11 @@ The core runtime contracts have no runtime dependency beyond the SDK core. Insta
 open-protocol adapters an application uses:
 
 ```bash
-python -m pip install 'infra2-sdk[s3,postgres,otel,http]==0.2.0'
+python -m pip install \
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v0.3.0'
 # or, for a conformance canary:
-python -m pip install 'infra2-sdk[all]==0.2.0'
+python -m pip install \
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v0.3.0'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -67,22 +68,50 @@ storage, database, HTTP, or telemetry abstractions:
   explicitly requested.
 
 ```python
-from infra2_sdk.runtime import EnvironmentTier, RuntimeIdentity
+from infra2_sdk.runtime import RuntimeIdentity, environment_from_env
+from infra2_sdk.runtime.postgres import PostgresSettings
 from infra2_sdk.runtime.s3 import S3Settings, create_s3_client
 
-identity = RuntimeIdentity(
-    service_name="example-api",
-    service_version="1.2.3",
-    environment=EnvironmentTier.STAGING,
-    commit_sha="a" * 40,
-    image_digest="sha256:" + "b" * 64,
-    configuration_sha256="c" * 64,
-    release_id="release-123",
-)
-identity.validate_protected()
-
-s3 = create_s3_client(S3Settings(bucket="example-artifacts"))
+runtime = environment_from_env()       # reads os.environ only when called
+identity = RuntimeIdentity.from_env()  # no network or platform lookup
+database = PostgresSettings.from_env()
+s3 = create_s3_client(S3Settings.from_env())
 ```
+
+## Environment contract
+
+`runtime_env_contract()` is the machine-readable source for canonical names, compatibility
+aliases, and sensitivity. Canonical names prefer existing open ecosystem conventions:
+
+| Concern | Canonical names | Compatibility aliases |
+|---|---|---|
+| Runtime | `ENVIRONMENT`, `OTEL_SERVICE_NAME`, `SERVICE_VERSION`, `GIT_COMMIT_SHA` | `ENV`, `APP_ENV`, `SERVICE_NAME`, `IMAGE_TAG` |
+| PostgreSQL | `DATABASE_URL`, `DATABASE_CONNECT_TIMEOUT_SECONDS` | — |
+| S3 | `OBJECT_STORAGE_PROTOCOL=s3`, `S3_BUCKET`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, standard AWS credentials | `OBJECT_STORAGE_DRIVER`, `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` |
+| Telemetry | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_SDK_DISABLED` | — |
+
+Canonical and alias values may coexist only when equal. Conflicts fail before clients are
+created, and secret values never appear in errors. Missing OTLP configuration disables
+telemetry without affecting application startup. Missing S3 credentials leaves boto3's standard
+credential chain intact.
+
+`ENVIRONMENT` has two dimensions. `RuntimeEnvironment.tier` controls behavior using the six
+portable tiers. `RuntimeEnvironment.name` preserves the deployment display identity. Therefore
+deploy_v2 aliases such as `pr-42`, `branch-main`, `commit-1ab32d5`, and `tag-v1-2-3` all resolve
+to tier `preview` without losing their telemetry label.
+
+### deploy_v2 boundary
+
+deploy_v2's `(service, type, version_ref, iac_ref)` remains a deployment-control coordinate,
+not an application environment contract. A deployment producer derives only runtime results:
+
+- deploy type/alias -> `ENVIRONMENT`;
+- resolved full application SHA -> `GIT_COMMIT_SHA`;
+- immutable image ref -> `SERVICE_VERSION`;
+- OCI digest -> `IMAGE_DIGEST` when available.
+
+`version_ref`, `iac_ref`, `staging_validated`, and `code_reviewed` are never required runtime
+variables. A non-infra2 deployment can provide the same canonical variables directly.
 
 ## Compatibility
 
@@ -92,6 +121,8 @@ s3 = create_s3_client(S3Settings(bucket="example-artifacts"))
 - Receivers must reject unsupported `contract_version` values before side effects.
 - Repository submodules are development workspace pointers, not package dependencies.
 - Importing any runtime module performs no network I/O and mutates no global provider state.
+- v0.2 ownership constants and `vault=True` manifest metadata remain compatibility-only; new
+  consumers use tier semantics and explicit `injected=True` metadata.
 
 ## Development
 

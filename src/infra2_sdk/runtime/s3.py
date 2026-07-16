@@ -5,11 +5,13 @@ from __future__ import annotations
 import contextlib
 import re
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from infra2_sdk.runtime._optional import require
+from infra2_sdk.runtime.environ import RuntimeEnvKey, env_float, resolve_runtime_env
 from infra2_sdk.runtime.probes import DependencyStatus, ProbeResult
 
 _BUCKET_RE = re.compile(r"\A[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]\Z")
@@ -37,6 +39,51 @@ class S3Settings:
             raise ValueError("addressing_style must be auto, path, or virtual")
         if bool(self.access_key_id) != bool(self.secret_access_key):
             raise ValueError("explicit S3 access key and secret key must be provided together")
+        if self.session_token and not self.access_key_id:
+            raise ValueError("explicit S3 session token requires explicit access credentials")
+        if self.endpoint_url and not self.endpoint_url.startswith(("http://", "https://")):
+            raise ValueError("S3 endpoint URL must use http:// or https://")
+
+    @classmethod
+    def from_env(cls, environ: Mapping[str, str] | None = None) -> S3Settings:
+        """Load the S3 protocol adapter from standard AWS names and legacy aliases."""
+
+        protocol = resolve_runtime_env(
+            environ,
+            RuntimeEnvKey.OBJECT_STORAGE_PROTOCOL,
+            default="s3",
+        ).value
+        if protocol is None or protocol.lower() != "s3":
+            raise ValueError(f"unsupported object storage protocol: {protocol!r}")
+        bucket = resolve_runtime_env(environ, RuntimeEnvKey.S3_BUCKET, required=True).value
+        endpoint = resolve_runtime_env(environ, RuntimeEnvKey.S3_ENDPOINT_URL).value
+        region = resolve_runtime_env(
+            environ,
+            RuntimeEnvKey.S3_REGION,
+            default="us-east-1",
+        ).value
+        access_key = resolve_runtime_env(environ, RuntimeEnvKey.AWS_ACCESS_KEY_ID).value
+        secret_key = resolve_runtime_env(environ, RuntimeEnvKey.AWS_SECRET_ACCESS_KEY).value
+        session_token = resolve_runtime_env(environ, RuntimeEnvKey.AWS_SESSION_TOKEN).value
+        addressing_style = resolve_runtime_env(
+            environ, RuntimeEnvKey.S3_ADDRESSING_STYLE, default="path"
+        ).value
+        assert bucket is not None and region is not None and addressing_style is not None
+        return cls(
+            bucket=bucket,
+            endpoint_url=endpoint,
+            access_key_id=access_key,
+            secret_access_key=secret_key,
+            session_token=session_token,
+            region_name=region,
+            connect_timeout_seconds=env_float(
+                environ, RuntimeEnvKey.S3_CONNECT_TIMEOUT_SECONDS, default=5.0
+            ),
+            read_timeout_seconds=env_float(
+                environ, RuntimeEnvKey.S3_READ_TIMEOUT_SECONDS, default=5.0
+            ),
+            addressing_style=addressing_style.lower(),
+        )
 
 
 def create_s3_client(settings: S3Settings, *, session: Any | None = None) -> Any:

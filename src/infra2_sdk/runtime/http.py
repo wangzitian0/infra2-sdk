@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -10,6 +11,13 @@ from typing import Any
 
 from infra2_sdk import __version__
 from infra2_sdk.runtime._optional import require
+from infra2_sdk.runtime.environ import (
+    RuntimeEnvKey,
+    env_bool,
+    env_float,
+    env_int,
+    resolve_runtime_env,
+)
 from infra2_sdk.runtime.probes import DependencyStatus, ProbeResult
 
 _IDEMPOTENT_METHODS = frozenset({"DELETE", "GET", "HEAD", "OPTIONS", "PUT", "TRACE"})
@@ -35,6 +43,26 @@ class HttpClientSettings:
             raise ValueError("keepalive connections cannot exceed max_connections")
         if self.connect_retries < 0:
             raise ValueError("connect_retries must be non-negative")
+
+    @classmethod
+    def from_env(cls, environ: Mapping[str, str] | None = None) -> HttpClientSettings:
+        user_agent = resolve_runtime_env(
+            environ, RuntimeEnvKey.HTTP_USER_AGENT, default=f"infra2-sdk/{__version__}"
+        ).value
+        assert user_agent is not None
+        return cls(
+            timeout_seconds=env_float(environ, RuntimeEnvKey.HTTP_TIMEOUT_SECONDS, default=10.0),
+            connect_timeout_seconds=env_float(
+                environ, RuntimeEnvKey.HTTP_CONNECT_TIMEOUT_SECONDS, default=5.0
+            ),
+            max_connections=env_int(environ, RuntimeEnvKey.HTTP_MAX_CONNECTIONS, default=100),
+            max_keepalive_connections=env_int(
+                environ, RuntimeEnvKey.HTTP_MAX_KEEPALIVE_CONNECTIONS, default=20
+            ),
+            connect_retries=env_int(environ, RuntimeEnvKey.HTTP_CONNECT_RETRIES, default=0),
+            user_agent=user_agent,
+            follow_redirects=env_bool(environ, RuntimeEnvKey.HTTP_FOLLOW_REDIRECTS, default=False),
+        )
 
 
 def create_http_client(

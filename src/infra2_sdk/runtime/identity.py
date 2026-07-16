@@ -24,6 +24,7 @@ class RuntimeIdentity:
     service_version: str
     environment: EnvironmentTier
     commit_sha: str
+    deployment_environment: str = ""
     image_digest: str = ""
     configuration_sha256: str = ""
     release_id: str = ""
@@ -33,6 +34,10 @@ class RuntimeIdentity:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "environment", resolve_environment_tier(self.environment))
+        display = self.deployment_environment.strip().lower() or self.environment.value
+        if resolve_environment_tier(display) is not self.environment:
+            raise ValueError("deployment_environment must resolve to environment tier")
+        object.__setattr__(self, "deployment_environment", display)
         if not self.service_name.strip() or not self.service_version.strip():
             raise ValueError("service_name and service_version are required")
         if self.commit_sha != "unknown" and not _SHA40_RE.match(self.commit_sha):
@@ -75,6 +80,7 @@ class RuntimeIdentity:
             service_version=_string(raw, "service_version"),
             environment=resolve_environment_tier(_string(raw, "environment")),
             commit_sha=_string(raw, "commit_sha"),
+            deployment_environment=_string(raw, "deployment_environment", required=False),
             image_digest=_string(raw, "image_digest", required=False),
             configuration_sha256=_string(raw, "configuration_sha256", required=False),
             release_id=_string(raw, "release_id", required=False),
@@ -83,16 +89,69 @@ class RuntimeIdentity:
             sbom_uri=_string(raw, "sbom_uri", required=False),
         )
 
-    def to_otel_resource_attributes(self) -> dict[str, str]:
+    @classmethod
+    def from_env(cls, environ: Mapping[str, str] | None = None) -> RuntimeIdentity:
+        """Build identity from deploy_v2-derived results or equivalent standalone env."""
+
+        from infra2_sdk.runtime.environ import RuntimeEnvKey, resolve_runtime_env
+        from infra2_sdk.runtime.environment import environment_from_env
+
+        runtime = environment_from_env(environ)
+        service_name = resolve_runtime_env(
+            environ,
+            RuntimeEnvKey.SERVICE_NAME,
+            required=True,
+        ).value
+        service_version = resolve_runtime_env(
+            environ,
+            RuntimeEnvKey.SERVICE_VERSION,
+            default="unknown",
+        ).value
+        commit_sha = resolve_runtime_env(
+            environ, RuntimeEnvKey.GIT_COMMIT_SHA, default="unknown"
+        ).value
+        assert service_name is not None and service_version is not None and commit_sha is not None
+        return cls(
+            service_name=service_name,
+            service_version=service_version,
+            environment=runtime.tier,
+            deployment_environment=runtime.name,
+            commit_sha=commit_sha,
+            image_digest=resolve_runtime_env(environ, RuntimeEnvKey.IMAGE_DIGEST, default="").value
+            or "",
+            configuration_sha256=resolve_runtime_env(
+                environ,
+                RuntimeEnvKey.CONFIGURATION_SHA256,
+                default="",
+            ).value
+            or "",
+            release_id=resolve_runtime_env(environ, RuntimeEnvKey.RELEASE_ID, default="").value
+            or "",
+            instance_id=resolve_runtime_env(environ, RuntimeEnvKey.INSTANCE_ID, default="").value
+            or "",
+        )
+
+    def to_standard_otel_resource_attributes(self) -> dict[str, str]:
+        """Return only provider-neutral OpenTelemetry semantic coordinates."""
+
         attributes = {
             "service.name": self.service_name,
             "service.version": self.service_version,
-            "deployment.environment.name": self.environment.value,
+            "deployment.environment.name": self.deployment_environment,
             "vcs.ref.head.revision": self.commit_sha,
         }
         optional = {
             "service.instance.id": self.instance_id,
             "container.image.id": self.image_digest,
+        }
+        attributes.update({key: value for key, value in optional.items() if value})
+        return attributes
+
+    def to_otel_resource_attributes(self) -> dict[str, str]:
+        """Compatibility output; new consumers should use the standard-only method."""
+
+        attributes = self.to_standard_otel_resource_attributes()
+        optional = {
             "infra2.configuration.sha256": self.configuration_sha256,
             "infra2.release.id": self.release_id,
             "infra2.provenance.uri": self.provenance_uri,
@@ -113,6 +172,7 @@ class RuntimeIdentity:
                 "service_name": {"type": "string", "minLength": 1},
                 "service_version": {"type": "string", "minLength": 1},
                 "environment": {"enum": [tier.value for tier in EnvironmentTier]},
+                "deployment_environment": {"type": "string"},
                 "commit_sha": {"type": "string", "pattern": "^(unknown|[0-9a-f]{40})$"},
                 "image_digest": {"type": "string", "pattern": "^(|sha256:[0-9a-f]{64})$"},
                 "configuration_sha256": {
