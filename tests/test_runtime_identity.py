@@ -1,3 +1,5 @@
+from inspect import Parameter, signature
+
 import pytest
 
 from infra2_sdk.runtime.environment import EnvironmentTier
@@ -35,6 +37,28 @@ def test_runtime_identity_round_trip_and_otel_attributes() -> None:
     assert attributes["infra2.sbom.uri"].startswith("oci://")
     assert identity(environment="staging").environment is EnvironmentTier.STAGING
     assert original.json_schema()["properties"]["image_digest"]["pattern"].startswith("^")
+
+
+def test_deployment_environment_is_additive_without_rebinding_existing_arguments() -> None:
+    original = RuntimeIdentity(
+        "api",
+        "1.2.3",
+        EnvironmentTier.STAGING,
+        SHA,
+        DIGEST,
+        CONFIG,
+        "release-1",
+        "pod-1",
+        "https://example.test/provenance",
+        "oci://registry.example.test/api@" + DIGEST,
+        deployment_environment="staging",
+    )
+    assert original.image_digest == DIGEST
+    assert original.instance_id == "pod-1"
+    assert (
+        signature(RuntimeIdentity).parameters["deployment_environment"].kind
+        is Parameter.KEYWORD_ONLY
+    )
 
 
 def test_identity_loads_deploy_v2_derived_results_without_iac_coordinates() -> None:

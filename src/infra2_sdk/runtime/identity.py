@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from infra2_sdk.runtime._otel_env import load_resource_attributes
@@ -29,7 +29,7 @@ class RuntimeIdentity:
     service_version: str
     environment: EnvironmentTier
     commit_sha: str
-    deployment_environment: str = ""
+    deployment_environment: str = field(default="", kw_only=True)
     image_digest: str = ""
     configuration_sha256: str = ""
     release_id: str = ""

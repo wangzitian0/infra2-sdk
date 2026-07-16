@@ -1,3 +1,5 @@
+from inspect import Parameter, signature
+
 import pytest
 
 from infra2_sdk.runtime.environment import EnvironmentTier
@@ -17,6 +19,25 @@ def test_disabled_bootstrap_has_no_global_or_background_side_effects() -> None:
     providers.shutdown()
     with pytest.raises(ValueError, match="unknown environment"):
         OtelSettings(service_name="api", environment="typo", enabled=False)
+
+
+def test_deployment_environment_does_not_rebind_existing_otel_arguments() -> None:
+    settings = OtelSettings(
+        "api",
+        "http://collector:4318",
+        "1.2.3",
+        "staging",
+        "pod-1",
+        {"team.name": "finance"},
+        False,
+        30_000,
+        deployment_environment="staging",
+    )
+    assert settings.instance_id == "pod-1"
+    assert settings.resource_attributes == {"team.name": "finance"}
+    assert (
+        signature(OtelSettings).parameters["deployment_environment"].kind is Parameter.KEYWORD_ONLY
+    )
 
 
 def test_otel_settings_load_standard_env_and_preserve_preview_display_name() -> None:
