@@ -10,6 +10,7 @@ from infra2_sdk.runtime.config_schema import (
     settings_json_schema,
     validate_environment,
 )
+from infra2_sdk.runtime.environ import EnvironmentConflictError
 
 
 class Settings(BaseSettings):
@@ -74,6 +75,18 @@ def test_environment_validation_resolves_aliases_without_values() -> None:
     assert protected.missing == ("API_KEY",)
 
 
+def test_environment_validation_rejects_conflicting_alias_values_without_leaking_them() -> None:
+    manifest = environment_manifest_from_model(Settings)
+    equal = validate_environment(manifest, {"API_KEY": "same", "LEGACY_KEY": "same"})
+    assert equal.resolved == {"API_KEY": "API_KEY"}
+    secret = "do-not-leak"
+    with pytest.raises(EnvironmentConflictError) as captured:
+        validate_environment(manifest, {"API_KEY": secret, "LEGACY_KEY": "different"})
+    assert secret not in str(captured.value)
+    assert "API_KEY" in str(captured.value)
+    assert "LEGACY_KEY" in str(captured.value)
+
+
 def test_manifest_validation_rejects_ambiguous_contracts() -> None:
     with pytest.raises(ValueError, match="duplicate environment alias"):
         EnvironmentField("token", "TOKEN", aliases=("TOKEN",))
@@ -92,9 +105,14 @@ def test_manifest_validation_rejects_ambiguous_contracts() -> None:
         )
     with pytest.raises(ValueError, match="unsupported"):
         EnvironmentManifest(source="bad", fields=(), contract_version=2)
+    with pytest.raises(ValueError, match="integer"):
+        EnvironmentManifest(source="bad", fields=(), contract_version=True)
     raw = EnvironmentManifest(source="ok", fields=()).to_dict()
     raw["contract_version"] = "bad"
     with pytest.raises(ValueError, match="contract_version"):
+        EnvironmentManifest.from_dict(raw)
+    raw["contract_version"] = True
+    with pytest.raises(ValueError, match="integer"):
         EnvironmentManifest.from_dict(raw)
 
 

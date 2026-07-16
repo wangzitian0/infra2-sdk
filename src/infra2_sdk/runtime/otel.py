@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 from warnings import warn
 
 from infra2_sdk.runtime._optional import require
@@ -44,8 +45,8 @@ class OtelSettings:
             raise ValueError("service_name is required")
         if self.enabled and not self.endpoint:
             raise ValueError("enabled telemetry requires an OTLP HTTP endpoint")
-        if self.endpoint and not self.endpoint.startswith(("http://", "https://")):
-            raise ValueError("OTLP endpoint must use http:// or https://")
+        if self.endpoint:
+            _validate_endpoint(self.endpoint)
         if self.export_interval_millis <= 0:
             raise ValueError("export_interval_millis must be positive")
         if any(
@@ -251,11 +252,32 @@ def inject_trace_context(headers: dict[str, str] | None = None) -> dict[str, str
 def _signal_endpoint(base: str | None, signal: str) -> str:
     if base is None:
         raise ValueError("OTLP endpoint is required")
-    cleaned = base.rstrip("/")
+    endpoint = urlsplit(base)
+    cleaned = endpoint.path.rstrip("/")
     for known_signal in ("traces", "metrics", "logs"):
         suffix = f"/v1/{known_signal}"
         if cleaned.endswith(suffix):
             cleaned = cleaned[: -len(suffix)]
             break
-    suffix = f"/v1/{signal}"
-    return cleaned + suffix
+    path = cleaned + f"/v1/{signal}"
+    return urlunsplit((endpoint.scheme, endpoint.netloc, path, endpoint.query, ""))
+
+
+def _validate_endpoint(value: str) -> None:
+    try:
+        endpoint = urlsplit(value)
+        hostname = endpoint.hostname
+        _port = endpoint.port
+    except ValueError:
+        raise ValueError("OTLP endpoint must be a valid HTTP URL") from None
+    if (
+        endpoint.scheme not in {"http", "https"}
+        or not endpoint.netloc
+        or not hostname
+        or any(char.isspace() for char in endpoint.netloc)
+    ):
+        raise ValueError("OTLP endpoint must use http:// or https:// with a host")
+    if endpoint.username is not None or endpoint.password is not None:
+        raise ValueError("OTLP endpoint must not contain credentials")
+    if endpoint.fragment:
+        raise ValueError("OTLP endpoint must not contain a fragment")

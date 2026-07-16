@@ -6,6 +6,7 @@ from infra2_sdk.runtime.environment import EnvironmentTier
 from infra2_sdk.runtime.identity import RuntimeIdentity
 from infra2_sdk.runtime.otel import (
     OtelSettings,
+    _signal_endpoint,
     configure_telemetry,
     inject_trace_context,
     resource_attributes,
@@ -230,6 +231,29 @@ def test_enabled_bootstrap_constructs_all_otlp_signal_providers() -> None:
     assert type(providers.logger_provider).__name__ == "LoggerProvider"
     assert providers.logging_instrumentor is None
     providers.shutdown()
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://",
+        "https://:4318",
+        "http://bad host",
+        "http://user:password@collector:4318",
+        "http://collector:4318/path#fragment",
+        "http://collector:not-a-port",
+        "http://collector:99999",
+    ],
+)
+def test_otel_rejects_unsafe_or_incomplete_endpoints(endpoint: str) -> None:
+    with pytest.raises(ValueError, match="endpoint"):
+        OtelSettings(service_name="api", endpoint=endpoint)
+
+
+def test_signal_endpoint_preserves_query_after_appending_signal_path() -> None:
+    assert _signal_endpoint("https://collector.example.test/base?tenant=alpha", "traces") == (
+        "https://collector.example.test/base/v1/traces?tenant=alpha"
+    )
 
 
 @pytest.mark.parametrize(

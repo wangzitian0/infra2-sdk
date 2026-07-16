@@ -51,6 +51,11 @@ def test_contract_version_fails_closed() -> None:
     raw["contract_version"] = 2
     with pytest.raises(ValueError, match="unsupported contract_version"):
         DeployRequest.from_dict(raw)
+    raw["contract_version"] = True
+    with pytest.raises(ValueError, match="integer"):
+        DeployRequest.from_dict(raw)
+    with pytest.raises(ValueError, match="integer"):
+        request(contract_version=True)
 
 
 def test_success_status_requires_evidence() -> None:
@@ -135,3 +140,12 @@ def test_status_rejects_bad_contract_and_types() -> None:
     raw = {"contract_version": "bad", "request_id": "run-12345678", "state": "accepted"}
     with pytest.raises(ValueError, match="must be an integer"):
         DeployStatus.from_dict(raw)
+    raw["contract_version"] = True
+    with pytest.raises(ValueError, match="must be an integer"):
+        DeployStatus.from_dict(raw)
+    with pytest.raises(ValueError, match="must be an integer"):
+        DeployStatus(
+            request_id="run-12345678",
+            state=DeployState.ACCEPTED,
+            contract_version=True,
+        )

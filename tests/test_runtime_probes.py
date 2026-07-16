@@ -1,4 +1,6 @@
 import asyncio
+import time
+from contextvars import ContextVar
 
 import pytest
 
@@ -30,6 +32,14 @@ class SlowCheck:
 
     async def probe(self):
         await asyncio.sleep(0.05)
+        return ProbeResult(self.name, DependencyStatus.PRESENT)
+
+
+class SlowSyncCheck:
+    name = "slow-sync"
+
+    def probe(self):
+        time.sleep(0.25)
         return ProbeResult(self.name, DependencyStatus.PRESENT)
 
 
@@ -72,6 +82,29 @@ async def test_runner_supports_sync_async_errors_and_timeouts() -> None:
     assert results[2].status is DependencyStatus.ABSENT
     assert "timed out" in results[2].detail
     assert results[3].present
+
+
+def test_sync_probe_timeout_does_not_delay_cli_event_loop_shutdown() -> None:
+    started = time.perf_counter()
+    results = asyncio.run(run_probes((SlowSyncCheck(),), timeout_seconds=0.01))
+    elapsed = time.perf_counter() - started
+    assert results[0].status is DependencyStatus.ABSENT
+    assert "timed out" in results[0].detail
+    assert elapsed < 0.1
+
+
+async def test_sync_probe_preserves_caller_context() -> None:
+    coordinate = ContextVar("coordinate", default="missing")
+    coordinate.set("staging")
+
+    class ContextCheck:
+        name = "context"
+
+        def probe(self):
+            return ProbeResult(self.name, DependencyStatus.PRESENT, coordinate.get())
+
+    result = await run_probes((ContextCheck(),))
+    assert result[0].detail == "staging"
 
 
 def test_probe_wire_round_trip_and_required_gate() -> None:
