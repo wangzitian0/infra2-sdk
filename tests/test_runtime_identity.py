@@ -93,6 +93,41 @@ def test_identity_reads_standard_resource_identity_and_supports_strict_mode() ->
         )
 
 
+@pytest.mark.parametrize(
+    "resource_attributes",
+    [
+        "missing-equals",
+        "deployment.environment.name=staging,deployment.environment=production",
+    ],
+)
+def test_identity_non_strict_discards_invalid_optional_otel_data(
+    resource_attributes: str,
+) -> None:
+    with pytest.warns(RuntimeWarning, match="OTEL_RESOURCE_ATTRIBUTES"):
+        loaded = RuntimeIdentity.from_env(
+            {
+                "OTEL_SERVICE_NAME": "api",
+                "OTEL_RESOURCE_ATTRIBUTES": resource_attributes,
+            }
+        )
+    assert loaded.environment is EnvironmentTier.LOCAL_DEV
+    assert loaded.deployment_environment == "local_dev"
+
+
+def test_identity_strict_rejects_conflicting_resource_environment_aliases() -> None:
+    with pytest.raises(ValueError, match="conflicting OTEL_RESOURCE_ATTRIBUTES"):
+        RuntimeIdentity.from_env(
+            {
+                "ENVIRONMENT": "local_dev",
+                "OTEL_SERVICE_NAME": "api",
+                "OTEL_RESOURCE_ATTRIBUTES": (
+                    "deployment.environment.name=staging,deployment.environment=production"
+                ),
+            },
+            strict=True,
+        )
+
+
 def test_deploy_v2_must_inject_resolved_sha_not_image_ref() -> None:
     with pytest.raises(ValueError, match="commit_sha"):
         RuntimeIdentity.from_env(

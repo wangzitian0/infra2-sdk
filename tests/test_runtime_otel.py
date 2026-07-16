@@ -51,6 +51,24 @@ def test_otel_is_transparently_disabled_without_endpoint_or_by_standard_flag() -
         }
     )
     assert disabled.enabled is False
+    assert disabled.endpoint is None
+
+
+def test_disabled_flag_takes_precedence_over_invalid_endpoint() -> None:
+    settings = OtelSettings.from_env(
+        {
+            "OTEL_EXPORTER_OTLP_ENDPOINT": "grpc://ignored.invalid",
+            "OTEL_SDK_DISABLED": "true",
+        }
+    )
+    assert settings.enabled is False
+    assert settings.endpoint is None
+
+
+def test_otel_reads_standard_instance_id() -> None:
+    settings = OtelSettings.from_env({"INSTANCE_ID": "worker-17"})
+    assert settings.instance_id == "worker-17"
+    assert resource_attributes(settings)["service.instance.id"] == "worker-17"
 
 
 def test_otel_uses_standard_resource_attributes_without_custom_sdk_variables() -> None:
@@ -90,11 +108,24 @@ def test_otel_strict_mode_and_boolean_grammar_fail_closed() -> None:
 
 
 def test_otel_non_strict_mode_reports_and_discards_invalid_standard_values() -> None:
-    with pytest.warns(RuntimeWarning, match="true or false"):
+    with pytest.warns(RuntimeWarning, match="OTEL_SDK_DISABLED"):
         settings = OtelSettings.from_env({"OTEL_SDK_DISABLED": "1"})
     assert settings.enabled is False
-    with pytest.warns(RuntimeWarning, match="key=value"):
+    with pytest.warns(RuntimeWarning, match="OTEL_RESOURCE_ATTRIBUTES"):
         settings = OtelSettings.from_env({"OTEL_RESOURCE_ATTRIBUTES": "invalid"})
+    assert settings.resource_attributes == {}
+
+
+def test_otel_non_strict_discards_conflicting_resource_environment_aliases() -> None:
+    with pytest.warns(RuntimeWarning, match="OTEL_RESOURCE_ATTRIBUTES"):
+        settings = OtelSettings.from_env(
+            {
+                "OTEL_RESOURCE_ATTRIBUTES": (
+                    "deployment.environment.name=staging,deployment.environment=production"
+                )
+            }
+        )
+    assert settings.environment == "local_dev"
     assert settings.resource_attributes == {}
 
 

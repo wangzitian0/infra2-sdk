@@ -97,19 +97,21 @@ aliases, and sensitivity. Canonical names prefer existing open ecosystem convent
 
 | Concern | Canonical names | Compatibility aliases |
 |---|---|---|
-| Runtime | `ENVIRONMENT`, `OTEL_SERVICE_NAME`, `SERVICE_VERSION`, `GIT_COMMIT_SHA` | `ENV`, `APP_ENV`, `SERVICE_NAME`, `IMAGE_TAG` |
+| Runtime | `ENVIRONMENT`, `OTEL_SERVICE_NAME`, `SERVICE_VERSION`, `GIT_COMMIT_SHA`, `INSTANCE_ID` | `ENV`, `APP_ENV`, `SERVICE_NAME`, `IMAGE_TAG` |
 | PostgreSQL | `DATABASE_URL`, `DATABASE_CONNECT_TIMEOUT_SECONDS` | — |
 | S3 | `OBJECT_STORAGE_PROTOCOL=s3`, `S3_BUCKET`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, standard AWS credentials | `OBJECT_STORAGE_DRIVER`, `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` |
 | Telemetry | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_SDK_DISABLED` | — |
 
 Canonical and alias values may coexist only when equal. Conflicts fail before clients are
 created, and secret values never appear in errors. Missing OTLP configuration disables
-telemetry without affecting application startup. Missing S3 credentials leaves boto3's standard
-credential chain intact.
+telemetry without affecting application startup. `OTEL_SDK_DISABLED=true` takes precedence over
+the endpoint and ignores it completely. Missing S3 credentials leaves boto3's standard credential
+chain intact.
 
 Missing S3 region and addressing-style values also remain unset so boto3 can use its standard
 profile, workload-identity, and service defaults. S3-compatible deployments that require path
-addressing set `S3_ADDRESSING_STYLE=path` explicitly.
+addressing set `S3_ADDRESSING_STYLE=path` explicitly. When bucket creation is explicitly allowed,
+`ensure_bucket` uses the region resolved by the boto3 client if no region was set directly.
 
 `ENVIRONMENT` has two dimensions. `RuntimeEnvironment.tier` controls behavior using the six
 portable tiers. `RuntimeEnvironment.name` preserves the deployment display identity. Therefore

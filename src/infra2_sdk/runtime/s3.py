@@ -46,6 +46,7 @@ class S3Settings:
             if (
                 endpoint.scheme not in {"http", "https"}
                 or not endpoint.netloc
+                or not endpoint.hostname
                 or any(char.isspace() for char in endpoint.netloc)
             ):
                 raise ValueError("S3 endpoint URL must use http:// or https:// with a host")
@@ -159,8 +160,9 @@ def ensure_bucket(
         if not allow_create or not is_not_found(exc):
             raise
     kwargs: dict[str, Any] = {"Bucket": settings.bucket}
-    if settings.region_name and settings.region_name != "us-east-1":
-        kwargs["CreateBucketConfiguration"] = {"LocationConstraint": settings.region_name}
+    region_name = settings.region_name or getattr(getattr(s3, "meta", None), "region_name", None)
+    if region_name and region_name != "us-east-1":
+        kwargs["CreateBucketConfiguration"] = {"LocationConstraint": region_name}
     s3.create_bucket(**kwargs)
 
 
