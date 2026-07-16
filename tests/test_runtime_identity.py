@@ -37,6 +37,43 @@ def test_runtime_identity_round_trip_and_otel_attributes() -> None:
     assert original.json_schema()["properties"]["image_digest"]["pattern"].startswith("^")
 
 
+def test_identity_loads_deploy_v2_derived_results_without_iac_coordinates() -> None:
+    original = RuntimeIdentity.from_env(
+        {
+            "ENVIRONMENT": "pr-42",
+            "OTEL_SERVICE_NAME": "finance-api",
+            "SERVICE_VERSION": "a1b2c3d",
+            "GIT_COMMIT_SHA": SHA,
+            "IMAGE_DIGEST": DIGEST,
+            "CONFIGURATION_SHA256": CONFIG,
+            "RELEASE_ID": "preview/pr/42",
+        }
+    )
+    assert original.environment is EnvironmentTier.PREVIEW
+    assert original.deployment_environment == "pr-42"
+    assert original.commit_sha == SHA
+    standard = original.to_standard_otel_resource_attributes()
+    assert standard["deployment.environment.name"] == "pr-42"
+    assert all(not key.startswith("infra2.") for key in standard)
+
+
+def test_identity_rejects_display_environment_that_disagrees_with_tier() -> None:
+    with pytest.raises(ValueError, match="deployment_environment"):
+        identity(deployment_environment="pr-42")
+
+
+def test_deploy_v2_must_inject_resolved_sha_not_image_ref() -> None:
+    with pytest.raises(ValueError, match="commit_sha"):
+        RuntimeIdentity.from_env(
+            {
+                "ENVIRONMENT": "staging",
+                "OTEL_SERVICE_NAME": "api",
+                "SERVICE_VERSION": "v1.2.3",
+                "GIT_COMMIT_SHA": "v1.2.3",
+            }
+        )
+
+
 def test_protected_identity_requires_immutable_coordinates() -> None:
     with pytest.raises(ValueError, match="image_digest"):
         identity(image_digest="").validate_protected()

@@ -57,7 +57,7 @@ class EnvironmentField:
 
 @dataclass(frozen=True)
 class EnvironmentManifest:
-    """Versioned App-to-platform configuration injection contract."""
+    """Versioned application configuration contract for any environment producer."""
 
     source: str
     fields: tuple[EnvironmentField, ...]
@@ -161,9 +161,12 @@ def settings_json_schema(model: type, *, title: str | None = None) -> dict[str, 
 
 
 def environment_manifest_from_model(
-    model: type, *, source: str | None = None
+    model: type,
+    *,
+    source: str | None = None,
+    legacy_vault_metadata: bool = True,
 ) -> EnvironmentManifest:
-    """Extract an injection manifest from Pydantic v2 field metadata by duck typing."""
+    """Extract a manifest; ``vault`` metadata is a temporary v0.2 compatibility alias."""
 
     model_fields = getattr(model, "model_fields", None)
     if not isinstance(model_fields, Mapping):
@@ -191,7 +194,7 @@ def environment_manifest_from_model(
         for extra_key in extra_keys:
             if isinstance(extra_key, str) and extra_key not in aliases:
                 aliases.append(extra_key)
-        injected = bool(extra.get("injected") or extra.get("vault"))
+        injected = bool(extra.get("injected") or (legacy_vault_metadata and extra.get("vault")))
         sensitive = bool(extra.get("sensitive") or injected) or _is_secret(annotation)
         is_required = getattr(info, "is_required", None)
         required = bool(is_required()) if callable(is_required) else False

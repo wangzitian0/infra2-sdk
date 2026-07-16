@@ -54,6 +54,10 @@ def test_pydantic_model_renders_open_schema_and_manifest() -> None:
     assert prefixed.fields[0].env == "APP_DATABASE_URL"
     assert prefixed.fields[1].env == "TOKEN"
 
+    neutral = environment_manifest_from_model(Settings, legacy_vault_metadata=False)
+    assert neutral.fields[1].injected is False
+    assert neutral.fields[1].sensitive is True
+
 
 def test_environment_validation_resolves_aliases_without_values() -> None:
     manifest = environment_manifest_from_model(Settings)
