@@ -62,6 +62,37 @@ def test_identity_rejects_display_environment_that_disagrees_with_tier() -> None
         identity(deployment_environment="pr-42")
 
 
+def test_identity_accepts_provider_neutral_preview_display_name() -> None:
+    preview = identity(
+        environment=EnvironmentTier.PREVIEW,
+        deployment_environment="review-slot-202",
+    )
+    assert preview.deployment_environment == "review-slot-202"
+
+
+def test_identity_reads_standard_resource_identity_and_supports_strict_mode() -> None:
+    preview = RuntimeIdentity.from_env(
+        {
+            "ENVIRONMENT": "preview",
+            "OTEL_SERVICE_NAME": "api",
+            "GIT_COMMIT_SHA": SHA,
+            "OTEL_RESOURCE_ATTRIBUTES": (
+                "service.version=1.2.3,deployment.environment.name=review-slot-202"
+            ),
+        },
+        strict=True,
+    )
+    assert preview.service_version == "1.2.3"
+    assert preview.deployment_environment == "review-slot-202"
+    with pytest.raises(ValueError, match="ENVIRONMENT is required"):
+        RuntimeIdentity.from_env({"OTEL_SERVICE_NAME": "api"}, strict=True)
+    with pytest.raises(ValueError, match="commit_sha"):
+        RuntimeIdentity.from_env(
+            {"ENVIRONMENT": "preview", "OTEL_SERVICE_NAME": "api"},
+            strict=True,
+        )
+
+
 def test_deploy_v2_must_inject_resolved_sha_not_image_ref() -> None:
     with pytest.raises(ValueError, match="commit_sha"):
         RuntimeIdentity.from_env(

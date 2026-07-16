@@ -58,6 +58,19 @@ def test_environment_from_env_is_transparent_and_conflict_safe() -> None:
         environment_from_env({"ENVIRONMENT": "staging", "ENV": "production"})
 
 
+def test_strict_environment_requires_explicit_configuration() -> None:
+    with pytest.raises(ValueError, match="ENVIRONMENT is required"):
+        environment_from_env({}, required=True)
+    assert environment_from_env({"ENVIRONMENT": "preview"}, required=True) == RuntimeEnvironment(
+        "preview", EnvironmentTier.PREVIEW
+    )
+
+
+def test_environment_from_env_detects_github_actions_from_supplied_mapping() -> None:
+    runtime = environment_from_env({"ENVIRONMENT": "ci", "GITHUB_ACTIONS": "true"})
+    assert runtime.tier is EnvironmentTier.GITHUB_CI
+
+
 def test_process_environment_is_read_only_when_requested(monkeypatch) -> None:
     monkeypatch.setenv("ENVIRONMENT", "staging")
     assert environment_from_env().tier is EnvironmentTier.STAGING

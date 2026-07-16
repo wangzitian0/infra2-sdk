@@ -32,7 +32,9 @@ from infra2_sdk.runtime.environment import (
     RuntimeEnvironment,
     UnknownEnvironmentPolicy,
     environment_from_env,
+    normalize_deployment_environment,
     resolve_environment_tier,
+    strict_environment_from_env,
 )
 from infra2_sdk.runtime.identity import RuntimeIdentity, configuration_fingerprint
 from infra2_sdk.runtime.probes import (
@@ -69,6 +71,7 @@ __all__ = [
     "configuration_fingerprint",
     "environment_manifest_from_model",
     "environment_from_env",
+    "normalize_deployment_environment",
     "resolve_env",
     "resolve_environment_tier",
     "resolve_runtime_env",
@@ -76,5 +79,6 @@ __all__ = [
     "runtime_env_spec",
     "run_probes",
     "settings_json_schema",
+    "strict_environment_from_env",
     "validate_environment",
 ]

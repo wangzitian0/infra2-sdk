@@ -29,7 +29,8 @@ jobs:
         run: |
           python -m venv .wheel-smoke
           .wheel-smoke/bin/python -m pip install dist/*.whl
-          .wheel-smoke/bin/python -c "from infra2_sdk.runtime import EnvironmentTier, environment_from_env, runtime_env_contract; assert environment_from_env({'ENV': 'pr-42'}).tier is EnvironmentTier.PREVIEW; assert runtime_env_contract()['contract_version'] == 1"
+          .wheel-smoke/bin/python -c "from infra2_sdk.runtime import EnvironmentTier, environment_from_env, runtime_env_contract; assert environment_from_env({'ENVIRONMENT': 'preview'}).tier is EnvironmentTier.PREVIEW; assert runtime_env_contract()['contract_version'] == 1"
+          .wheel-smoke/bin/python -c "from infra2_sdk.runtime.otel import OtelSettings; from infra2_sdk.runtime.s3 import S3Settings; assert not OtelSettings.from_env({}).enabled; settings = S3Settings.from_env({'S3_BUCKET': 'portable-artifacts'}); assert settings.region_name is None and settings.addressing_style is None"
           .wheel-smoke/bin/python -c "import infra2_sdk.runtime.s3; import infra2_sdk.runtime.postgres; import infra2_sdk.runtime.http; import infra2_sdk.runtime.otel"
           .wheel-smoke/bin/python -m pip check
       - name: Publish immutable GitHub release artifacts

@@ -51,6 +51,7 @@ def test_standard_client_factory_returns_session_client() -> None:
         endpoint_url="http://minio:9000",
         access_key_id="key",
         secret_access_key="secret",
+        addressing_style="path",
     )
     assert "secret" not in repr(settings)
     assert create_s3_client(settings, session=session) == "client"
@@ -94,6 +95,22 @@ def test_s3_legacy_aliases_and_default_credential_chain() -> None:
     assert settings.access_key_id is None
 
 
+def test_plain_aws_environment_preserves_the_boto3_provider_chain() -> None:
+    settings = S3Settings.from_env({"S3_BUCKET": "portable-artifacts"})
+    assert settings.endpoint_url is None
+    assert settings.region_name is None
+    assert settings.addressing_style is None
+    assert settings.access_key_id is None
+
+    session = Session()
+    create_s3_client(settings, session=session)
+    _, kwargs = session.args
+    assert kwargs["endpoint_url"] is None
+    assert kwargs["region_name"] is None
+    assert kwargs["aws_access_key_id"] is None
+    assert kwargs["config"].s3 is None
+
+
 @pytest.mark.parametrize(
     "environ,message",
     [
@@ -106,6 +123,18 @@ def test_s3_legacy_aliases_and_default_credential_chain() -> None:
         ({"S3_BUCKET": "portable-artifacts", "AWS_ACCESS_KEY_ID": "key"}, "provided together"),
         ({"S3_BUCKET": "portable-artifacts", "AWS_SESSION_TOKEN": "token"}, "session token"),
         ({"S3_BUCKET": "portable-artifacts", "AWS_ENDPOINT_URL_S3": "minio:9000"}, "http"),
+        ({"S3_BUCKET": "portable-artifacts", "AWS_ENDPOINT_URL_S3": "https://"}, "host"),
+        (
+            {"S3_BUCKET": "portable-artifacts", "AWS_ENDPOINT_URL_S3": "https://bad host"},
+            "host",
+        ),
+        (
+            {
+                "S3_BUCKET": "portable-artifacts",
+                "AWS_ENDPOINT_URL_S3": "https://user:password@objects.example.test",
+            },
+            "credentials",
+        ),
     ],
 )
 def test_s3_from_env_rejects_invalid_configuration(environ, message) -> None:

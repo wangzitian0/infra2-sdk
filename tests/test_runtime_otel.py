@@ -40,8 +40,9 @@ def test_otel_settings_load_standard_env_and_preserve_preview_display_name() -> 
 
 
 def test_otel_is_transparently_disabled_without_endpoint_or_by_standard_flag() -> None:
-    no_endpoint = OtelSettings.from_env({"OTEL_SERVICE_NAME": "api"})
+    no_endpoint = OtelSettings.from_env({})
     assert no_endpoint.enabled is False
+    assert no_endpoint.service_name == "unknown_service"
     disabled = OtelSettings.from_env(
         {
             "OTEL_SERVICE_NAME": "api",
@@ -52,10 +53,60 @@ def test_otel_is_transparently_disabled_without_endpoint_or_by_standard_flag() -
     assert disabled.enabled is False
 
 
+def test_otel_uses_standard_resource_attributes_without_custom_sdk_variables() -> None:
+    settings = OtelSettings.from_env(
+        {
+            "OTEL_RESOURCE_ATTRIBUTES": (
+                "service.name=portable-api,service.version=1.2.3,"
+                "deployment.environment.name=staging"
+            )
+        }
+    )
+    assert settings.service_name == "portable-api"
+    assert settings.service_version == "1.2.3"
+    assert settings.environment == "staging"
+    assert settings.deployment_environment == "staging"
+
+
+def test_otel_accepts_provider_neutral_preview_display_names() -> None:
+    settings = OtelSettings.from_env(
+        {
+            "ENVIRONMENT": "preview",
+            "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=review-slot-202",
+        }
+    )
+    assert settings.environment == "preview"
+    assert settings.deployment_environment == "review-slot-202"
+
+
+def test_otel_strict_mode_and_boolean_grammar_fail_closed() -> None:
+    with pytest.raises(ValueError, match="ENVIRONMENT is required"):
+        OtelSettings.from_env({}, strict=True)
+    with pytest.raises(ValueError, match="true or false"):
+        OtelSettings.from_env(
+            {"ENVIRONMENT": "local_dev", "OTEL_SDK_DISABLED": "1"},
+            strict=True,
+        )
+
+
+def test_otel_non_strict_mode_reports_and_discards_invalid_standard_values() -> None:
+    with pytest.warns(RuntimeWarning, match="true or false"):
+        settings = OtelSettings.from_env({"OTEL_SDK_DISABLED": "1"})
+    assert settings.enabled is False
+    with pytest.warns(RuntimeWarning, match="key=value"):
+        settings = OtelSettings.from_env({"OTEL_RESOURCE_ATTRIBUTES": "invalid"})
+    assert settings.resource_attributes == {}
+
+
 def test_otel_rejects_malformed_or_mismatched_resource_environment() -> None:
     with pytest.raises(ValueError, match="OTEL_RESOURCE_ATTRIBUTES"):
         OtelSettings.from_env(
-            {"OTEL_SERVICE_NAME": "api", "OTEL_RESOURCE_ATTRIBUTES": "missing-equals"}
+            {
+                "ENVIRONMENT": "local_dev",
+                "OTEL_SERVICE_NAME": "api",
+                "OTEL_RESOURCE_ATTRIBUTES": "missing-equals",
+            },
+            strict=True,
         )
     with pytest.raises(ValueError, match="disagrees"):
         OtelSettings.from_env(
@@ -63,7 +114,29 @@ def test_otel_rejects_malformed_or_mismatched_resource_environment() -> None:
                 "ENVIRONMENT": "staging",
                 "OTEL_SERVICE_NAME": "api",
                 "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment=production",
-            }
+            },
+            strict=True,
+        )
+
+
+def test_otel_resource_attributes_decode_keys_and_reject_bad_percent_escapes() -> None:
+    settings = OtelSettings.from_env({"OTEL_RESOURCE_ATTRIBUTES": "service%2Ename=portable-api"})
+    assert settings.service_name == "portable-api"
+    with pytest.raises(ValueError, match="percent escape"):
+        OtelSettings.from_env(
+            {
+                "ENVIRONMENT": "local_dev",
+                "OTEL_RESOURCE_ATTRIBUTES": "service.name=bad%ZZ",
+            },
+            strict=True,
+        )
+    with pytest.raises(ValueError, match="UTF-8"):
+        OtelSettings.from_env(
+            {
+                "ENVIRONMENT": "local_dev",
+                "OTEL_RESOURCE_ATTRIBUTES": "service.name=%FF",
+            },
+            strict=True,
         )
 
 

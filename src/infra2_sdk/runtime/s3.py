@@ -25,24 +25,32 @@ class S3Settings:
     access_key_id: str | None = None
     secret_access_key: str | None = field(default=None, repr=False)
     session_token: str | None = field(default=None, repr=False)
-    region_name: str = "us-east-1"
+    region_name: str | None = None
     connect_timeout_seconds: float = 5.0
     read_timeout_seconds: float = 5.0
-    addressing_style: str = "path"
+    addressing_style: str | None = None
 
     def __post_init__(self) -> None:
         if not _BUCKET_RE.match(self.bucket) or ".." in self.bucket:
             raise ValueError("bucket must be a lowercase S3-compatible name")
         if self.connect_timeout_seconds <= 0 or self.read_timeout_seconds <= 0:
             raise ValueError("S3 timeouts must be positive")
-        if self.addressing_style not in {"auto", "path", "virtual"}:
+        if self.addressing_style not in {None, "auto", "path", "virtual"}:
             raise ValueError("addressing_style must be auto, path, or virtual")
         if bool(self.access_key_id) != bool(self.secret_access_key):
             raise ValueError("explicit S3 access key and secret key must be provided together")
         if self.session_token and not self.access_key_id:
             raise ValueError("explicit S3 session token requires explicit access credentials")
-        if self.endpoint_url and not self.endpoint_url.startswith(("http://", "https://")):
-            raise ValueError("S3 endpoint URL must use http:// or https://")
+        if self.endpoint_url:
+            endpoint = urlsplit(self.endpoint_url)
+            if (
+                endpoint.scheme not in {"http", "https"}
+                or not endpoint.netloc
+                or any(char.isspace() for char in endpoint.netloc)
+            ):
+                raise ValueError("S3 endpoint URL must use http:// or https:// with a host")
+            if endpoint.username is not None or endpoint.password is not None:
+                raise ValueError("S3 endpoint URL must not contain credentials")
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> S3Settings:
@@ -60,15 +68,12 @@ class S3Settings:
         region = resolve_runtime_env(
             environ,
             RuntimeEnvKey.S3_REGION,
-            default="us-east-1",
         ).value
         access_key = resolve_runtime_env(environ, RuntimeEnvKey.AWS_ACCESS_KEY_ID).value
         secret_key = resolve_runtime_env(environ, RuntimeEnvKey.AWS_SECRET_ACCESS_KEY).value
         session_token = resolve_runtime_env(environ, RuntimeEnvKey.AWS_SESSION_TOKEN).value
-        addressing_style = resolve_runtime_env(
-            environ, RuntimeEnvKey.S3_ADDRESSING_STYLE, default="path"
-        ).value
-        assert bucket is not None and region is not None and addressing_style is not None
+        addressing_style = resolve_runtime_env(environ, RuntimeEnvKey.S3_ADDRESSING_STYLE).value
+        assert bucket is not None
         return cls(
             bucket=bucket,
             endpoint_url=endpoint,
@@ -82,7 +87,7 @@ class S3Settings:
             read_timeout_seconds=env_float(
                 environ, RuntimeEnvKey.S3_READ_TIMEOUT_SECONDS, default=5.0
             ),
-            addressing_style=addressing_style.lower(),
+            addressing_style=addressing_style.lower() if addressing_style else None,
         )
 
 
@@ -92,6 +97,9 @@ def create_s3_client(settings: S3Settings, *, session: Any | None = None) -> Any
     boto3 = require("boto3", extra="s3")
     botocore_config = require("botocore.config", extra="s3")
     owner = session or boto3
+    s3_config = (
+        {"addressing_style": settings.addressing_style} if settings.addressing_style else None
+    )
     return owner.client(
         "s3",
         endpoint_url=settings.endpoint_url,
@@ -103,7 +111,7 @@ def create_s3_client(settings: S3Settings, *, session: Any | None = None) -> Any
             signature_version="s3v4",
             connect_timeout=settings.connect_timeout_seconds,
             read_timeout=settings.read_timeout_seconds,
-            s3={"addressing_style": settings.addressing_style},
+            s3=s3_config,
         ),
     )
 
@@ -151,7 +159,7 @@ def ensure_bucket(
         if not allow_create or not is_not_found(exc):
             raise
     kwargs: dict[str, Any] = {"Bucket": settings.bucket}
-    if settings.region_name != "us-east-1":
+    if settings.region_name and settings.region_name != "us-east-1":
         kwargs["CreateBucketConfiguration"] = {"LocationConstraint": settings.region_name}
     s3.create_bucket(**kwargs)
 
