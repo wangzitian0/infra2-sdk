@@ -226,3 +226,25 @@ def test_policy_from_dict_requires_nested_objects() -> None:
     raw["staging"] = "deploy-release.yml"
     with pytest.raises(ValueError, match="staging must be an object"):
         ProductionEvidencePolicy.from_dict(raw)
+
+
+def test_expectation_round_trips_require_head_sha_false() -> None:
+    # A staging deploy dispatched on a branch (head_sha = branch tip, not the tag
+    # commit) declares this explicitly — never a silent verifier-side skip.
+    branch_dispatched = expectation(require_head_sha=False)
+    raw = json.loads(json.dumps(branch_dispatched.to_dict()))
+    assert RunEvidenceExpectation.from_dict(raw) == branch_dispatched
+    assert RunEvidenceExpectation.from_dict(raw).require_head_sha is False
+
+
+def test_expectation_defaults_require_head_sha_true() -> None:
+    raw = expectation().to_dict()
+    del raw["require_head_sha"]
+    assert RunEvidenceExpectation.from_dict(raw).require_head_sha is True
+
+
+def test_expectation_rejects_a_non_boolean_require_head_sha() -> None:
+    raw = expectation().to_dict()
+    raw["require_head_sha"] = "false"
+    with pytest.raises(ValueError, match="require_head_sha must be a boolean"):
+        RunEvidenceExpectation.from_dict(raw)
