@@ -223,9 +223,7 @@ class RunEvidenceExpectation:
 
     def __post_init__(self) -> None:
         if not _WORKFLOW_PATH_RE.match(self.workflow_path):
-            raise ValueError(
-                "workflow_path must be a .github/workflows/<name>.yml path"
-            )
+            raise ValueError("workflow_path must be a .github/workflows/<name>.yml path")
         if self.event not in _RUN_EVENTS:
             raise ValueError(f"event must be one of {sorted(_RUN_EVENTS)}")
         if not self.display_title_template.strip():
@@ -233,8 +231,7 @@ class RunEvidenceExpectation:
         residue = self.display_title_template.replace(_TITLE_PLACEHOLDER, "")
         if "{" in residue or "}" in residue:
             raise ValueError(
-                "display_title_template supports the literal {version_ref} "
-                "placeholder only"
+                "display_title_template supports the literal {version_ref} placeholder only"
             )
 
     def expected_display_title(self, version_ref: str) -> str:

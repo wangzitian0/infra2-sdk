@@ -191,9 +191,7 @@ def test_policy_json_round_trip() -> None:
 
 
 def test_expectation_renders_the_version_ref() -> None:
-    assert (
-        expectation().expected_display_title("v0.0.6") == "Release Images v0.0.6"
-    )
+    assert expectation().expected_display_title("v0.0.6") == "Release Images v0.0.6"
 
 
 def test_expectation_rejects_a_non_workflow_path() -> None:
@@ -220,9 +218,7 @@ def test_policy_rejects_a_malformed_service_key() -> None:
 
 def test_policy_rejects_an_unknown_contract_version() -> None:
     with pytest.raises(ValueError, match="evidence policy contract_version"):
-        ProductionEvidencePolicy.from_dict(
-            {**policy().to_dict(), "contract_version": 2}
-        )
+        ProductionEvidencePolicy.from_dict({**policy().to_dict(), "contract_version": 2})
 
 
 def test_policy_from_dict_requires_nested_objects() -> None:
