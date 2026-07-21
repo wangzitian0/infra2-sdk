@@ -1,3 +1,4 @@
+import json
 from dataclasses import replace
 
 import pytest
@@ -9,6 +10,8 @@ from infra2_sdk.deploy import (
     DeployState,
     DeployStatus,
     DeployType,
+    ProductionEvidencePolicy,
+    RunEvidenceExpectation,
 )
 
 SHA = "a" * 40
@@ -149,3 +152,77 @@ def test_status_rejects_bad_contract_and_types() -> None:
             state=DeployState.ACCEPTED,
             contract_version=True,
         )
+
+
+# --- Production evidence policy (infra2-sdk#8) ------------------------------------
+
+
+def expectation(**overrides) -> "RunEvidenceExpectation":
+    values = {
+        "workflow_path": ".github/workflows/ci-required.yml",
+        "event": "push",
+        "display_title_template": "Release Images {version_ref}",
+    }
+    values.update(overrides)
+    return RunEvidenceExpectation(**values)
+
+
+def policy(**overrides) -> "ProductionEvidencePolicy":
+    values = {
+        "service": "truealpha/app",
+        "source": expectation(),
+        "staging": expectation(
+            workflow_path=".github/workflows/deploy-release.yml",
+            event="workflow_dispatch",
+            display_title_template="Deploy staging {version_ref}",
+        ),
+        "review_base_ref": "main",
+    }
+    values.update(overrides)
+    return ProductionEvidencePolicy(**values)
+
+
+def test_policy_json_round_trip() -> None:
+    # Apps check this contract into their own repo as plain JSON: serialize ->
+    # json -> deserialize must reproduce an identical value.
+    original = policy()
+    raw = json.loads(json.dumps(original.to_dict()))
+    assert ProductionEvidencePolicy.from_dict(raw) == original
+
+
+def test_expectation_renders_the_version_ref() -> None:
+    assert expectation().expected_display_title("v0.0.6") == "Release Images v0.0.6"
+
+
+def test_expectation_rejects_a_non_workflow_path() -> None:
+    with pytest.raises(ValueError, match="workflow_path"):
+        expectation(workflow_path="tools/deploy.sh")
+
+
+def test_expectation_rejects_an_unknown_event() -> None:
+    with pytest.raises(ValueError, match="event must be one of"):
+        expectation(event="repository_dispatch")
+
+
+def test_expectation_rejects_placeholders_other_than_version_ref() -> None:
+    # Only the literal {version_ref} substitution — never arbitrary/unverifiable
+    # placeholders an app-side self-test couldn't grep for.
+    with pytest.raises(ValueError, match="version_ref.*placeholder only"):
+        expectation(display_title_template="Deploy {deploy_type} {version_ref}")
+
+
+def test_policy_rejects_a_malformed_service_key() -> None:
+    with pytest.raises(ValueError, match="project/service"):
+        policy(service="TrueAlpha")
+
+
+def test_policy_rejects_an_unknown_contract_version() -> None:
+    with pytest.raises(ValueError, match="evidence policy contract_version"):
+        ProductionEvidencePolicy.from_dict({**policy().to_dict(), "contract_version": 2})
+
+
+def test_policy_from_dict_requires_nested_objects() -> None:
+    raw = policy().to_dict()
+    raw["staging"] = "deploy-release.yml"
+    with pytest.raises(ValueError, match="staging must be an object"):
+        ProductionEvidencePolicy.from_dict(raw)

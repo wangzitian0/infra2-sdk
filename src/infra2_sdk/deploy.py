@@ -186,3 +186,114 @@ def _string(raw: Mapping[str, Any], key: str, *, required: bool = True) -> str:
     if required and not value:
         raise ValueError(f"{key} is required")
     return value
+
+
+# --- Production evidence policy (infra2#576 / infra2-sdk#8) -----------------------
+#
+# Each application repo is the sole authority on its own CI facts: which workflow
+# builds its release image, which one runs its staging deploy, and the exact
+# ``run-name`` title each produces. The app checks an instance of this contract into
+# its OWN repo at PRODUCTION_EVIDENCE_POLICY_PATH; infra2's deploy receiver fetches
+# that file (read-only GitHub API, pinned to the release's source_sha) and verifies
+# the production evidence runs against the app's own declared expectations — no
+# hardcoded per-app dict in infra2, so a CI-layout change and its contract update
+# land in the same PR in the same repo.
+
+EVIDENCE_POLICY_CONTRACT_VERSION = 1
+PRODUCTION_EVIDENCE_POLICY_PATH = "tools/production_evidence_policy.json"
+
+_WORKFLOW_PATH_RE = re.compile(r"\A\.github/workflows/[A-Za-z0-9._-]+\.ya?ml\Z")
+_TITLE_PLACEHOLDER = "{version_ref}"
+_RUN_EVENTS = frozenset({"push", "workflow_dispatch"})
+
+
+@dataclass(frozen=True)
+class RunEvidenceExpectation:
+    """What one evidence run (release-image build, or staging deploy) must look like.
+
+    ``display_title_template`` is a literal string supporting ``{version_ref}``
+    substitution ONLY — not a callable, not a regex (infra2#572: apps must not be
+    able to declare logic infra2 can't safely evaluate, only a greppable literal
+    that a same-repo test can compare against the workflow's own ``run-name``).
+    """
+
+    workflow_path: str
+    event: str
+    display_title_template: str
+
+    def __post_init__(self) -> None:
+        if not _WORKFLOW_PATH_RE.match(self.workflow_path):
+            raise ValueError("workflow_path must be a .github/workflows/<name>.yml path")
+        if self.event not in _RUN_EVENTS:
+            raise ValueError(f"event must be one of {sorted(_RUN_EVENTS)}")
+        if not self.display_title_template.strip():
+            raise ValueError("display_title_template is required")
+        residue = self.display_title_template.replace(_TITLE_PLACEHOLDER, "")
+        if "{" in residue or "}" in residue:
+            raise ValueError(
+                "display_title_template supports the literal {version_ref} placeholder only"
+            )
+
+    def expected_display_title(self, version_ref: str) -> str:
+        return self.display_title_template.replace(_TITLE_PLACEHOLDER, version_ref)
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> RunEvidenceExpectation:
+        return cls(
+            workflow_path=_string(raw, "workflow_path"),
+            event=_string(raw, "event"),
+            display_title_template=_string(raw, "display_title_template"),
+        )
+
+
+@dataclass(frozen=True)
+class ProductionEvidencePolicy:
+    """An app repo's own declaration of its production evidence expectations.
+
+    ``service`` binds the file to the one deploy_v2 service it describes, so the
+    receiver can reject a copy-pasted contract that names a different service.
+    """
+
+    service: str
+    source: RunEvidenceExpectation
+    staging: RunEvidenceExpectation
+    review_base_ref: str
+    contract_version: int = EVIDENCE_POLICY_CONTRACT_VERSION
+
+    def __post_init__(self) -> None:
+        require_contract_version(
+            self.contract_version,
+            EVIDENCE_POLICY_CONTRACT_VERSION,
+            description="evidence policy contract_version",
+        )
+        if not _SERVICE_RE.match(self.service):
+            raise ValueError("service must have the form project/service")
+        if not self.review_base_ref.strip():
+            raise ValueError("review_base_ref is required")
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> ProductionEvidencePolicy:
+        contract_version = parse_contract_version(
+            raw,
+            EVIDENCE_POLICY_CONTRACT_VERSION,
+            description="evidence policy contract_version",
+        )
+        source = raw.get("source")
+        staging = raw.get("staging")
+        if not isinstance(source, Mapping):
+            raise ValueError("source must be an object")
+        if not isinstance(staging, Mapping):
+            raise ValueError("staging must be an object")
+        return cls(
+            contract_version=contract_version,
+            service=_string(raw, "service"),
+            source=RunEvidenceExpectation.from_dict(source),
+            staging=RunEvidenceExpectation.from_dict(staging),
+            review_base_ref=_string(raw, "review_base_ref"),
+        )
