@@ -215,11 +215,21 @@ class RunEvidenceExpectation:
     substitution ONLY — not a callable, not a regex (infra2#572: apps must not be
     able to declare logic infra2 can't safely evaluate, only a greppable literal
     that a same-repo test can compare against the workflow's own ``run-name``).
+
+    ``require_head_sha``: whether the run's ``head_sha`` must equal the release's
+    ``source_sha``. True for a tag-push build (the run IS the tag commit). A
+    staging deploy dispatched on the default branch runs at whatever that
+    branch's tip is — equal to the tag commit only until the next merge lands —
+    so an app whose staging dispatch targets a branch declares False and the
+    version linkage is carried by ``{version_ref}`` in the display title instead
+    (the deploy receiver separately pins version_ref -> source_sha at execution
+    time). Declared per-run, never silently skipped by the verifier.
     """
 
     workflow_path: str
     event: str
     display_title_template: str
+    require_head_sha: bool = True
 
     def __post_init__(self) -> None:
         if not _WORKFLOW_PATH_RE.match(self.workflow_path):
@@ -242,10 +252,14 @@ class RunEvidenceExpectation:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> RunEvidenceExpectation:
+        require_head_sha = raw.get("require_head_sha", True)
+        if type(require_head_sha) is not bool:
+            raise ValueError("require_head_sha must be a boolean")
         return cls(
             workflow_path=_string(raw, "workflow_path"),
             event=_string(raw, "event"),
             display_title_template=_string(raw, "display_title_template"),
+            require_head_sha=require_head_sha,
         )
 
 
