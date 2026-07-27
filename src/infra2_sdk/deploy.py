@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from enum import StrEnum
 from typing import Any
 
@@ -186,6 +186,36 @@ def _string(raw: Mapping[str, Any], key: str, *, required: bool = True) -> str:
     if required and not value:
         raise ValueError(f"{key} is required")
     return value
+
+
+def validate_wire_shape(raw: Mapping[str, Any]) -> None:
+    """Fail closed unless ``raw``'s keys are EXACTLY the DeployRequest v1 wire shape.
+
+    ``DeployRequest.from_dict`` is deliberately lenient about extra/missing keys —
+    it only reads what it needs, so a minor sdk field addition doesn't break an
+    older sender. This is the opposite, stricter check for a sender that wants a
+    hard guarantee it is emitting the current wire shape exactly: no field silently
+    dropped, no unexpected extra field silently accepted. Expected field sets are
+    derived from the dataclasses themselves (``dataclasses.fields``), not
+    hand-copied, so they can never drift from the real contract the way a
+    hardcoded ``frozenset`` in a caller repo can.
+
+    Call this BEFORE ``DeployRequest.from_dict(raw)`` (so a structurally wrong
+    payload fails with a shape error, not a confusing missing-field error), and
+    call it again on ``request.to_dict()`` after round-tripping if the caller
+    wants to prove serialization is lossless too.
+    """
+    if not isinstance(raw, Mapping):
+        raise ValueError("deploy request must be an object")
+    expected = {f.name for f in fields(DeployRequest)}
+    if set(raw) != expected:
+        raise ValueError("request fields must exactly match DeployRequest v1")
+    evidence = raw.get("evidence")
+    if not isinstance(evidence, Mapping):
+        raise ValueError("evidence must be an object")
+    expected_evidence = {f.name for f in fields(DeployEvidence)}
+    if set(evidence) != expected_evidence:
+        raise ValueError("evidence fields must exactly match DeployEvidence v1")
 
 
 # --- Production evidence policy (infra2#576 / infra2-sdk#8) -----------------------
