@@ -12,6 +12,7 @@ from infra2_sdk.deploy import (
     DeployType,
     ProductionEvidencePolicy,
     RunEvidenceExpectation,
+    validate_wire_shape,
 )
 
 SHA = "a" * 40
@@ -37,6 +38,64 @@ def request(**overrides) -> DeployRequest:
 def test_request_round_trip() -> None:
     original = request()
     assert DeployRequest.from_dict(original.to_dict()) == original
+
+
+# --- validate_wire_shape: exact-field-set completeness (infra2#597 audit) ---------
+
+
+def test_validate_wire_shape_accepts_the_real_wire_dict() -> None:
+    validate_wire_shape(request().to_dict())
+
+
+def test_validate_wire_shape_rejects_an_extra_top_level_field() -> None:
+    raw = request().to_dict()
+    raw["unexpected_field"] = "oops"
+    with pytest.raises(ValueError, match="request fields must exactly match"):
+        validate_wire_shape(raw)
+
+
+def test_validate_wire_shape_rejects_a_missing_top_level_field() -> None:
+    raw = request().to_dict()
+    del raw["source_sha"]
+    with pytest.raises(ValueError, match="request fields must exactly match"):
+        validate_wire_shape(raw)
+
+
+def test_validate_wire_shape_rejects_an_extra_evidence_field() -> None:
+    raw = request().to_dict()
+    raw["evidence"]["unexpected_field"] = "oops"
+    with pytest.raises(ValueError, match="evidence fields must exactly match"):
+        validate_wire_shape(raw)
+
+
+def test_validate_wire_shape_rejects_a_missing_evidence_field() -> None:
+    raw = request().to_dict()
+    del raw["evidence"]["source_run_id"]
+    with pytest.raises(ValueError, match="evidence fields must exactly match"):
+        validate_wire_shape(raw)
+
+
+def test_validate_wire_shape_rejects_a_non_object_evidence() -> None:
+    raw = request().to_dict()
+    raw["evidence"] = "not-an-object"
+    with pytest.raises(ValueError, match="evidence must be an object"):
+        validate_wire_shape(raw)
+
+
+def test_validate_wire_shape_rejects_a_non_object_request() -> None:
+    with pytest.raises(ValueError, match="deploy request must be an object"):
+        validate_wire_shape("not-an-object")  # type: ignore[arg-type]
+
+
+def test_validate_wire_shape_field_sets_track_the_dataclasses_not_a_hardcoded_copy() -> None:
+    """Regression guard for the exact drift this function replaces: the expected
+    field sets are derived from DeployRequest/DeployEvidence's own dataclass
+    fields, not a hand-copied literal that could silently go stale."""
+    from dataclasses import fields
+
+    raw = request().to_dict()
+    assert set(raw) == {f.name for f in fields(DeployRequest)}
+    assert set(raw["evidence"]) == {f.name for f in fields(DeployEvidence)}
 
 
 def test_production_requires_staging_and_review_evidence() -> None:

@@ -21,7 +21,7 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v0.4.1"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v0.5.0"
 ```
 
 ## Modules
@@ -31,6 +31,8 @@ python -m pip install \
 | `infra2_sdk.delivery` | Environment/stage evidence and failure taxonomy |
 | `infra2_sdk.ci` | Delivery-stage vocabulary and CI gate inventory validation |
 | `infra2_sdk.deploy` | Versioned deploy request/status wire contract, and the per-app `ProductionEvidencePolicy` contract each app checks into its own repo at `PRODUCTION_EVIDENCE_POLICY_PATH` |
+| `infra2_sdk.dispatch` | Dispatch a `DeployRequest` to infra2's receiver workflow and correlate/verify the resulting run (watermark, ambiguity guard, log-content check) |
+| `infra2_sdk.deploy_health` | Poll a deployed app URL until the new version is live (HTTP-200 + optional status/version checks) |
 | `infra2_sdk.refs` | Pure Git ref classification and resolution |
 | `infra2_sdk.runtime.environment` | Canonical six-tier environment vocabulary and aliases |
 | `infra2_sdk.runtime.environ` | Versioned canonical env registry and conflict-safe resolution |
@@ -50,10 +52,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v0.4.1'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v0.5.0'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v0.4.1'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v0.5.0'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -79,7 +81,7 @@ from infra2_sdk.runtime import RuntimeIdentity, environment_from_env
 from infra2_sdk.runtime.postgres import PostgresSettings
 from infra2_sdk.runtime.s3 import S3Settings, create_s3_client
 
-runtime = environment_from_env()       # reads os.environ only when called
+runtime = environment_from_env()  # reads os.environ only when called
 identity = RuntimeIdentity.from_env()  # no network or platform lookup
 database = PostgresSettings.from_env()
 s3 = create_s3_client(S3Settings.from_env())
