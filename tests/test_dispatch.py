@@ -4,10 +4,14 @@ dispatch_and_wait, adapted to the sdk's DeployRequest-object signature."""
 
 from __future__ import annotations
 
+import io
+import zipfile
+
+import httpx
 import pytest
 
 from infra2_sdk.deploy import DeployEvidence, DeployOperation, DeployRequest, DeployType
-from infra2_sdk.dispatch import INFRA_REPOSITORY, dispatch_and_wait
+from infra2_sdk.dispatch import INFRA_REPOSITORY, dispatch_and_wait, github_api_client
 
 SHA = "a" * 40
 
@@ -198,3 +202,69 @@ def test_run_id_rejects_non_positive_integers() -> None:
     for run_id in (True, 0, "101"):
         with pytest.raises(RuntimeError, match="positive integer"):
             _run_id({"id": run_id})
+
+
+# --- github_api_client: the httpx-backed Api/LogFetcher adapter -------------------
+# Ported from finance_report's own (now-retired) test of its local _github_api /
+# _github_logs helpers, which this function generalizes.
+
+
+def _client_for(response: httpx.Response):
+    api, fetch_logs = github_api_client(
+        token="test-token",
+        user_agent="test-agent",
+        transport=httpx.MockTransport(lambda _request: response),
+    )
+    return api, fetch_logs
+
+
+def test_github_api_client_get_returns_parsed_json() -> None:
+    api, _ = _client_for(httpx.Response(200, json={"workflow_runs": []}))
+    assert api("GET", "/runs", None) == {"workflow_runs": []}
+
+
+def test_github_api_client_post_returns_none_on_204() -> None:
+    api, _ = _client_for(httpx.Response(204))
+    assert api("POST", "/dispatches", {}) is None
+
+
+def test_github_api_client_redacts_the_response_body_and_query_string_on_error() -> None:
+    api, _ = _client_for(httpx.Response(403, text="secret response body"))
+    with pytest.raises(RuntimeError, match="HTTP 403") as exc_info:
+        api("GET", "/runs?token=hidden", None)
+    assert "secret response body" not in str(exc_info.value)
+    assert "token=hidden" not in str(exc_info.value)
+
+
+def test_github_api_client_post_rejects_a_non_204_success() -> None:
+    api, _ = _client_for(httpx.Response(200))
+    with pytest.raises(RuntimeError, match="expected HTTP 204"):
+        api("POST", "/dispatches", {})
+
+
+def test_github_api_client_get_rejects_a_non_json_body() -> None:
+    api, _ = _client_for(httpx.Response(200, text="{"))
+    with pytest.raises(RuntimeError, match="not valid JSON"):
+        api("GET", "/runs", None)
+
+
+def test_github_api_client_fetch_logs_joins_every_archive_member() -> None:
+    archive_bytes = io.BytesIO()
+    with zipfile.ZipFile(archive_bytes, "w") as archive:
+        archive.writestr("receiver/1.txt", b"first")
+        archive.writestr("receiver/2.txt", b"second")
+    _, fetch_logs = _client_for(httpx.Response(200, content=archive_bytes.getvalue()))
+    assert fetch_logs(101) == b"first\nsecond"
+
+
+def test_github_api_client_fetch_logs_redacts_the_response_body_on_error() -> None:
+    _, fetch_logs = _client_for(httpx.Response(404, text="private logs"))
+    with pytest.raises(RuntimeError, match="HTTP 404") as exc_info:
+        fetch_logs(101)
+    assert "private logs" not in str(exc_info.value)
+
+
+def test_github_api_client_fetch_logs_rejects_a_non_zip_body() -> None:
+    _, fetch_logs = _client_for(httpx.Response(200, content=b"not-a-zip"))
+    with pytest.raises(RuntimeError, match="not a zip archive"):
+        fetch_logs(101)
