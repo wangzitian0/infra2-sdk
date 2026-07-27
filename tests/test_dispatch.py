@@ -94,7 +94,7 @@ def test_dispatch_and_wait_raises_when_more_than_one_run_appears_after_watermark
     with pytest.raises(RuntimeError, match="ambiguous"):
         dispatch_and_wait(
             _request(),
-            api=lambda method, path, body=None: (next(responses) if method == "GET" else None),
+            api=lambda method, path, body=None: next(responses) if method == "GET" else None,
             fetch_logs=lambda run_id: b"",
             sleep=lambda _: None,
             max_attempts=1,
@@ -120,7 +120,7 @@ def test_dispatch_and_wait_raises_when_logs_do_not_contain_the_request_id() -> N
     with pytest.raises(RuntimeError, match="request_id"):
         dispatch_and_wait(
             _request(),
-            api=lambda method, path, body=None: (next(responses) if method == "GET" else None),
+            api=lambda method, path, body=None: next(responses) if method == "GET" else None,
             fetch_logs=lambda run_id: b"another request",
             sleep=lambda _: None,
             max_attempts=1,
@@ -139,7 +139,7 @@ def test_dispatch_and_wait_times_out_when_no_run_ever_appears() -> None:
     with pytest.raises(RuntimeError, match="timed out"):
         dispatch_and_wait(
             _request(),
-            api=lambda method, path, body=None: (next(responses) if method == "GET" else None),
+            api=lambda method, path, body=None: next(responses) if method == "GET" else None,
             fetch_logs=lambda run_id: b"",
             sleep=sleeps.append,
             poll_interval=0.25,
@@ -167,7 +167,7 @@ def _run_with_outcome(conclusion: str, url: object):
     request = _request()
     return dispatch_and_wait(
         request,
-        api=lambda method, path, body=None: (next(responses) if method == "GET" else None),
+        api=lambda method, path, body=None: next(responses) if method == "GET" else None,
         fetch_logs=lambda run_id: request.request_id.encode(),
         sleep=lambda _: None,
         max_attempts=1,

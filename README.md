@@ -81,7 +81,7 @@ from infra2_sdk.runtime import RuntimeIdentity, environment_from_env
 from infra2_sdk.runtime.postgres import PostgresSettings
 from infra2_sdk.runtime.s3 import S3Settings, create_s3_client
 
-runtime = environment_from_env()       # reads os.environ only when called
+runtime = environment_from_env()  # reads os.environ only when called
 identity = RuntimeIdentity.from_env()  # no network or platform lookup
 database = PostgresSettings.from_env()
 s3 = create_s3_client(S3Settings.from_env())
