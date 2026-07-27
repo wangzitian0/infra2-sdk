@@ -128,11 +128,18 @@ def dispatch_and_wait(
 
 
 def github_api_client(
-    *, token: str, user_agent: str, timeout: float = 30.0
+    *,
+    token: str,
+    user_agent: str,
+    timeout: float = 30.0,
+    transport: Any = None,
 ) -> tuple[Api, LogFetcher]:
     """Build the default httpx-backed (``api``, ``fetch_logs``) pair for
     ``dispatch_and_wait``. Returned callables own an httpx.Client for their
     process lifetime — call from a single dispatch invocation, not held long-term.
+
+    ``transport`` is an httpx transport override (e.g. ``httpx.MockTransport``)
+    for tests; production callers omit it and get httpx's real network transport.
     """
     httpx = _require_httpx()
     client = httpx.Client(
@@ -145,6 +152,7 @@ def github_api_client(
         },
         follow_redirects=True,
         timeout=timeout,
+        transport=transport,
     )
 
     def api(method: str, path: str, body: object) -> object:
