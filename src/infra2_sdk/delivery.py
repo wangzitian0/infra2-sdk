@@ -70,9 +70,7 @@ class BudgetStatus(StrEnum):
 class DisagreementKind(StrEnum):
     NONE = "none"
     INTERNAL_HEALTH_PUBLIC_ROUTE = "internal-health-public-route"
-    HEARTBEAT_PROBE_RESULT = "heartbeat-probe-result"
     HEARTBEAT_PUBLIC_ROUTE = "heartbeat-public-route"
-    CANARY_APP_READINESS = "canary-app-readiness"
     FALLBACK_PUBLIC_ROUTE = "fallback-public-route"
 
 
