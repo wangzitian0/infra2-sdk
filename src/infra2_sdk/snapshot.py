@@ -24,6 +24,7 @@ SNAPSHOT_MANIFEST_VERSION = 1
 _SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_RUN_ID_RE = re.compile(r"^[1-9][0-9]*$")
 _SNAPSHOT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
 _SCHEMA_REVISION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _UTC_RFC3339_RE = re.compile(
@@ -51,7 +52,7 @@ class SnapshotProducer:
             raise ValueError("producer repository must have the form owner/repository")
         if not _SHA40_RE.fullmatch(self.source_sha):
             raise ValueError("producer source_sha must be a lowercase 40-hex commit sha")
-        if not self.run_id.isascii() or not self.run_id.isdigit() or int(self.run_id) <= 0:
+        if not _RUN_ID_RE.fullmatch(self.run_id):
             raise ValueError("producer run_id must be a positive decimal GitHub Actions run id")
         expected_url = f"https://github.com/{self.repository}/actions/runs/{self.run_id}"
         if self.run_url != expected_url:
@@ -278,7 +279,7 @@ class AnonymizedSnapshotManifest:
                     "properties": {
                         "repository": {"type": "string", "minLength": 1},
                         "source_sha": {"type": "string", "pattern": _SHA40_RE.pattern},
-                        "run_id": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+                        "run_id": {"type": "string", "pattern": _RUN_ID_RE.pattern},
                         "run_url": {"type": "string", "format": "uri"},
                     },
                 },

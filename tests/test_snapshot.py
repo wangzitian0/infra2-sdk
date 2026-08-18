@@ -105,11 +105,12 @@ def test_manifest_identity_and_time_are_fail_closed(
         manifest(**changes)
 
 
-def test_producer_run_is_immutable_and_self_consistent() -> None:
+@pytest.mark.parametrize("run_id", ["latest", "0", "0001"])
+def test_producer_run_is_immutable_and_self_consistent(run_id: str) -> None:
     with pytest.raises(ValueError, match="source_sha"):
         replace(manifest().producer, source_sha="main")
     with pytest.raises(ValueError, match="run_id"):
-        replace(manifest().producer, run_id="latest")
+        replace(manifest().producer, run_id=run_id)
     with pytest.raises(ValueError, match="must identify producer run"):
         replace(
             manifest().producer,
