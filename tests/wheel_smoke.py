@@ -8,7 +8,9 @@ import sys
 
 def smoke_core() -> None:
     from infra2_sdk.runtime import environment_from_env, runtime_env_contract
+    from infra2_sdk.snapshot import SNAPSHOT_MANIFEST_VERSION
 
+    assert SNAPSHOT_MANIFEST_VERSION == 1
     assert environment_from_env({}).name == "local_dev"
     assert runtime_env_contract()["contract_version"] == 1
     import infra2_sdk.runtime.http  # noqa: F401

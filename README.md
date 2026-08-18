@@ -33,6 +33,7 @@ python -m pip install \
 | `infra2_sdk.deploy` | Versioned deploy request/status wire contract, and the per-app `ProductionEvidencePolicy` contract each app checks into its own repo at `PRODUCTION_EVIDENCE_POLICY_PATH` |
 | `infra2_sdk.dispatch` | Dispatch a `DeployRequest` to infra2's receiver workflow and correlate/verify the resulting run (watermark, ambiguity guard, log-content check) |
 | `infra2_sdk.deploy_health` | Poll a deployed app URL until the new version is live (HTTP-200 + optional status/version checks) |
+| `infra2_sdk.snapshot` | Versioned anonymized-snapshot manifest, residual-proof shape, and artifact digest verification |
 | `infra2_sdk.refs` | Pure Git ref classification and resolution |
 | `infra2_sdk.runtime.environment` | Canonical six-tier environment vocabulary and aliases |
 | `infra2_sdk.runtime.environ` | Versioned canonical env registry and conflict-safe resolution |
@@ -156,6 +157,16 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
 - Importing any runtime module performs no network I/O and mutates no global provider state.
 - v0.2 ownership constants and `vault=True` manifest metadata remain compatibility-only; new
   consumers use tier semantics and explicit `injected=True` metadata.
+
+### Anonymized snapshot trust boundary
+
+`infra2_sdk.snapshot` validates a closed v1 wire shape and proves that local
+artifact bytes match the manifest's non-zero size and SHA-256 digest. Shape and
+digest validation **does not attest** that the declared producer actually ran
+the anonymizer. Before any restore or deploy side effect, infrastructure must
+independently authorize the declared repository, source SHA, workflow run, and
+artifact provenance. Dumping, anonymization, storage, Vault, host access, and
+deployment remain outside the SDK.
 
 ## Development
 
