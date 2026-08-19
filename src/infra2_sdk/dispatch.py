@@ -112,7 +112,10 @@ def dispatch_and_wait(
     for attempt in range(max_attempts):
         runs = _workflow_runs(api("GET", _RUNS_PATH, None))
         fresh = [run for run in runs if _run_id(run) > watermark]
-        seen = [str(run.get("display_title", "")) for run in fresh]
+        # id AND title: GitHub omits display_title on a queued run, and a
+        # timeout message full of empty strings names nobody — which is the
+        # exact uselessness this reporting exists to end (review).
+        seen = [f"{_run_id(run)} {run.get('display_title') or '(untitled)'}" for run in fresh]
         # Narrow by the key that discriminates. A concurrent dispatch — from this
         # caller or from another project entirely — is newer than the watermark
         # too, and no amount of waiting separates them by id.

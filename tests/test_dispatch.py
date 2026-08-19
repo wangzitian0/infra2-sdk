@@ -159,14 +159,15 @@ def test_the_timeout_names_the_runs_it_saw() -> None:
         "status": "completed",
         "display_title": "Deploy finance_report/app staging",
     }
+    untitled = {"id": 201, "status": "queued"}
     responses = iter(
         [
             {"workflow_runs": [{"id": 100}]},
-            {"workflow_runs": [theirs, {"id": 100}]},
-            {"workflow_runs": [theirs, {"id": 100}]},
+            {"workflow_runs": [theirs, untitled, {"id": 100}]},
+            {"workflow_runs": [theirs, untitled, {"id": 100}]},
         ]
     )
-    with pytest.raises(RuntimeError, match="finance_report"):
+    with pytest.raises(RuntimeError) as caught:
         dispatch_and_wait(
             _request(),
             api=lambda method, path, body=None: next(responses) if method == "GET" else None,
@@ -174,6 +175,10 @@ def test_the_timeout_names_the_runs_it_saw() -> None:
             sleep=lambda _: None,
             max_attempts=2,
         )
+    message = str(caught.value)
+    assert "finance_report" in message
+    assert "200 " in message, "the run id must survive, not only the title"
+    assert "201 (untitled)" in message, "a queued run with no title must still be named"
 
 
 def test_dispatch_and_wait_raises_when_logs_do_not_contain_the_request_id() -> None:
