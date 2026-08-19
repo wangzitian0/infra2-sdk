@@ -17,13 +17,31 @@ lookup can silently correlate to the wrong one):
    consider runs strictly newer than that. A run made by someone else's
    concurrent dispatch (or unrelated repository activity) can never look like
    "the one I just triggered."
-2. Ambiguity guard — if more than one run is newer than the watermark, this is
-   unresolvable by id/time alone; fail loudly rather than guess (a title-match
-   `first(...)` — the pattern this replaces — silently picks one).
+2. Request-id correlation, then an ambiguity guard on what survives it. The
+   receiver names the request in its run title, so a candidate set narrowed by
+   ``request_id`` is narrowed by the only key that actually discriminates. This
+   is NOT the title-match `first(...)` this module replaced: that matched on
+   service and version, which two retries of the same release share, so it
+   silently picked one. ``request_id`` is unique per dispatch. If more than one
+   run still matches, that is unresolvable and fails loudly.
+
+   Correlating on the watermark alone was itself the defect. truealpha could not
+   release for a day: four consecutive dispatches failed with
+
+       receiver run correlation is ambiguous after watermark ...: [id, id]
+
+   and the second id was **a different project's deploy** every time
+   (``finance_report/app staging``), because a window in time does not know
+   whose run it is holding. The deploys themselves all succeeded; only the
+   sender's ability to claim its own run failed, and since promotion to prod
+   requires a successful staging *sender* run, the lane was shut. One attempt
+   was fired into a measured gap — polled until infra2 had zero runs in flight —
+   and still collided, because a concurrent lane dispatched a minute later.
 3. Log-content verification — even a single, uniquely-correlated, successful run
    is not proof it processed THIS request: fetch its logs and require the
    request's own ``request_id`` to appear verbatim before trusting the
-   conclusion.
+   conclusion. Titles can be truncated or reformatted by the receiver; the logs
+   are the proof, and this defense is unchanged.
 
 Requires the ``http`` extra (``httpx``) — see ``infra2_sdk.runtime.http`` for the
 same optional-dependency convention.
@@ -90,15 +108,28 @@ def dispatch_and_wait(
         {"event_type": RECEIVER_EVENT_TYPE, "client_payload": canonical},
     )
 
+    seen: list[str] = []
     for attempt in range(max_attempts):
         runs = _workflow_runs(api("GET", _RUNS_PATH, None))
-        candidates = [run for run in runs if _run_id(run) > watermark]
+        fresh = [run for run in runs if _run_id(run) > watermark]
+        seen = [str(run.get("display_title", "")) for run in fresh]
+        # Narrow by the key that discriminates. A concurrent dispatch — from this
+        # caller or from another project entirely — is newer than the watermark
+        # too, and no amount of waiting separates them by id.
+        candidates = [
+            run for run in fresh if request.request_id in str(run.get("display_title", ""))
+        ]
         if len(candidates) > 1:
             ids = sorted(_run_id(run) for run in candidates)
             raise RuntimeError(
-                f"receiver run correlation is ambiguous after watermark {watermark}: {ids}"
+                f"receiver run correlation is ambiguous for request_id "
+                f"{request.request_id!r} after watermark {watermark}: {ids}"
             )
         if not candidates:
+            # Deliberately keep waiting rather than failing on the other runs.
+            # A receiver run is titled once it starts, so "newer runs exist but
+            # none are mine" is the normal state while someone else deploys, and
+            # the timeout below reports what was actually there.
             if attempt + 1 < max_attempts:
                 sleep(poll_interval)
             continue
@@ -124,7 +155,10 @@ def dispatch_and_wait(
             raise RuntimeError(f"infra2 receiver run {run_id} has no canonical URL")
         return ReceiverRun(run_id=run_id, url=url)
 
-    raise RuntimeError(f"timed out waiting for an infra2 receiver run after watermark {watermark}")
+    raise RuntimeError(
+        f"timed out waiting for an infra2 receiver run naming request_id "
+        f"{request.request_id!r} after watermark {watermark}; runs seen: {seen or 'none'}"
+    )
 
 
 def github_api_client(

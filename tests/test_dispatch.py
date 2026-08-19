@@ -16,6 +16,9 @@ from infra2_sdk.dispatch import INFRA_REPOSITORY, dispatch_and_wait, github_api_
 SHA = "a" * 40
 
 
+TITLE = "Deploy finance_report/app staging v2.3.4 abc123 [finance-report-run-12345678]"
+
+
 def _request() -> DeployRequest:
     return DeployRequest(
         request_id="finance-report-run-12345678",
@@ -44,6 +47,7 @@ def test_dispatch_and_wait_correlates_the_watermarked_run_and_verifies_logs() ->
                         "id": 101,
                         "status": "in_progress",
                         "conclusion": None,
+                        "display_title": TITLE,
                         "html_url": f"https://github.com/{INFRA_REPOSITORY}/actions/runs/101",
                     },
                     {"id": 100},
@@ -55,6 +59,7 @@ def test_dispatch_and_wait_correlates_the_watermarked_run_and_verifies_logs() ->
                         "id": 101,
                         "status": "completed",
                         "conclusion": "success",
+                        "display_title": TITLE,
                         "html_url": f"https://github.com/{INFRA_REPOSITORY}/actions/runs/101",
                     },
                     {"id": 100},
@@ -86,22 +91,88 @@ def test_dispatch_and_wait_correlates_the_watermarked_run_and_verifies_logs() ->
     }
 
 
-def test_dispatch_and_wait_raises_when_more_than_one_run_appears_after_watermark() -> None:
-    ambiguous_runs = {
-        "workflow_runs": [
-            {"id": 103, "status": "queued"},
-            {"id": 102, "status": "queued"},
-            {"id": 100, "status": "completed"},
-        ]
+def test_a_concurrent_dispatch_from_another_project_no_longer_blocks_correlation() -> None:
+    """The regression this correlation exists for.
+
+    truealpha could not release for a day: four consecutive dispatches failed
+    because a finance_report deploy landed in the same window each time. The ids
+    below are the third of those collisions, verbatim. A watermark cannot
+    separate them; the request id can.
+    """
+    request = _request()
+    mine = {
+        "id": 32135890813,
+        "status": "completed",
+        "conclusion": "success",
+        "display_title": TITLE,
+        "html_url": f"https://github.com/{INFRA_REPOSITORY}/actions/runs/32135890813",
     }
-    responses = iter([{"workflow_runs": [{"id": 100}]}, ambiguous_runs])
-    with pytest.raises(RuntimeError, match="ambiguous"):
+    theirs = {
+        "id": 32135934389,
+        "status": "in_progress",
+        "conclusion": None,
+        "display_title": (
+            "Deploy finance_report/app staging v0.1.46 89a64d1a [finance-report-run-999]"
+        ),
+        "html_url": f"https://github.com/{INFRA_REPOSITORY}/actions/runs/32135934389",
+    }
+    responses = iter([{"workflow_runs": [{"id": 32135043378}]}, {"workflow_runs": [theirs, mine]}])
+    run = dispatch_and_wait(
+        request,
+        api=lambda method, path, body=None: next(responses) if method == "GET" else None,
+        fetch_logs=lambda run_id: request.request_id.encode(),
+        sleep=lambda _: None,
+    )
+    assert run.run_id == 32135890813
+
+
+def test_two_runs_naming_the_same_request_id_are_still_ambiguous() -> None:
+    """The guard is narrowed, not removed."""
+    request = _request()
+    twin = {
+        "id": 102,
+        "status": "completed",
+        "conclusion": "success",
+        "display_title": TITLE,
+        "html_url": f"https://github.com/{INFRA_REPOSITORY}/actions/runs/102",
+    }
+    other = dict(twin, id=103)
+    responses = iter([{"workflow_runs": [{"id": 100}]}, {"workflow_runs": [twin, other]}])
+    with pytest.raises(RuntimeError, match="ambiguous for request_id"):
+        dispatch_and_wait(
+            request,
+            api=lambda method, path, body=None: next(responses) if method == "GET" else None,
+            fetch_logs=lambda run_id: b"",
+            sleep=lambda _: None,
+        )
+
+
+def test_the_timeout_names_the_runs_it_saw() -> None:
+    """A bare "timed out" sent me looking in the wrong place during the outage.
+
+    The baseline GET must not include the other project's run, or it lands in
+    the watermark and there is nothing left to report — which is how the first
+    version of this test passed for the wrong reason.
+    """
+    theirs = {
+        "id": 200,
+        "status": "completed",
+        "display_title": "Deploy finance_report/app staging",
+    }
+    responses = iter(
+        [
+            {"workflow_runs": [{"id": 100}]},
+            {"workflow_runs": [theirs, {"id": 100}]},
+            {"workflow_runs": [theirs, {"id": 100}]},
+        ]
+    )
+    with pytest.raises(RuntimeError, match="finance_report"):
         dispatch_and_wait(
             _request(),
             api=lambda method, path, body=None: next(responses) if method == "GET" else None,
             fetch_logs=lambda run_id: b"",
             sleep=lambda _: None,
-            max_attempts=1,
+            max_attempts=2,
         )
 
 
@@ -115,6 +186,7 @@ def test_dispatch_and_wait_raises_when_logs_do_not_contain_the_request_id() -> N
                         "id": 101,
                         "status": "completed",
                         "conclusion": "success",
+                        "display_title": TITLE,
                         "html_url": f"https://github.com/{INFRA_REPOSITORY}/actions/runs/101",
                     }
                 ]
@@ -162,6 +234,7 @@ def _run_with_outcome(conclusion: str, url: object):
                         "id": 101,
                         "status": "completed",
                         "conclusion": conclusion,
+                        "display_title": TITLE,
                         "html_url": url,
                     }
                 ]
