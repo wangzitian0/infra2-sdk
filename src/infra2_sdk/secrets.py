@@ -348,9 +348,9 @@ class SecretsResolver:
         for field in self.manifest.by_source(FieldSource.HUMAN):
             if not field.store_backed:
                 continue
-            value = self._human_values(field).get(field.env)
+            value = self._human_values(field).get(field.key)
             if value:
-                expected[field.env] = value
+                expected[field.key] = value
         return expected
 
     def sync_human(self) -> SyncReport:
@@ -358,9 +358,9 @@ class SecretsResolver:
         expected = self.human_expected()
         missing = tuple(
             sorted(
-                field.env
+                field.key
                 for field in self.manifest.by_source(FieldSource.HUMAN)
-                if field.store_backed and field.env not in expected and not field.empty_ok
+                if field.store_backed and field.key not in expected and not field.empty_ok
             )
         )
         return self._apply(expected, missing=missing)
@@ -370,15 +370,15 @@ class SecretsResolver:
         """Generate runtime-class values that the store does not hold yet."""
         current = self.store.read(self.path)
         fresh = {
-            field.env: self._generate(field)
+            field.key: self._generate(field)
             for field in self.manifest.by_source(FieldSource.RUNTIME)
-            if field.store_backed and not current.get(field.env)
+            if field.store_backed and not current.get(field.key)
         }
         present = tuple(
             sorted(
-                field.env
+                field.key
                 for field in self.manifest.by_source(FieldSource.RUNTIME)
-                if field.store_backed and field.env not in fresh
+                if field.store_backed and field.key not in fresh
             )
         )
         if not fresh:
@@ -397,15 +397,15 @@ class SecretsResolver:
         for field in self.manifest.by_source(FieldSource.RUNTIME):
             if not field.mirror_to_1password:
                 continue
-            value = current.get(field.env)
+            value = current.get(field.key)
             if not value:
-                missing.append(field.env)
+                missing.append(field.key)
                 continue
             item = op_item(self.project, self.env, self.service, scope=field.scope)
-            if self.human.write(item, {field.env: value}).wrote:
-                changed.append(field.env)
+            if self.human.write(item, {field.key: value}).wrote:
+                changed.append(field.key)
             else:
-                unchanged.append(field.env)
+                unchanged.append(field.key)
         return SyncReport(tuple(sorted(changed)), tuple(sorted(unchanged)), tuple(sorted(missing)))
 
     # deployment -------------------------------------------------------------------
@@ -453,8 +453,9 @@ def render_agent_template(
     """Vault Agent ``secrets.ctmpl`` for a service, derived from its manifest.
 
     Store-backed, ``provided_by`` and ``composed_from`` fields render (``{env:NAME}`` reads
-    the agent's host environment). ``{{ else }}""`` appears solely for
-    ``empty_ok`` fields, so a missing required value fails the render instead of hiding.
+    the agent's host environment). An ``empty_ok`` field is omitted when the store holds
+    nothing, so the application sees it unset; a missing required value fails the render
+    instead of hiding behind ``""``.
     Release, decision, and code fields never appear: the deployment supplies the first two
     and the settings model owns the third. ``source_env`` pins every path to one environment
     (preview aliases read staging).
@@ -489,7 +490,7 @@ def render_agent_template(
             f'{{{{- with secret (printf "secret/data/{project}/%s/{service}" {env_expr}) }}}}'
         )
         for field in own:
-            lines.append(_render_line(field, key=field.env))
+            lines.append(_render_line(field, key=field.key))
         lines.append("{{- end }}")
     return "\n".join(lines) + "\n"
 
@@ -532,10 +533,9 @@ def _render_line(field: EnvironmentField, *, key: str) -> str:
             args.append(f'(env "{name}")')
         return f'{field.env}={{{{ printf "%q" (printf "{fmt}" {" ".join(args)}) }}}}'
     if field.empty_ok:
-        return (
-            f'{field.env}={{{{ with .Data.data.{key} }}}}{{{{ printf "%q" . }}}}'
-            f'{{{{ else }}}}""{{{{ end }}}}'
-        )
+        # Omit the line when the store holds nothing: the application sees the variable
+        # as unset and applies its own default, and nothing ever renders as "".
+        return f'{{{{ with .Data.data.{key} }}}}{field.env}={{{{ printf "%q" . }}}}{{{{ end }}}}'
     return f'{field.env}={{{{ printf "%q" .Data.data.{key} }}}}'
 
 
