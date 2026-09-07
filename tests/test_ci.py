@@ -120,6 +120,13 @@ def test_validate_manifest_offline_flags_contract_violations() -> None:
             EnvironmentField(
                 "s3", "S3_ENDPOINT", source="code", composed_from="http://127.0.0.1:{env:PORT}"
             ),
+            EnvironmentField(
+                "db",
+                "DATABASE_URL",
+                source="runtime",
+                provided_by="truealpha/postgres:POSTGRES_PASSWORD",
+                composed_from="postgresql://postgres:{POSTGRES_PASSWORD}@db/app",
+            ),
         ),
     )
     assert validate_manifest_offline(clean) == []

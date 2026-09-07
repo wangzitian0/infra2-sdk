@@ -83,9 +83,8 @@ def validate_manifest_offline(manifest: Any) -> list[str]:
     declared = {field.env for field in manifest.fields}
     for field in manifest.fields:
         name = field.env
-        store_backed = field.source in (FieldSource.HUMAN, FieldSource.RUNTIME)
         settled = field.empty_ok or field.required or field.injected
-        if store_backed and field.has_default and not settled:
+        if field.store_backed and field.has_default and not settled:
             errors.append(f"{name}: {field.source} value must be required, injected or empty_ok")
         if field.source in COMPOSE_SOURCES and not field.injected:
             errors.append(f"{name}: {field.source} value must be injected by the deployment")
