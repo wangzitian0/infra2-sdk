@@ -468,8 +468,9 @@ def render_agent_template(
 
     Store-backed, ``provided_by`` and ``composed_from`` fields render (``{env:NAME}`` reads
     the agent's host environment). An ``empty_ok`` field is omitted when the store holds
-    nothing, so the application sees it unset; a missing required value fails the render
-    instead of hiding behind ``""``.
+    nothing (looked up with ``index``, safe under ``error_on_missing_key``), so the
+    application sees it unset; a missing required value is a direct ``.Data.data.KEY``
+    access and fails the render under that option instead of hiding behind ``""``.
     Release, decision, and code fields never appear: the deployment supplies the first two
     and the settings model owns the third. ``source_env`` pins every path to one environment
     (preview aliases read staging).
@@ -548,8 +549,12 @@ def _render_line(field: EnvironmentField, *, key: str) -> str:
         return f'{field.env}={{{{ printf "%q" (printf "{fmt}" {" ".join(args)}) }}}}'
     if field.empty_ok:
         # Omit the line when the store holds nothing: the application sees the variable
-        # as unset and applies its own default, and nothing ever renders as "".
-        return f'{{{{ with .Data.data.{key} }}}}{field.env}={{{{ printf "%q" . }}}}{{{{ end }}}}'
+        # as unset and applies its own default, and nothing ever renders as "". The
+        # lookup goes through ``index`` so that an agent running with
+        # ``error_on_missing_key = true`` (required keys fail the render) does not treat
+        # an absent optional key as an error: ``index`` returns the zero value, while
+        # ``.Data.data.KEY`` on a missing key is exactly what that option rejects.
+        return f'{{{{ with index .Data.data "{key}" }}}}{field.env}={{{{ printf "%q" . }}}}{{{{ end }}}}'
     return f'{field.env}={{{{ printf "%q" .Data.data.{key} }}}}'
 
 

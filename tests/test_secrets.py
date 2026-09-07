@@ -379,7 +379,7 @@ def test_agent_template_renders_only_store_backed_and_provided_fields() -> None:
         ".Data.data.POSTGRES_PASSWORD) }}\n"
         "{{- end }}\n"
         '{{- with secret (printf "secret/data/truealpha/%s/data_engine" $env) }}\n'
-        '{{ with .Data.data.TWELVE_DATA_API_KEY }}TWELVE_DATA_API_KEY={{ printf "%q" . }}'
+        '{{ with index .Data.data "TWELVE_DATA_API_KEY" }}TWELVE_DATA_API_KEY={{ printf "%q" . }}'
         "{{ end }}\n"
         'SEC_USER_AGENT={{ printf "%q" .Data.data.SEC_USER_AGENT }}\n'
         'SECRET_KEY={{ printf "%q" .Data.data.SECRET_KEY }}\n'
@@ -443,7 +443,7 @@ def test_store_key_maps_an_environment_name_to_a_lowercase_store_key() -> None:
     assert 'PG_PASS={{ printf "%q" .Data.data.root_password }}' in text
     assert 'AUTHENTIK_SECRET_KEY={{ printf "%q" .Data.data.secret_key }}' in text
     assert (
-        "{{ with .Data.data.bootstrap_password }}AUTHENTIK_BOOTSTRAP_PASSWORD="
+        '{{ with index .Data.data "bootstrap_password" }}AUTHENTIK_BOOTSTRAP_PASSWORD='
         '{{ printf "%q" . }}{{ end }}'
     ) in text
     store = MemoryBackend(**{"platform/staging/authentik": {"secret_key": "s"}})
