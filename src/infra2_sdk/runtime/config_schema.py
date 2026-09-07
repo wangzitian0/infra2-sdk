@@ -334,13 +334,10 @@ def environment_manifest_from_model(
             or field_source in COMPOSE_SOURCES
         )
         # v1 treated every injected value as sensitive because "injected" meant "from
-        # Vault". Under v2 the source class says where a value comes from; sensitivity is
-        # its own declaration (or a Secret type), plus the legacy ``vault`` alias.
-        sensitive = (
-            bool(extra.get("sensitive"))
-            or bool(legacy_vault_metadata and extra.get("vault"))
-            or _is_secret(annotation)
-        )
+        # Vault". Under v2 the source class says where a value comes from and the legacy
+        # ``vault`` alias means only "the deployment injects this"; sensitivity is its own
+        # declaration or a Secret type.
+        sensitive = bool(extra.get("sensitive")) or _is_secret(annotation)
         is_required = getattr(info, "is_required", None)
         required = bool(is_required()) if callable(is_required) else False
         fields.append(
