@@ -549,7 +549,13 @@ def _render_line(field: EnvironmentField, *, key: str) -> str:
     if field.empty_ok:
         # Omit the line when the store holds nothing: the application sees the variable
         # as unset and applies its own default, and nothing ever renders as "".
-        return f'{{{{ with .Data.data.{key} }}}}{field.env}={{{{ printf "%q" . }}}}{{{{ end }}}}'
+        # `index`, not `.Data.data.KEY`: Vault Agent renders with missingkey=error, so a
+        # field access on a key the secret does not hold at all aborts the whole template
+        # ("map has no entry for key"), which is exactly the case empty_ok exists for
+        # (infra2 2026-09-07: production alerting's agent crash-looped on
+        # FEISHU_WEBHOOK_URL, a webhook key absent from a feishu_app secret). `index`
+        # yields nil for an absent key and `with` skips the line.
+        return f'{{{{ with index .Data.data "{key}" }}}}{field.env}={{{{ printf "%q" . }}}}{{{{ end }}}}'
     return f'{field.env}={{{{ printf "%q" .Data.data.{key} }}}}'
 
 
