@@ -7,6 +7,7 @@ from infra2_sdk._transport import HttpResponse
 from infra2_sdk.runtime.config_schema import EnvironmentField, EnvironmentManifest
 from infra2_sdk.secrets import (
     EnvBackend,
+    SyncReport,
     OnePasswordBackend,
     ReadOnlyBackendError,
     SecretsError,
@@ -115,6 +116,7 @@ def test_paths_follow_the_infra2_coordinate() -> None:
     assert op_item("truealpha", "staging", "data_engine", scope="project") == (
         "truealpha/shared/data_engine"
     )
+    assert op_item("bootstrap", "production", "iac_runner") == "bootstrap/iac_runner"
 
 
 def test_env_backend_reads_process_and_dotenv_and_refuses_writes(tmp_path) -> None:
@@ -153,11 +155,25 @@ def test_sync_human_reports_missing_required_values_without_writing_them() -> No
     assert not report.ok and store.writes == []
 
 
-def test_ensure_runtime_generates_only_absent_values() -> None:
+def test_ensure_runtime_generates_only_absent_required_values() -> None:
     store = MemoryBackend(**{"truealpha/staging/data_engine": {"SECRET_KEY": "keep"}})
     report = make_resolver(store).ensure_runtime()
     assert report.changed == ("ADMIN_PASSWORD",)
     assert report.unchanged == ("SECRET_KEY",)
+    # an empty_ok runtime value (an optional feature) is never generated
+    optional = EnvironmentManifest(
+        source="x",
+        fields=(EnvironmentField("b", "BRIDGE_PASSWORD", source="runtime", empty_ok=True),),
+    )
+    quiet = SecretsResolver(
+        optional,
+        project="p",
+        service="s",
+        env="staging",
+        store=MemoryBackend(),
+        generator=lambda f: "gen",
+    )
+    assert quiet.ensure_runtime() == SyncReport(unchanged=("BRIDGE_PASSWORD",))
     assert store.paths["truealpha/staging/data_engine"] == {
         "SECRET_KEY": "keep",
         "ADMIN_PASSWORD": "generated-ADMIN_PASSWORD",
@@ -440,6 +456,10 @@ def test_store_key_maps_an_environment_name_to_a_lowercase_store_key() -> None:
         human=MemoryBackend(),
         generator=lambda f: "gen",
     )
-    assert resolver.ensure_runtime().changed == ("bootstrap_password",)
+    # bootstrap_password is empty_ok: an optional value is never generated, only mirrored
+    # once someone (the deployment's own provisioning) has written it.
+    assert resolver.ensure_runtime() == SyncReport(unchanged=("bootstrap_password", "secret_key"))
+    assert resolver.mirror().missing == ("bootstrap_password",)
+    store.paths["platform/staging/authentik"]["bootstrap_password"] = "pw"
     assert resolver.mirror().changed == ("bootstrap_password",)
     assert resolver.reconcile().ok
