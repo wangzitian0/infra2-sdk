@@ -7,11 +7,11 @@ from infra2_sdk._transport import HttpResponse
 from infra2_sdk.runtime.config_schema import EnvironmentField, EnvironmentManifest
 from infra2_sdk.secrets import (
     EnvBackend,
-    SyncReport,
     OnePasswordBackend,
     ReadOnlyBackendError,
     SecretsError,
     SecretsResolver,
+    SyncReport,
     VaultKvBackend,
     WriteResult,
     op_item,
