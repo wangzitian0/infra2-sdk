@@ -132,6 +132,9 @@ def test_non_pydantic_models_are_rejected() -> None:
 
 class SupplyChainSettings(BaseSettings):
     app_env: str = Field(default="dev", json_schema_extra={"source": "code", "injected": True})
+    otel_service_name: str = Field(
+        default="svc", json_schema_extra={"source": "code", "vault": True}
+    )
     twelve_data_api_key: SecretStr = Field(
         default=SecretStr(""),
         json_schema_extra={"source": "human", "scope": "project", "empty_ok": True},
@@ -169,6 +172,8 @@ def test_manifest_from_model_reads_source_classes() -> None:
     assert db.composed_keys == ("POSTGRES_PASSWORD",) and not db.store_backed
     assert by_env["BUDGET"].source == "code"
     assert by_env["APP_ENV"].injected and not by_env["APP_ENV"].sensitive
+    legacy = by_env["OTEL_SERVICE_NAME"]
+    assert legacy.injected and not legacy.sensitive and legacy.source == "code"
     assert [f.env for f in manifest.store_backed] == ["TWELVE_DATA_API_KEY", "SECRET_KEY"]
     assert [f.env for f in manifest.by_source("release", "decision")] == [
         "IMAGE_DIGEST",
