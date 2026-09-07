@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from importlib.resources import files
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -61,3 +62,39 @@ def validate_inventory(
         elif gate_id:
             seen.add(gate_id)
     return {"errors": errors, "ids": sorted(seen)}
+
+
+# --------------------------------------------------------------------------- manifests
+
+
+def validate_manifest_offline(manifest: Any) -> list[str]:
+    """Gate an environment manifest without any infrastructure.
+
+    Runs in an application's own CI. Errors are contract violations a deployment would
+    otherwise discover late: a secret with a code default, a release value the store
+    would be expected to hold, an optional field that would silently render empty. A
+    store-backed field may keep a local-development default only when it is ``required``,
+    ``injected`` (the deployment must supply it) or ``empty_ok``.
+    """
+
+    from infra2_sdk.runtime.config_schema import COMPOSE_SOURCES, FieldSource
+
+    errors: list[str] = []
+    declared = {field.env for field in manifest.fields}
+    for field in manifest.fields:
+        name = field.env
+        store_backed = field.source in (FieldSource.HUMAN, FieldSource.RUNTIME)
+        settled = field.empty_ok or field.required or field.injected
+        if store_backed and field.has_default and not settled:
+            errors.append(f"{name}: {field.source} value must be required, injected or empty_ok")
+        if field.source in COMPOSE_SOURCES and not field.injected:
+            errors.append(f"{name}: {field.source} value must be injected by the deployment")
+        if field.sensitive and field.source == FieldSource.CODE and not field.provided_by:
+            errors.append(f"{name}: a sensitive value cannot be a code default")
+        if field.source == FieldSource.BOOTSTRAP:
+            errors.append(f"{name}: bootstrap values never enter an application manifest")
+        for key in field.composed_keys:
+            provider_key = field.provided_by.split(":", 1)[1] if field.provided_by else ""
+            if key not in declared and key != provider_key:
+                errors.append(f"{name}: composed_from references undeclared {key}")
+    return errors

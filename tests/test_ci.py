@@ -74,3 +74,52 @@ def test_invalid_stage_document_fails_closed(tmp_path) -> None:
     path.write_text("stages: []\n", encoding="utf-8")
     with pytest.raises(ValueError, match="must be a mapping"):
         load_delivery_stages(path)
+
+
+# ----------------------------------------------------------------------------- manifests
+
+
+def test_validate_manifest_offline_flags_contract_violations() -> None:
+    from infra2_sdk.ci import validate_manifest_offline
+    from infra2_sdk.runtime.config_schema import EnvironmentField, EnvironmentManifest
+
+    manifest = EnvironmentManifest(
+        source="sc",
+        fields=(
+            EnvironmentField("ok_human", "OK_HUMAN", source="human", empty_ok=True),
+            EnvironmentField(
+                "ok_runtime", "OK_RUNTIME", source="runtime", required=True, has_default=False
+            ),
+            EnvironmentField("lazy", "LAZY_KEY", source="human"),
+            EnvironmentField("digest", "IMAGE_DIGEST", source="release"),
+            EnvironmentField("leak", "API_TOKEN", source="code", sensitive=True),
+            EnvironmentField("root", "VAULT_ROOT", source="bootstrap"),
+            EnvironmentField(
+                "url",
+                "DATABASE_URL",
+                source="runtime",
+                required=True,
+                has_default=False,
+                composed_from="pg://{NOPE}@db",
+            ),
+        ),
+    )
+    errors = validate_manifest_offline(manifest)
+    assert errors == [
+        "LAZY_KEY: human value must be required, injected or empty_ok",
+        "IMAGE_DIGEST: release value must be injected by the deployment",
+        "API_TOKEN: a sensitive value cannot be a code default",
+        "VAULT_ROOT: bootstrap values never enter an application manifest",
+        "DATABASE_URL: composed_from references undeclared NOPE",
+    ]
+    clean = EnvironmentManifest(
+        source="sc",
+        fields=(
+            *manifest.fields[:2],
+            EnvironmentField("ua", "SEC_USER_AGENT", source="human", injected=True),
+            EnvironmentField(
+                "s3", "S3_ENDPOINT", source="code", composed_from="http://127.0.0.1:{env:PORT}"
+            ),
+        ),
+    )
+    assert validate_manifest_offline(clean) == []

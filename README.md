@@ -11,9 +11,13 @@ runtime protocols. A standalone process passes ordinary environment variables; i
 derive the same variables from its multi-environment deployment coordinate. Both paths execute
 the same local SDK code.
 
-The SDK performs no infrastructure execution. Dokploy/Vault clients, compose files, service
-discovery, deployment mutation, backups, and host operations remain outside this package. No
-`INFRA2_*`, Vault, or Dokploy value is required to load runtime settings.
+The SDK owns the contracts and the adapters over open protocols: the environment manifest
+and its source classes, the secret-store adapters (Vault KV v2 HTTP API, the 1Password CLI),
+the generators for everything a deployment derives from a manifest, release identity
+resolution, and capacity accounting. infra2 owns orchestration: compose files, Dokploy,
+host operations, and *when* each SDK operation runs. No `INFRA2_*`, Vault, or Dokploy
+value is required to load runtime settings; an application only ever reads environment
+variables.
 
 ## Install
 
@@ -35,6 +39,9 @@ python -m pip install \
 | `infra2_sdk.deploy_health` | Poll a deployed app URL until the new version is live (HTTP-200 + optional status/version checks) |
 | `infra2_sdk.snapshot` | Versioned anonymized-snapshot manifest, residual-proof shape, and artifact digest verification |
 | `infra2_sdk.refs` | Pure Git ref classification and resolution |
+| `infra2_sdk.release` | Tag → commit + image digest (`ReleaseIdentity`) and runtime identity verification against the release, never against a store |
+| `infra2_sdk.secrets` | Secret-store adapters (`VaultKvBackend`, `OnePasswordBackend`, `EnvBackend`), the manifest-driven `SecretsResolver` (sync human values, generate runtime values, mirror, compose, reconcile), and the Vault Agent template/policy renderers |
+| `infra2_sdk.capacity` | Capacity limits, readings, and levels; collectors for Cloudflare analytics and the 1Password rate-limit command |
 | `infra2_sdk.runtime.environment` | Canonical six-tier environment vocabulary and aliases |
 | `infra2_sdk.runtime.environ` | Versioned canonical env registry and conflict-safe resolution |
 | `infra2_sdk.runtime.config_schema` | JSON Schema 2020-12 and environment injection manifests |
@@ -130,6 +137,25 @@ to tier `preview` as compatibility inputs. New producers set `ENVIRONMENT=previe
 arbitrary display identity through the standard
 `OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=<name>` attribute. The SDK does not impose
 an infra2 naming grammar on that display identity.
+
+## Configuration supply chain
+
+Manifest contract version 2 gives every field a *source class*: who may legitimately
+produce its value. Everything else is derived from that answer.
+
+| Source | Produced by | Truth lives in | Reaches the container via | Written to the store |
+|---|---|---|---|---|
+| `bootstrap` | a person, once | 1Password | never (provisioning only) | never |
+| `human` | a person, from an external issuer | 1Password item `project/{env|shared}/service` | Vault Agent render | by `SecretsResolver.sync_human()` on deploy, only when different |
+| `runtime` | the deployment | Vault `secret/project/env/service` | Vault Agent render | by `ensure_runtime()` once; `mirror_to_1password` copies back for humans |
+| `release` | the release request | the tag (git + registry) | compose environment | never |
+| `decision` | a reviewed human decision | a file in the app repository | compose environment | never |
+| `code` | a default in the settings model | the model | the default | never |
+
+`provided_by="project/service:KEY"` references another service's value;
+`composed_from="…{KEY}…"` builds a value from such references. `empty_ok` is the only way a
+rendered variable may be empty; `ci.validate_manifest_offline()` rejects manifests that
+would otherwise fail late, and it runs without any infrastructure.
 
 ### deploy_v2 boundary
 
