@@ -555,7 +555,8 @@ def _render_line(field: EnvironmentField, *, key: str) -> str:
         # (infra2 2026-09-07: production alerting's agent crash-looped on
         # FEISHU_WEBHOOK_URL, a webhook key absent from a feishu_app secret). `index`
         # yields nil for an absent key and `with` skips the line.
-        return f'{{{{ with index .Data.data "{key}" }}}}{field.env}={{{{ printf "%q" . }}}}{{{{ end }}}}'
+        guard = f'{{{{ with index .Data.data "{key}" }}}}'
+        return f'{guard}{field.env}={{{{ printf "%q" . }}}}{{{{ end }}}}'
     return f'{field.env}={{{{ printf "%q" .Data.data.{key} }}}}'
 
 
