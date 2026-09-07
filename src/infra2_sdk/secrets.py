@@ -59,7 +59,14 @@ def vault_path(project: str, env: str, service: str) -> str:
 
 
 def op_item(project: str, env: str, service: str, *, scope: str = "env") -> str:
-    """1Password item title for a service's human-class values."""
+    """1Password item title for a service's human-class values.
+
+    ``project/env/service`` per environment, ``project/shared/service`` for
+    project-scoped values, and ``bootstrap/service`` for the bootstrap project, which
+    has no environment layer.
+    """
+    if project == "bootstrap":
+        return f"bootstrap/{service}"
     return f"{project}/{'shared' if scope == 'project' else env}/{service}"
 
 
@@ -367,12 +374,19 @@ class SecretsResolver:
 
     # runtime ----------------------------------------------------------------------
     def ensure_runtime(self) -> SyncReport:
-        """Generate runtime-class values that the store does not hold yet."""
+        """Generate runtime-class values that the store does not hold yet.
+
+        ``empty_ok`` runtime values are optional by contract (a feature the deployment
+        may leave off); they are never generated here, only reported as unchanged.
+        """
         current = self.store.read(self.path)
-        fresh = {
-            field.key: self._generate(field)
+        candidates = [
+            field
             for field in self.manifest.by_source(FieldSource.RUNTIME)
-            if field.store_backed and not current.get(field.key)
+            if field.store_backed and not field.empty_ok
+        ]
+        fresh = {
+            field.key: self._generate(field) for field in candidates if not current.get(field.key)
         }
         present = tuple(
             sorted(
