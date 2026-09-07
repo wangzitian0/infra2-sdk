@@ -363,8 +363,8 @@ def test_agent_template_renders_only_store_backed_and_provided_fields() -> None:
         ".Data.data.POSTGRES_PASSWORD) }}\n"
         "{{- end }}\n"
         '{{- with secret (printf "secret/data/truealpha/%s/data_engine" $env) }}\n'
-        'TWELVE_DATA_API_KEY={{ with .Data.data.TWELVE_DATA_API_KEY }}{{ printf "%q" . }}'
-        '{{ else }}""{{ end }}\n'
+        '{{ with .Data.data.TWELVE_DATA_API_KEY }}TWELVE_DATA_API_KEY={{ printf "%q" . }}'
+        "{{ end }}\n"
         'SEC_USER_AGENT={{ printf "%q" .Data.data.SEC_USER_AGENT }}\n'
         'SECRET_KEY={{ printf "%q" .Data.data.SECRET_KEY }}\n'
         'ADMIN_PASSWORD={{ printf "%q" .Data.data.ADMIN_PASSWORD }}\n'
@@ -394,3 +394,52 @@ def test_agent_policy_covers_own_and_provider_paths_once() -> None:
     assert policy.rstrip().endswith('path "auth/token/lookup-self" {\n  capabilities = ["read"]\n}')
     pinned = render_agent_policy(MANIFEST, project="truealpha", service="app", source_env="staging")
     assert "{{env}}" not in pinned and "secret/data/truealpha/staging/app" in pinned
+
+
+def test_store_key_maps_an_environment_name_to_a_lowercase_store_key() -> None:
+    manifest = EnvironmentManifest(
+        source="platform/authentik",
+        fields=(
+            EnvironmentField(
+                "secret_key",
+                "AUTHENTIK_SECRET_KEY",
+                source="runtime",
+                required=True,
+                has_default=False,
+                sensitive=True,
+                store_key="secret_key",
+            ),
+            EnvironmentField(
+                "bootstrap_password",
+                "AUTHENTIK_BOOTSTRAP_PASSWORD",
+                source="runtime",
+                empty_ok=True,
+                sensitive=True,
+                store_key="bootstrap_password",
+                mirror_to_1password=True,
+            ),
+            EnvironmentField(
+                "pg", "PG_PASS", source="runtime", provided_by="platform/postgres:root_password"
+            ),
+        ),
+    )
+    text = render_agent_template(manifest, project="platform", service="authentik")
+    assert 'PG_PASS={{ printf "%q" .Data.data.root_password }}' in text
+    assert 'AUTHENTIK_SECRET_KEY={{ printf "%q" .Data.data.secret_key }}' in text
+    assert (
+        "{{ with .Data.data.bootstrap_password }}AUTHENTIK_BOOTSTRAP_PASSWORD="
+        '{{ printf "%q" . }}{{ end }}'
+    ) in text
+    store = MemoryBackend(**{"platform/staging/authentik": {"secret_key": "s"}})
+    resolver = SecretsResolver(
+        manifest,
+        project="platform",
+        service="authentik",
+        env="staging",
+        store=store,
+        human=MemoryBackend(),
+        generator=lambda f: "gen",
+    )
+    assert resolver.ensure_runtime().changed == ("bootstrap_password",)
+    assert resolver.mirror().changed == ("bootstrap_password",)
+    assert resolver.reconcile().ok

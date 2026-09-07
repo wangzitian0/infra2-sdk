@@ -38,8 +38,8 @@ STORE_BACKED_SOURCES = frozenset({FieldSource.HUMAN, FieldSource.RUNTIME})
 COMPOSE_SOURCES = frozenset({FieldSource.RELEASE, FieldSource.DECISION})
 FIELD_SCOPES = ("env", "project")
 CI_POLICIES = ("forbidden", "allowed")
-_PROVIDED_BY_RE = re.compile(r"\A[a-z][a-z0-9_]*/[a-z][a-z0-9_-]*:[A-Z][A-Z0-9_]*\Z")
-_PLACEHOLDER_RE = re.compile(r"\{([A-Z][A-Z0-9_]*)\}")
+_PROVIDED_BY_RE = re.compile(r"\A[a-z][a-z0-9_]*/[a-z][a-z0-9_-]*:[A-Za-z_][A-Za-z0-9_]*\Z")
+_PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _ENV_PLACEHOLDER_RE = re.compile(r"\{env:([A-Z][A-Z0-9_]*)\}")
 
 
@@ -63,6 +63,7 @@ class EnvironmentField:
     composed_from: str = ""
     mirror_to_1password: bool = False
     ci: str = "forbidden"
+    store_key: str = ""
 
     def __post_init__(self) -> None:
         if not self.field or not self.env:
@@ -83,6 +84,8 @@ class EnvironmentField:
             raise ValueError(f"{self.field}: only runtime fields can mirror to 1Password")
         if self.required and self.empty_ok:
             raise ValueError(f"{self.field}: a required field cannot be empty_ok")
+        if self.store_key and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", self.store_key):
+            raise ValueError(f"{self.field}: store_key must be an identifier")
         if self.composed_from and not (
             _PLACEHOLDER_RE.search(self.composed_from)
             or _ENV_PLACEHOLDER_RE.search(self.composed_from)
@@ -90,6 +93,11 @@ class EnvironmentField:
             raise ValueError(
                 f"{self.field}: composed_from needs a {{KEY}} or {{env:NAME}} placeholder"
             )
+
+    @property
+    def key(self) -> str:
+        """Name of the value in the secret store (defaults to the environment name)."""
+        return self.store_key or self.env
 
     @property
     def store_backed(self) -> bool:
@@ -138,6 +146,7 @@ class EnvironmentField:
             composed_from=_string(raw, "composed_from", required=False),
             mirror_to_1password=_boolean(raw, "mirror_to_1password"),
             ci=_string(raw, "ci", required=False) or "forbidden",
+            store_key=_string(raw, "store_key", required=False),
         )
 
 
@@ -358,6 +367,7 @@ def environment_manifest_from_model(
                 composed_from=str(extra.get("composed_from") or ""),
                 mirror_to_1password=bool(extra.get("mirror_to_1password", False)),
                 ci=str(extra.get("ci") or "forbidden"),
+                store_key=str(extra.get("store_key") or ""),
             )
         )
     resolved_source = source or f"{model.__module__}.{model.__qualname__}"
@@ -408,13 +418,13 @@ def reconcile(
     missing: list[str] = []
     empty: list[str] = []
     for field in manifest.store_backed:
-        if field.env not in values:
+        if field.key not in values:
             if not field.empty_ok:
-                missing.append(field.env)
+                missing.append(field.key)
             continue
-        if not values[field.env].strip() and not field.empty_ok:
-            empty.append(field.env)
-    declared = {field.env for field in manifest.fields}
+        if not values[field.key].strip() and not field.empty_ok:
+            empty.append(field.key)
+    declared = {field.key for field in manifest.fields}
     unclassified = [
         key for key in values if key not in declared and not key.startswith(ignore_prefixes)
     ]
