@@ -131,6 +131,7 @@ def test_non_pydantic_models_are_rejected() -> None:
 
 
 class SupplyChainSettings(BaseSettings):
+    app_env: str = Field(default="dev", json_schema_extra={"source": "code", "injected": True})
     twelve_data_api_key: SecretStr = Field(
         default=SecretStr(""),
         json_schema_extra={"source": "human", "scope": "project", "empty_ok": True},
@@ -167,6 +168,7 @@ def test_manifest_from_model_reads_source_classes() -> None:
     assert db.provided_by == "truealpha/postgres:POSTGRES_PASSWORD"
     assert db.composed_keys == ("POSTGRES_PASSWORD",) and not db.store_backed
     assert by_env["BUDGET"].source == "code"
+    assert by_env["APP_ENV"].injected and not by_env["APP_ENV"].sensitive
     assert [f.env for f in manifest.store_backed] == ["TWELVE_DATA_API_KEY", "SECRET_KEY"]
     assert [f.env for f in manifest.by_source("release", "decision")] == [
         "IMAGE_DIGEST",
