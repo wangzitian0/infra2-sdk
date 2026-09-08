@@ -533,11 +533,11 @@ def render_agent_policy(
         blocks.append(f'path "secret/metadata/{path}" {{\n  capabilities = ["read", "list"]\n}}')
     # Vault Agent's auto-auth renews its own token through auth/token/renew-self (the
     # LifetimeWatcher renews at once, then ahead of every TTL). The AppRoles are created
-    # with token_no_default_policy=true, so the grant the `default` policy would carry has
-    # to be here. Without it every renewal is a 403 and Vault Agent 1.15 retries without
-    # backoff: infra2 2026-09-08, six sidecars at ~35 requests/s each through the public
-    # Vault route, 0.5-1.9 cores of Traefik and 0.3 of Vault, until the token expired and
-    # the agent re-authenticated into the same loop.
+    # with token_no_default_policy=true, so the token does not carry the `default` policy
+    # and this policy must grant renew-self itself. Without the grant every renewal is a
+    # 403, which Vault Agent 1.15 retries without backoff: infra2 2026-09-08, six sidecars
+    # at ~35 requests/s each through the public Vault route, 0.5-1.9 cores of Traefik and
+    # 0.3 of Vault, until the token expired and the agent re-authenticated into the loop.
     blocks.append('path "auth/token/renew-self" {\n  capabilities = ["update"]\n}')
     blocks.append('path "auth/token/lookup-self" {\n  capabilities = ["read"]\n}')
     return "\n\n".join(blocks) + "\n"

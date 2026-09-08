@@ -413,9 +413,9 @@ def test_agent_policy_covers_own_and_provider_paths_once() -> None:
 
 
 def test_agent_policy_lets_the_agent_renew_its_own_token() -> None:
-    """The roles carry token_no_default_policy=true, so the renew-self grant the default
-    policy would give is the policy's to make. Without it Vault Agent 1.15 spins on 403s
-    (infra2, 2026-09-08: six sidecars at ~35 requests/s each)."""
+    """The roles carry token_no_default_policy=true, so the token never has the default
+    policy's renew-self grant; the service policy must grant it. Without the grant Vault
+    Agent 1.15 spins on 403s (infra2, 2026-09-08: six sidecars at ~35 requests/s each)."""
     policy = render_agent_policy(MANIFEST, project="truealpha", service="data_engine")
     assert 'path "auth/token/renew-self" {\n  capabilities = ["update"]\n}' in policy
     assert policy.count("auth/token/renew-self") == 1
