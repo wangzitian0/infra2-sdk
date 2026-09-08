@@ -192,3 +192,13 @@ def test_configuration_fingerprint_is_order_independent_and_framed() -> None:
     assert first != configuration_fingerprint({"a": "b", "cab": "c"})
     with pytest.raises(TypeError, match="str or bytes"):
         configuration_fingerprint({"bad": 1})  # type: ignore[dict-item]
+
+
+def test_canonical_sha256_is_formatting_blind_and_matches_the_estate() -> None:
+    from infra2_sdk.runtime.identity import canonical_sha256
+
+    a = canonical_sha256({"b": 1, "a": [1, 2]})
+    b = canonical_sha256({"a": [1, 2], "b": 1})
+    assert a == b and len(a) == 64
+    # the live TrueAlpha release-manifest payload hashes to the id recorded in that repo
+    assert canonical_sha256({"kind": "production-topt-live-release"}).startswith("c2df9469104c")

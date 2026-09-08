@@ -12,7 +12,7 @@ import json
 import re
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from enum import StrEnum
 from typing import Any
 
@@ -301,6 +301,7 @@ def environment_manifest_from_model(
     *,
     source: str | None = None,
     legacy_vault_metadata: bool = True,
+    overrides: Mapping[str, Mapping[str, object]] | None = None,
 ) -> EnvironmentManifest:
     """Extract a manifest; ``vault`` metadata is a temporary v0.2 compatibility alias.
 
@@ -308,6 +309,11 @@ def environment_manifest_from_model(
     ``json_schema_extra`` (``source``, ``empty_ok``, ``scope``, ``provided_by``,
     ``composed_from``, ``mirror_to_1password``, ``ci``). Release and decision fields are
     always ``injected``: the deployment, not the secret store, supplies them.
+
+    ``overrides`` is a side table keyed by *field name* (not env name) carrying the same
+    attributes, for models whose ``Field()`` signatures must not change (a public-API
+    compatibility gate); a name that is not a model field is an error, and a release or
+    decision override implies ``injected`` exactly as an inline declaration does.
     """
 
     model_fields = getattr(model, "model_fields", None)
@@ -370,6 +376,16 @@ def environment_manifest_from_model(
                 store_key=str(extra.get("store_key") or ""),
             )
         )
+    if overrides:
+        by_name = {field.field: index for index, field in enumerate(fields)}
+        unknown = sorted(set(overrides) - set(by_name))
+        if unknown:
+            raise ValueError(f"overrides name unknown settings fields: {unknown}")
+        for name, override in overrides.items():
+            changes = dict(override)
+            if str(changes.get("source", "")) in COMPOSE_SOURCES:
+                changes.setdefault("injected", True)
+            fields[by_name[name]] = replace(fields[by_name[name]], **changes)
     resolved_source = source or f"{model.__module__}.{model.__qualname__}"
     return EnvironmentManifest(source=resolved_source, fields=tuple(fields))
 

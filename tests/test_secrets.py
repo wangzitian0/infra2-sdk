@@ -18,6 +18,7 @@ from infra2_sdk.secrets import (
     render_agent_policy,
     render_agent_template,
     vault_path,
+    vault_token_status,
 )
 
 MANIFEST = EnvironmentManifest(
@@ -472,3 +473,60 @@ def test_store_key_maps_an_environment_name_to_a_lowercase_store_key() -> None:
     store.paths["platform/staging/authentik"]["bootstrap_password"] = "pw"
     assert resolver.mirror().changed == ("bootstrap_password",)
     assert resolver.reconcile().ok
+
+
+def test_vault_backend_update_mode_posts_the_merged_document_instead_of_patching() -> None:
+    """Deploy identities are granted create/read/update/list, not patch."""
+    calls: list[tuple[str, str, bytes | None]] = []
+
+    def transport(method, url, headers, body):
+        calls.append((method, url, body))
+        if method == "GET":
+            return HttpResponse(
+                200, {}, json.dumps({"data": {"data": {"A": "1", "B": "2"}}}).encode()
+            )
+        return HttpResponse(200, {}, b"{}")
+
+    backend = VaultKvBackend(
+        "https://vault.test", token="t", transport=transport, write_mode="update"
+    )
+    result = backend.write("p/e/s", {"B": "2", "C": "3"})
+    assert result.changed == ("C",)
+    assert [m for m, _, _ in calls] == ["GET", "POST"]
+    assert json.loads(calls[-1][2])["data"] == {"A": "1", "B": "2", "C": "3"}
+    assert backend.write("p/e/s", {"A": "1"}).changed == ()
+    with pytest.raises(ValueError, match="write_mode"):
+        VaultKvBackend("https://vault.test", token="t", write_mode="upsert")
+    env = {"VAULT_ADDR": "https://vault.test", "VAULT_TOKEN": "t"}
+    assert (
+        VaultKvBackend.from_environ(env, transport=transport, write_mode="update")._write_mode
+        == "update"
+    )
+
+
+def test_vault_token_status_reports_ttl_and_failures_without_the_token() -> None:
+    def ok(method, url, headers, body):
+        assert url.endswith("/v1/auth/token/lookup-self")
+        return HttpResponse(
+            200, {}, json.dumps({"data": {"ttl": 7200, "renewable": True}}).encode()
+        )
+
+    status = vault_token_status("https://vault.test/", "tok", transport=ok, min_ttl_seconds=3600)
+    assert status.valid and status.ttl_hours == 2.0 and status.renewable
+    assert "tok" not in json.dumps(status.to_dict())
+    low = vault_token_status("https://vault.test", "tok", transport=ok, min_ttl_seconds=86400)
+    assert not low.valid and "TTL too low" in low.error
+    denied = vault_token_status(
+        "https://vault.test", "tok", transport=lambda *a: HttpResponse(403, {}, b"")
+    )
+    assert not denied.valid and "403" in denied.error
+
+    def down(method, url, headers, body):
+        raise OSError("connection refused")
+
+    assert (
+        "cannot reach Vault"
+        in vault_token_status("https://vault.test", "tok", transport=down).error
+    )
+    backend = VaultKvBackend("https://vault.test", token="tok", transport=ok)
+    assert backend.token_status().valid

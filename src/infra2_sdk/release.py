@@ -11,13 +11,16 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
+from urllib.parse import urlencode
 
-from infra2_sdk._transport import HttpTransport, urllib_transport
+from infra2_sdk._transport import HttpResponse, HttpTransport, urllib_transport
 from infra2_sdk.refs import CommandRunner, resolve_image_ref
 from infra2_sdk.runtime.identity import RuntimeIdentity
 
 _OCI_DIGEST_RE = re.compile(r"\Asha256:[0-9a-f]{64}\Z")
+_REFERENCE_RE = re.compile(r"\A[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\Z")
 _IMAGE_RE = re.compile(r"\A[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+\Z")
 MANIFEST_ACCEPT = ", ".join(
     (
@@ -61,13 +64,21 @@ def resolve_image_digest(
 ) -> str:
     """Digest of ``registry/image:reference`` from the registry's manifest endpoint.
 
-    Public GHCR packages need only the anonymous pull token the registry itself issues.
+    ``reference`` is a tag, or already a ``sha256:`` digest (returned unchanged after a
+    shape check, so a digest-pinned deploy re-verifies nothing it does not need to).
+    Public GHCR packages need only the anonymous pull token the registry itself issues;
+    any registry that answers 401 with a Bearer challenge gets its token from the realm
+    the challenge names. Fails closed on 404 (no such tag), on 401/403 after the
+    challenge, and on every other non-2xx: a promotion never guesses a digest.
     """
-
+    if _OCI_DIGEST_RE.match(reference):
+        return reference
     if not _IMAGE_RE.match(image):
         raise ValueError("image must look like owner/name")
+    if not _REFERENCE_RE.match(reference):
+        raise ValueError(f"reference must be a registry tag or a sha256 digest, got {reference!r}")
     send = transport or urllib_transport()
-    if token is None:
+    if token is None and registry == "ghcr.io":
         response = send("GET", f"https://{registry}/token?scope=repository:{image}:pull", {}, None)
         if response.status != 200:
             raise ReleaseError(f"registry token request failed with HTTP {response.status}")
@@ -75,16 +86,64 @@ def resolve_image_digest(
             token = str(json.loads(response.body.decode("utf-8")).get("token", ""))
         except ValueError as error:
             raise ReleaseError("registry token response is not JSON") from error
-    headers = {"Accept": MANIFEST_ACCEPT}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    response = send("HEAD", f"https://{registry}/v2/{image}/manifests/{reference}", headers, None)
-    if response.status != 200:
-        raise ReleaseError(f"manifest for {image}:{reference} not found (HTTP {response.status})")
-    digest = response.headers.get("docker-content-digest", "")
+    url = f"https://{registry}/v2/{image}/manifests/{reference}"
+
+    def head(bearer: str | None) -> HttpResponse:
+        headers = {"Accept": MANIFEST_ACCEPT}
+        if bearer:
+            headers["Authorization"] = f"Bearer {bearer}"
+        return send("HEAD", url, headers, None)
+
+    response = head(token)
+    if response.status == 401:
+        response = head(_bearer_token(send, _header(response.headers, "www-authenticate")))
+    if response.status == 404:
+        raise ReleaseError(f"{image}:{reference} does not exist in the registry")
+    if response.status in (401, 403):
+        raise ReleaseError(f"registry refused {image}:{reference} (HTTP {response.status})")
+    if not 200 <= response.status < 300:
+        raise ReleaseError(f"registry answered HTTP {response.status} for {image}:{reference}")
+    digest = _header(response.headers, "docker-content-digest")
     if not _OCI_DIGEST_RE.match(digest):
         raise ReleaseError("registry returned no sha256 content digest")
     return digest
+
+
+def _header(headers: Mapping[str, str], name: str) -> str:
+    for key, value in headers.items():
+        if key.lower() == name:
+            return str(value)
+    return ""
+
+
+def _parse_bearer_challenge(header: str) -> dict[str, str]:
+    scheme, _, params = header.partition(" ")
+    if scheme.lower() != "bearer":
+        return {}
+    return {
+        key.strip(): value.strip().strip('"')
+        for key, _, value in (part.partition("=") for part in params.split(","))
+        if key.strip()
+    }
+
+
+def _bearer_token(send: HttpTransport, challenge: str) -> str:
+    params = _parse_bearer_challenge(challenge)
+    realm = params.get("realm", "")
+    if not realm:
+        raise ReleaseError("registry challenged without a bearer realm")
+    query = urlencode({k: v for k, v in params.items() if k in ("service", "scope")})
+    response = send("GET", f"{realm}?{query}" if query else realm, {}, None)
+    if response.status != 200:
+        raise ReleaseError(f"registry token endpoint answered HTTP {response.status}")
+    try:
+        body = json.loads(response.body.decode("utf-8"))
+    except ValueError as error:
+        raise ReleaseError("registry token response is not JSON") from error
+    token = str(body.get("token") or body.get("access_token") or "")
+    if not token:
+        raise ReleaseError("registry token endpoint returned no token")
+    return token
 
 
 def resolve_release_identity(

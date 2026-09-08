@@ -47,7 +47,7 @@ def test_resolve_image_digest_uses_the_anonymous_pull_token() -> None:
 
 
 def test_resolve_image_digest_failures_are_explicit() -> None:
-    with pytest.raises(ReleaseError, match="HTTP 404"):
+    with pytest.raises(ReleaseError, match="does not exist in the registry"):
         resolve_image_digest(
             image="owner/app", reference="nope", transport=FakeRegistry(manifest_status=404)
         )
@@ -96,3 +96,44 @@ def test_verify_runtime_identity_compares_only_what_the_release_sets() -> None:
     )
     loose = RuntimeIdentity("app", "v0.0.45", "production", "unknown")
     assert verify_runtime_identity(loose, other) == ("service_version",)
+
+
+def test_resolve_image_digest_passes_a_digest_through_and_rejects_odd_references() -> None:
+    assert (
+        resolve_image_digest(image="owner/app", reference=DIGEST, transport=FakeRegistry())
+        == DIGEST
+    )
+    with pytest.raises(ValueError, match="registry tag or a sha256 digest"):
+        resolve_image_digest(image="owner/app", reference="v1 nope", transport=FakeRegistry())
+
+
+def test_resolve_image_digest_answers_a_bearer_challenge_from_any_registry() -> None:
+    """A non-GHCR registry (or a private package) answers 401 with the realm to ask."""
+    calls: list[tuple[str, str, dict]] = []
+
+    def transport(method, url, headers, body):
+        calls.append((method, url, dict(headers)))
+        if url.startswith("https://auth.example/token"):
+            return HttpResponse(200, {}, json.dumps({"access_token": "granted"}).encode())
+        if "Authorization" not in headers:
+            return HttpResponse(
+                401,
+                {
+                    "WWW-Authenticate": 'Bearer realm="https://auth.example/token",service="reg",scope="repository:owner/app:pull"'
+                },
+                b"",
+            )
+        return HttpResponse(200, {"Docker-Content-Digest": DIGEST}, b"")
+
+    digest = resolve_image_digest(
+        image="owner/app", reference="v1", registry="registry.example", transport=transport
+    )
+    assert digest == DIGEST
+    methods = [(m, u.split("/")[2]) for m, u, _ in calls]
+    assert methods == [
+        ("HEAD", "registry.example"),
+        ("GET", "auth.example"),
+        ("HEAD", "registry.example"),
+    ]
+    assert "scope=repository%3Aowner%2Fapp%3Apull" in calls[1][1]
+    assert calls[2][2]["Authorization"] == "Bearer granted"

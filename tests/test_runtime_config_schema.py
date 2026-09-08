@@ -243,3 +243,33 @@ def test_configuration_fingerprint_is_stable_and_value_blind() -> None:
     assert one == configuration_fingerprint(manifest, {"A": "1", "B": "2"})
     assert one != configuration_fingerprint(manifest, {"A": "1", "B": "3"})
     assert len(one) == 64 and "1" not in one[:0]
+
+
+def test_manifest_from_model_folds_a_side_table_of_overrides() -> None:
+    from pydantic import Field
+    from pydantic_settings import BaseSettings
+
+    class Settings(BaseSettings):
+        database_url: str = Field(default="postgresql://x")
+        git_commit_sha: str = Field(default="unknown")
+        plain: str = Field(default="p")
+
+    manifest = environment_manifest_from_model(
+        Settings,
+        source="t",
+        overrides={
+            "database_url": {
+                "source": "runtime",
+                "sensitive": True,
+                "provided_by": "p/postgres:PASSWORD",
+            },
+            "git_commit_sha": {"source": "release"},
+        },
+    )
+    by_env = {field.env: field for field in manifest.fields}
+    assert by_env["DATABASE_URL"].source == "runtime" and by_env["DATABASE_URL"].sensitive
+    assert by_env["DATABASE_URL"].provided_by == "p/postgres:PASSWORD"
+    assert by_env["GIT_COMMIT_SHA"].source == "release" and by_env["GIT_COMMIT_SHA"].injected
+    assert by_env["PLAIN"].source == "code" and not by_env["PLAIN"].injected
+    with pytest.raises(ValueError, match="unknown settings fields"):
+        environment_manifest_from_model(Settings, overrides={"nope": {"source": "human"}})
