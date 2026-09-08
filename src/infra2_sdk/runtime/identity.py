@@ -224,13 +224,12 @@ class RuntimeIdentity:
 
 
 def canonical_sha256(payload: Any) -> str:
-    """sha256 of a JSON payload in canonical form (sorted keys, compact separators, UTF-8).
-
-    The one hash every identity in the estate derives from: release manifests, decision
-    records, configuration fingerprints. Two writers that agree on the payload agree on
-    the hex digest, whatever their JSON library's default formatting.
+    """sha256 of a JSON payload in canonical form: sorted keys, compact separators, ASCII
+    escaping (the same canonical JSON the DeployRequest renderer and TrueAlpha's contracts
+    use, so the estate has one hash for release manifests, decision records and
+    configuration fingerprints — whatever a writer's JSON library defaults to).
     """
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
