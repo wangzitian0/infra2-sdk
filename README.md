@@ -39,8 +39,9 @@ python -m pip install \
 | `infra2_sdk.deploy_health` | Poll a deployed app URL until the new version is live (HTTP-200 + optional status/version checks) |
 | `infra2_sdk.snapshot` | Versioned anonymized-snapshot manifest, residual-proof shape, and artifact digest verification |
 | `infra2_sdk.refs` | Pure Git ref classification and resolution |
-| `infra2_sdk.release` | Tag → commit + image digest (`ReleaseIdentity`) and runtime identity verification against the release, never against a store |
-| `infra2_sdk.secrets` | Secret-store adapters (`VaultKvBackend`, `OnePasswordBackend`, `EnvBackend`), the manifest-driven `SecretsResolver` (sync human values, generate runtime values, mirror, compose, reconcile), and the Vault Agent template/policy renderers |
+| `infra2_sdk.release` | Tag → commit + image digest (`ReleaseIdentity`; digest passthrough, Bearer-challenge auth for any registry) and runtime identity verification against the release, never against a store |
+| `infra2_sdk.secrets` | Secret-store adapters (`VaultKvBackend` with `write_mode="patch"|"update"`, `vault_token_status`, `OnePasswordBackend`, `EnvBackend`), the manifest-driven `SecretsResolver` (sync human values, generate runtime values, mirror, compose, reconcile), and the Vault Agent template/policy renderers |
+| `infra2_sdk.manifests` | The one `--write` / `--check` / `--validate-env` driver an application repository wraps around its settings models (side-table overrides, freshness, offline gate, boot-time validation) |
 | `infra2_sdk.capacity` | Capacity limits, readings, and levels; collectors for Cloudflare analytics and the 1Password rate-limit command |
 | `infra2_sdk.runtime.environment` | Canonical six-tier environment vocabulary and aliases |
 | `infra2_sdk.runtime.environ` | Versioned canonical env registry and conflict-safe resolution |
@@ -51,7 +52,7 @@ python -m pip install \
 | `infra2_sdk.runtime.postgres` | PostgreSQL DSN normalization and psycopg probe |
 | `infra2_sdk.runtime.http` | Standard httpx clients and HTTP retry semantics |
 | `infra2_sdk.runtime.otel` | Explicit OTLP trace/metric/log provider bootstrap |
-| `infra2_sdk.runtime.identity` | OCI/config/release identity and OTel resource coordinates |
+| `infra2_sdk.runtime.identity` | OCI/config/release identity, `canonical_sha256`, and OTel resource coordinates |
 
 ## Runtime extras
 

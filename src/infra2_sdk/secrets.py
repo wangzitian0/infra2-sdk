@@ -27,6 +27,9 @@ from infra2_sdk.runtime.config_schema import (
 VAULT_USER_AGENT = "infra2-sdk/secrets (+https://github.com/wangzitian0/infra2-sdk)"
 
 
+WRITE_MODES = ("patch", "update")
+
+
 class SecretsError(RuntimeError):
     """A backend refused or failed; the message never carries a secret value."""
 
@@ -105,20 +108,31 @@ class VaultKvBackend:
         mount: str = "secret",
         transport: HttpTransport | None = None,
         user_agent: str = VAULT_USER_AGENT,
+        write_mode: str = "patch",
     ) -> None:
         if not address.startswith(("https://", "http://")):
             raise ValueError("address must be an http(s) URL")
         if not token:
             raise ValueError("token is required")
+        if write_mode not in WRITE_MODES:
+            raise ValueError(f"write_mode must be one of {WRITE_MODES}")
         self._address = address.rstrip("/")
         self._token = token
         self._mount = mount.strip("/")
         self._send = transport or urllib_transport()
         self._user_agent = user_agent
+        # "patch": KV v2 merge PATCH of the changed keys (needs the ``patch`` capability).
+        # "update": read → merge → POST of the whole document (needs only ``update``,
+        # which is what deploy identities are typically granted).
+        self._write_mode = write_mode
 
     @classmethod
     def from_environ(
-        cls, environ: Mapping[str, str], *, transport: HttpTransport | None = None
+        cls,
+        environ: Mapping[str, str],
+        *,
+        transport: HttpTransport | None = None,
+        write_mode: str = "patch",
     ) -> VaultKvBackend:
         """VAULT_ADDR + VAULT_TOKEN, or VAULT_ADDR + VAULT_ROLE_ID/VAULT_SECRET_ID (AppRole)."""
         address = environ.get("VAULT_ADDR", "").strip()
@@ -131,7 +145,7 @@ class VaultKvBackend:
             if not (role_id and secret_id):
                 raise SecretsError("VAULT_TOKEN or VAULT_ROLE_ID/VAULT_SECRET_ID is required")
             token = cls.login_approle(address, role_id, secret_id, transport=transport)
-        return cls(address, token=token, transport=transport)
+        return cls(address, token=token, transport=transport, write_mode=write_mode)
 
     @staticmethod
     def login_approle(
@@ -151,6 +165,10 @@ class VaultKvBackend:
         if not token:
             raise SecretsError("AppRole login returned no client token")
         return str(token)
+
+    def token_status(self) -> TokenStatus:
+        """``auth/token/lookup-self`` for this backend's token (names and numbers only)."""
+        return vault_token_status(self._address, self._token, transport=self._send)
 
     def _url(self, kind: str, path: str) -> str:
         return f"{self._address}/v1/{self._mount}/{kind}/{path.strip('/')}"
@@ -183,7 +201,7 @@ class VaultKvBackend:
         changed = {k: v for k, v in values.items() if current.get(k) != v}
         if not changed:
             return WriteResult()
-        if current:
+        if current and self._write_mode == "patch":
             response = self._send(
                 "PATCH",
                 self._url("data", path),
@@ -191,11 +209,12 @@ class VaultKvBackend:
                 json.dumps({"data": changed}).encode("utf-8"),
             )
         else:
+            document = {**current, **changed} if current else dict(values)
             response = self._send(
                 "POST",
                 self._url("data", path),
                 self._headers("application/json"),
-                json.dumps({"data": dict(values)}).encode("utf-8"),
+                json.dumps({"data": document}).encode("utf-8"),
             )
         if response.status not in (200, 204):
             raise SecretsError(f"Vault write to {path} failed with HTTP {response.status}")
@@ -203,6 +222,64 @@ class VaultKvBackend:
 
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
+
+
+@dataclass(frozen=True)
+class TokenStatus:
+    """What ``auth/token/lookup-self`` says about a token; never the token itself."""
+
+    valid: bool
+    ttl_seconds: int
+    renewable: bool
+    error: str = ""
+
+    @property
+    def ttl_hours(self) -> float:
+        return round(self.ttl_seconds / 3600, 2)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "valid": self.valid,
+            "ttl_seconds": self.ttl_seconds,
+            "ttl_hours": self.ttl_hours,
+            "renewable": self.renewable,
+            "error": self.error,
+        }
+
+
+def vault_token_status(
+    address: str,
+    token: str,
+    *,
+    transport: HttpTransport | None = None,
+    min_ttl_seconds: int = 0,
+    user_agent: str = VAULT_USER_AGENT,
+) -> TokenStatus:
+    """Look a token up; ``valid`` also requires ``ttl >= min_ttl_seconds``.
+
+    A transport failure or a non-200 answer is a status with ``valid=False`` and a
+    reason, not an exception: callers decide whether an unverifiable token stops them.
+    """
+    send = transport or urllib_transport()
+    try:
+        response = send(
+            "GET",
+            f"{address.rstrip('/')}/v1/auth/token/lookup-self",
+            {"X-Vault-Token": token, "User-Agent": user_agent},
+            None,
+        )
+    except OSError as error:
+        return TokenStatus(False, -1, False, f"cannot reach Vault: {error}")
+    if response.status == 403:
+        return TokenStatus(False, -1, False, "token expired or invalid (HTTP 403)")
+    if response.status != 200:
+        return TokenStatus(False, -1, False, f"Vault returned HTTP {response.status}")
+    data = _json(response).get("data", {})
+    ttl = int(data.get("ttl", 0) or 0)
+    renewable = bool(data.get("renewable", False))
+    if ttl < min_ttl_seconds:
+        return TokenStatus(False, ttl, renewable, f"TTL too low: {ttl}s < {min_ttl_seconds}s")
+    return TokenStatus(True, ttl, renewable)
 
 
 class OnePasswordBackend:

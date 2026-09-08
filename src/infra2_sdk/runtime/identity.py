@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
@@ -220,6 +221,17 @@ class RuntimeIdentity:
                 "sbom_uri": {"type": "string"},
             },
         }
+
+
+def canonical_sha256(payload: Any) -> str:
+    """sha256 of a JSON payload in canonical form (sorted keys, compact separators, UTF-8).
+
+    The one hash every identity in the estate derives from: release manifests, decision
+    records, configuration fingerprints. Two writers that agree on the payload agree on
+    the hex digest, whatever their JSON library's default formatting.
+    """
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def configuration_fingerprint(parts: Mapping[str, str | bytes]) -> str:
