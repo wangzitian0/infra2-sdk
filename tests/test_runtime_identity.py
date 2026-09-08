@@ -202,3 +202,12 @@ def test_canonical_sha256_is_formatting_blind_and_matches_the_estate() -> None:
     assert a == b and len(a) == 64
     # the live TrueAlpha release-manifest payload hashes to the id recorded in that repo
     assert canonical_sha256({"kind": "production-topt-live-release"}).startswith("c2df9469104c")
+    # ASCII escaping, like the DeployRequest renderer: a non-ASCII payload hashes its \uXXXX form
+    import hashlib
+    import json
+
+    payload = {"name": "数据"}
+    expected = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    ).hexdigest()
+    assert canonical_sha256(payload) == expected
