@@ -40,7 +40,7 @@ python -m pip install \
 | `infra2_sdk.snapshot` | Versioned anonymized-snapshot manifest, residual-proof shape, and artifact digest verification |
 | `infra2_sdk.refs` | Pure Git ref classification and resolution |
 | `infra2_sdk.release` | Tag → commit + image digest (`ReleaseIdentity`; digest passthrough, Bearer-challenge auth for any registry) and runtime identity verification against the release, never against a store |
-| `infra2_sdk.secrets` | Secret-store adapters (`VaultKvBackend` with `write_mode="patch"|"update"`, `vault_token_status`, `OnePasswordBackend`, `EnvBackend`), the manifest-driven `SecretsResolver` (sync human values, generate runtime values, mirror, compose, reconcile), and the Vault Agent template/policy renderers |
+| `infra2_sdk.secrets` | Secret-store adapters (`VaultKvBackend` with `write_mode="patch"|"update"` / `replace` (prune a store document), `vault_token_status`, `OnePasswordBackend`, `EnvBackend`), the manifest-driven `SecretsResolver` (sync human values, generate runtime values, mirror, compose, reconcile), and the Vault Agent template/policy renderers |
 | `infra2_sdk.manifests` | The one `--write` / `--check` / `--validate-env` driver an application repository wraps around its settings models (side-table overrides, freshness, offline gate, boot-time validation) |
 | `infra2_sdk.capacity` | Capacity limits, readings, and levels; collectors for Cloudflare analytics and the 1Password rate-limit command |
 | `infra2_sdk.runtime.environment` | Canonical six-tier environment vocabulary and aliases |

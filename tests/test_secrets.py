@@ -530,3 +530,30 @@ def test_vault_token_status_reports_ttl_and_failures_without_the_token() -> None
     )
     backend = VaultKvBackend("https://vault.test", token="tok", transport=ok)
     assert backend.token_status().valid
+
+
+def test_vault_backend_replace_removes_keys_the_document_no_longer_has() -> None:
+    """Pruning a store means rewriting the document: KV v2 has no per-key delete, and a
+    deploy identity has create/read/update/list but not `delete`."""
+    calls: list[tuple[str, str, bytes | None]] = []
+    store = {"KEEP": "1", "DEAD": "2", "STALE": "3"}
+
+    def transport(method, url, headers, body):
+        calls.append((method, url, body))
+        if method == "GET":
+            return HttpResponse(200, {}, json.dumps({"data": {"data": store}}).encode())
+        return HttpResponse(200, {}, b"{}")
+
+    backend = VaultKvBackend("https://vault.test", token="t", transport=transport)
+    result = backend.replace("p/e/s", {"KEEP": "1", "NEW": "9"})
+    assert result.changed == ("DEAD", "NEW", "STALE")
+    assert [m for m, _, _ in calls] == ["GET", "POST"]
+    assert json.loads(calls[-1][2])["data"] == {"KEEP": "1", "NEW": "9"}
+
+    # an identical document is a no-op: no write, nothing to report
+    def unchanged(method, url, headers, body):
+        calls.append((method, url, body))
+        return HttpResponse(200, {}, json.dumps({"data": {"data": {"KEEP": "1"}}}).encode())
+
+    quiet = VaultKvBackend("https://vault.test", token="t", transport=unchanged)
+    assert quiet.replace("p/e/s", {"KEEP": "1"}).changed == ()
