@@ -551,10 +551,11 @@ def _render_line(field: EnvironmentField, *, key: str) -> str:
         # Omit the line when the store holds nothing: the application sees the variable
         # as unset and applies its own default, and nothing ever renders as "". The
         # lookup goes through ``index`` so that an agent running with
-        # ``error_on_missing_key = true`` (required keys fail the render) does not treat
-        # an absent optional key as an error: ``index`` returns the zero value, while
-        # ``.Data.data.KEY`` on a missing key is exactly what that option rejects.
-        return f'{{{{ with index .Data.data "{key}" }}}}{field.env}={{{{ printf "%q" . }}}}{{{{ end }}}}'
+        # ``error_on_missing_key = true`` (required keys fail the render) does not
+        # treat an absent optional key as an error: ``index`` returns the zero value,
+        # while ``.Data.data.KEY`` on a missing key is exactly what that option rejects.
+        lookup = f'index .Data.data "{key}"'
+        return f'{{{{ with {lookup} }}}}{field.env}={{{{ printf "%q" . }}}}{{{{ end }}}}'
     return f'{field.env}={{{{ printf "%q" .Data.data.{key} }}}}'
 
 
