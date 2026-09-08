@@ -166,6 +166,33 @@ class VaultKvBackend:
             raise SecretsError("AppRole login returned no client token")
         return str(token)
 
+    def replace(self, path: str, values: Mapping[str, str]) -> WriteResult:
+        """Make the document exactly ``values``: keys absent from it stop existing.
+
+        KV v2 has no per-key delete, so removing a value means writing the document
+        without it — a plain create/update, never the ``delete`` capability a deploy
+        identity is not granted. The previous version stays in Vault's history, so a
+        prune is reversible. ``changed`` names every key added, altered or removed.
+        """
+        current = dict(self.read(path))
+        desired = {str(k): str(v) for k, v in values.items()}
+        changed = tuple(
+            sorted(
+                set(current) ^ set(desired) | {k for k, v in desired.items() if current.get(k) != v}
+            )
+        )
+        if not changed:
+            return WriteResult()
+        response = self._send(
+            "POST",
+            self._url("data", path),
+            self._headers("application/json"),
+            json.dumps({"data": desired}).encode("utf-8"),
+        )
+        if response.status not in (200, 204):
+            raise SecretsError(f"Vault write to {path} failed with HTTP {response.status}")
+        return WriteResult(changed)
+
     def token_status(self) -> TokenStatus:
         """``auth/token/lookup-self`` for this backend's token (names and numbers only)."""
         return vault_token_status(self._address, self._token, transport=self._send)
