@@ -79,17 +79,44 @@ def smoke_standalone_app() -> None:
     endpoint = f"http://127.0.0.1:{server.server_port}"
     try:
         for path, ready in (("/healthy", True), ("/unhealthy", False), ("", False)):
-            env = {"ENVIRONMENT": "local_dev", "OTEL_SERVICE_NAME": "standalone-example"}
+            # Preserve process prerequisites without inheriting application identity,
+            # dependency URLs, or proxy configuration from the invoking environment.
+            env = {
+                key: value
+                for key, value in os.environ.items()
+                if key
+                in {
+                    "PATH",
+                    "SYSTEMROOT",
+                    "SystemRoot",
+                    "WINDIR",
+                    "TEMP",
+                    "TMP",
+                    "TMPDIR",
+                    "LANG",
+                    "LANGUAGE",
+                    "LD_LIBRARY_PATH",
+                    "DYLD_LIBRARY_PATH",
+                }
+                or key.startswith("LC_")
+            }
+            env.update(ENVIRONMENT="local_dev", OTEL_SERVICE_NAME="standalone-example")
             if path:
                 env["CATALOG_HEALTH_URL"] = endpoint + path
-            result = subprocess.run(
-                [sys.executable, "-I", str(example)],
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=15,
-                check=False,
-            )
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-I", str(example)],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise AssertionError(
+                    f"example timed out after {exc.timeout}s for path {path!r}; "
+                    f"stdout={exc.stdout!r}; stderr={exc.stderr!r}"
+                ) from exc
             diagnostic = (
                 f"exit={result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}"
             )
