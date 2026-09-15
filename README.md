@@ -25,7 +25,7 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v1.5.1"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v1.5.2"
 ```
 
 ## Modules
@@ -61,10 +61,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v1.5.1'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v1.5.2'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v1.5.1'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v1.5.2'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -107,6 +107,42 @@ Strict identity loading requires a real commit SHA in every deployed tier and th
 digest/configuration/release identity in staging and production. Non-strict loaders follow
 OpenTelemetry's error-handling model: malformed optional OTel values are reported as runtime
 warnings and discarded instead of blocking an application that has telemetry disabled.
+
+## Start an independent app
+
+Copy [examples/runtime_check.py](examples/runtime_check.py) into your app. It
+loads a required environment, validates runtime identity, probes an HTTP dependency,
+and returns nonzero if the required dependency is missing or unhealthy. It uses only
+public SDK imports and ordinary environment variables; no sibling checkout or
+platform credentials are needed.
+
+Install the published wheel in a fresh Python 3.11+ environment:
+
+```bash
+python -m venv .venv
+.venv/bin/python -m pip install \
+  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v1.5.2/infra2_sdk-1.5.2-py3-none-any.whl#sha256=e422846adab5fb25818e8722f06a71a78de2b09527c28116533bf6a0d1e48ec8'
+```
+
+For a local connectivity exercise, start `python -m http.server 8765 --bind
+127.0.0.1` in another terminal, then run:
+
+```bash
+ENVIRONMENT=local_dev OTEL_SERVICE_NAME=my-app \
+  CATALOG_HEALTH_URL=http://127.0.0.1:8765/ \
+  .venv/bin/python examples/runtime_check.py
+```
+
+The command prints `ready: true` as JSON. Remove `CATALOG_HEALTH_URL`, or use an
+unhealthy endpoint, and it prints `ready: false` and exits 1. This exercises HTTP
+reachability only. In a real app, replace `catalog` and its required tiers with
+your own dependency policy and call this boundary from startup/readiness. Keep
+business validation, routes, storage layout, and deployment policy in the app.
+Deployed tiers must receive genuine release identity from their release system;
+the example does not invent production identity to bypass strict validation.
+
+The HTTP wheel smoke runs this example against a local server and checks both
+success and failure paths on every PR, without installing the SDK source tree.
 
 ## Environment contract
 

@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from threading import Thread
 
 
 def smoke_core() -> None:
@@ -53,6 +58,44 @@ def smoke_http() -> None:
     client = create_http_client()
     assert type(client).__name__ == "Client"
     client.close()
+    smoke_standalone_app()
+
+
+def smoke_standalone_app() -> None:
+    """Exercise the documented app entrypoint with an independently installed SDK."""
+
+    class HealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(200 if self.path == "/healthy" else 503)
+            self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HealthHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    example = Path(__file__).resolve().parents[1] / "examples/runtime_check.py"
+    endpoint = f"http://127.0.0.1:{server.server_port}"
+    try:
+        for path, ready in (("/healthy", True), ("/unhealthy", False), ("", False)):
+            env = {"ENVIRONMENT": "local_dev", "OTEL_SERVICE_NAME": "standalone-example"}
+            if path:
+                env["CATALOG_HEALTH_URL"] = endpoint + path
+            result = subprocess.run(
+                [sys.executable, "-I", str(example)],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+            assert result.returncode == (0 if ready else 1), result.stderr
+            assert json.loads(result.stdout)["ready"] is ready, result.stdout
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def smoke_otel() -> None:
