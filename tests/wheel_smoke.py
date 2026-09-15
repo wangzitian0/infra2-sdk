@@ -90,8 +90,11 @@ def smoke_standalone_app() -> None:
                 timeout=15,
                 check=False,
             )
-            assert result.returncode == (0 if ready else 1), result.stderr
-            assert json.loads(result.stdout)["ready"] is ready, result.stdout
+            diagnostic = (
+                f"exit={result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}"
+            )
+            assert result.returncode == (0 if ready else 1), diagnostic
+            assert json.loads(result.stdout)["ready"] is ready, diagnostic
     finally:
         server.shutdown()
         server.server_close()
