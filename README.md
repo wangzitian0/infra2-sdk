@@ -124,8 +124,13 @@ python -m venv .venv
   'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v1.5.2/infra2_sdk-1.5.2-py3-none-any.whl#sha256=e422846adab5fb25818e8722f06a71a78de2b09527c28116533bf6a0d1e48ec8'
 ```
 
-For a local connectivity exercise, start `python -m http.server 8765 --bind
-127.0.0.1` in another terminal, then run:
+For a local connectivity exercise, start this server in another terminal:
+
+```bash
+python -m http.server 8765 --bind 127.0.0.1
+```
+
+Then run:
 
 ```bash
 ENVIRONMENT=local_dev OTEL_SERVICE_NAME=my-app \

@@ -94,7 +94,11 @@ def smoke_standalone_app() -> None:
                 f"exit={result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}"
             )
             assert result.returncode == (0 if ready else 1), diagnostic
-            assert json.loads(result.stdout)["ready"] is ready, diagnostic
+            try:
+                payload = json.loads(result.stdout)
+            except json.JSONDecodeError as exc:
+                raise AssertionError(diagnostic) from exc
+            assert isinstance(payload, dict) and payload.get("ready") is ready, diagnostic
     finally:
         server.shutdown()
         server.server_close()
