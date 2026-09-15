@@ -1,6 +1,6 @@
 # infra2-sdk
 
-Versioned, side-effect-free runtime contracts shared by
+Versioned runtime contracts and explicitly invoked protocol adapters shared by
 [`infra2`](https://github.com/wangzitian0/infra2),
 [`finance_report`](https://github.com/wangzitian0/finance_report), and
 [`truealpha`](https://github.com/wangzitian0/truealpha).
@@ -25,7 +25,7 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v1.0.0"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v1.5.1"
 ```
 
 ## Modules
@@ -61,10 +61,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v1.0.0'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v1.5.1'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v1.0.0'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v1.5.1'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -196,6 +196,10 @@ artifact provenance. Dumping, anonymization, storage, Vault, host access, and
 deployment remain outside the SDK.
 
 ## Development
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for ownership, compatibility, and validation.
+Named manifest override tables must resolve to mappings; missing or invalid tables fail
+before generating a file, so source classifications cannot silently disappear.
 
 ```bash
 python -m pip install -e '.[dev]'

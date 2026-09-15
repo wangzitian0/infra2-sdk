@@ -69,7 +69,9 @@ class ManifestSpec:
         if not attr:
             raise ValueError(f"overrides must be 'package.module:NAME', got {self.overrides!r}")
         table = getattr(import_module(module_name), attr, None)
-        return dict(table) if isinstance(table, Mapping) else None
+        if not isinstance(table, Mapping):
+            raise ValueError(f"overrides {self.overrides!r} must name an existing mapping")
+        return dict(table)
 
     def build(self) -> EnvironmentManifest:
         return environment_manifest_from_model(

@@ -120,3 +120,21 @@ def test_specs_resolve_dotted_models_and_side_tables(monkeypatch: pytest.MonkeyP
     }
     with pytest.raises(ValueError, match="package.module:Class"):
         ManifestSpec("x.json", "spec_models_under_test").resolve_model()
+
+
+@pytest.mark.parametrize("attribute", ["MISSING", "NOT_A_TABLE"])
+def test_invalid_named_overrides_fail_before_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, attribute: str
+) -> None:
+    import sys
+    import types
+
+    module = types.ModuleType("broken_manifest_settings")
+    module.NOT_A_TABLE = "sensitive-value-must-not-appear-in-errors"
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    reference = f"{module.__name__}:{attribute}"
+    spec = ManifestSpec("env.json", Settings, overrides=reference)
+    with pytest.raises(ValueError, match=reference) as error:
+        manifests.write(root=tmp_path, specs=(spec,))
+    assert "sensitive-value" not in str(error.value)
+    assert not (tmp_path / "env.json").exists()
