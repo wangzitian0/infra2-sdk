@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from threading import Thread
 
 
 def smoke_core() -> None:
@@ -53,6 +58,78 @@ def smoke_http() -> None:
     client = create_http_client()
     assert type(client).__name__ == "Client"
     client.close()
+    smoke_standalone_app()
+
+
+def smoke_standalone_app() -> None:
+    """Exercise the documented app entrypoint with an independently installed SDK."""
+
+    class HealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(200 if self.path == "/healthy" else 503)
+            self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), HealthHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    example = Path(__file__).resolve().parents[1] / "examples/runtime_check.py"
+    endpoint = f"http://127.0.0.1:{server.server_port}"
+    try:
+        for path, ready in (("/healthy", True), ("/unhealthy", False), ("", False)):
+            # Preserve process prerequisites without inheriting application identity,
+            # dependency URLs, or proxy configuration from the invoking environment.
+            env = {
+                key: value
+                for key, value in os.environ.items()
+                if key
+                in {
+                    "PATH",
+                    "SYSTEMROOT",
+                    "SystemRoot",
+                    "WINDIR",
+                    "TEMP",
+                    "TMP",
+                    "TMPDIR",
+                    "LANG",
+                    "LANGUAGE",
+                    "LD_LIBRARY_PATH",
+                    "DYLD_LIBRARY_PATH",
+                }
+                or key.startswith("LC_")
+            }
+            env.update(ENVIRONMENT="local_dev", OTEL_SERVICE_NAME="standalone-example")
+            if path:
+                env["CATALOG_HEALTH_URL"] = endpoint + path
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-I", str(example)],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise AssertionError(
+                    f"example timed out after {exc.timeout}s for path {path!r}; "
+                    f"stdout={exc.stdout!r}; stderr={exc.stderr!r}"
+                ) from exc
+            diagnostic = (
+                f"exit={result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}"
+            )
+            assert result.returncode == (0 if ready else 1), diagnostic
+            try:
+                payload = json.loads(result.stdout)
+            except json.JSONDecodeError as exc:
+                raise AssertionError(diagnostic) from exc
+            assert isinstance(payload, dict) and payload.get("ready") is ready, diagnostic
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def smoke_otel() -> None:
