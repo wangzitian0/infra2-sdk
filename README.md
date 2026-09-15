@@ -110,7 +110,8 @@ warnings and discarded instead of blocking an application that has telemetry dis
 
 ## Start an independent app
 
-Copy [examples/runtime_check.py](examples/runtime_check.py) into your app. It
+Copy [examples/runtime_check.py](examples/runtime_check.py) to `runtime_check.py`
+in your own app's root directory, then run the commands below from that directory. It
 loads a required environment, validates runtime identity, probes an HTTP dependency,
 and returns nonzero if the required dependency is missing or unhealthy. It uses only
 public SDK imports and ordinary environment variables; no sibling checkout or
@@ -135,11 +136,11 @@ Then run:
 ```bash
 ENVIRONMENT=local_dev OTEL_SERVICE_NAME=my-app \
   CATALOG_HEALTH_URL=http://127.0.0.1:8765/ \
-  .venv/bin/python examples/runtime_check.py
+  .venv/bin/python runtime_check.py
 ```
 
-The command prints `ready: true` as JSON. Remove `CATALOG_HEALTH_URL`, or use an
-unhealthy endpoint, and it prints `ready: false` and exits 1. This exercises HTTP
+The command prints JSON with `"ready": true`. Remove `CATALOG_HEALTH_URL`, or use an
+unhealthy endpoint, and it prints `"ready": false` and exits 1. This exercises HTTP
 reachability only. In a real app, replace `catalog` and its required tiers with
 your own dependency policy and call this boundary from startup/readiness. Keep
 business validation, routes, storage layout, and deployment policy in the app.
