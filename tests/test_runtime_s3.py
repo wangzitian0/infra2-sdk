@@ -233,3 +233,33 @@ def test_probe_s3_closes_owned_client_on_error(monkeypatch: pytest.MonkeyPatch) 
     assert result.status is DependencyStatus.ABSENT
     assert closed == [True], "owned S3 client must be closed even on failure"
 
+
+def test_probe_s3_handles_client_creation_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "infra2_sdk.runtime.s3.create_s3_client",
+        lambda settings: (_ for _ in ()).throw(RuntimeError("missing boto3")),
+    )
+    settings = S3Settings(bucket="runtime-canary")
+    result = probe_s3(settings)
+    assert result.status is DependencyStatus.ABSENT
+    assert "missing boto3" in result.detail
+
+
+def test_probe_s3_swallows_client_close_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeBrokenCloseClient:
+        def head_bucket(self, **kwargs):
+            return kwargs
+
+        def close(self):
+            raise OSError("socket fd reset")
+
+    monkeypatch.setattr(
+        "infra2_sdk.runtime.s3.create_s3_client",
+        lambda settings: FakeBrokenCloseClient(),
+    )
+    settings = S3Settings(bucket="runtime-canary")
+    result = probe_s3(settings)
+    assert result.status is DependencyStatus.PRESENT
+    assert result.detail == "bucket accessible"
+
+

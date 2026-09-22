@@ -120,8 +120,10 @@ def create_s3_client(settings: S3Settings, *, session: Any | None = None) -> Any
 def probe_s3(settings: S3Settings, *, client: Any | None = None) -> ProbeResult:
     started = time.perf_counter()
     owned = client is None
-    s3_client = client or create_s3_client(settings)
+    s3_client = client
     try:
+        if s3_client is None:
+            s3_client = create_s3_client(settings)
         s3_client.head_bucket(Bucket=settings.bucket)
         return ProbeResult(
             "object_storage",
@@ -137,8 +139,11 @@ def probe_s3(settings: S3Settings, *, client: Any | None = None) -> ProbeResult:
             _elapsed(started),
         )
     finally:
-        if owned and hasattr(s3_client, "close"):
-            s3_client.close()
+        if owned and s3_client is not None and hasattr(s3_client, "close"):
+            try:
+                s3_client.close()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 class S3Check:

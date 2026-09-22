@@ -1,5 +1,7 @@
 """Provider-neutral runtime contracts and optional standard-protocol adapters."""
 
+from typing import Any
+
 from infra2_sdk.runtime.config_schema import (
     EnvironmentField,
     EnvironmentManifest,
@@ -39,7 +41,6 @@ from infra2_sdk.runtime.environment import (
 )
 from infra2_sdk.runtime.identity import (
     RuntimeIdentity,
-    configuration_fingerprint,
     runtime_identity_fingerprint,
 )
 from infra2_sdk.runtime.probes import (
@@ -49,6 +50,21 @@ from infra2_sdk.runtime.probes import (
     assert_required_dependencies,
     run_probes,
 )
+
+
+def configuration_fingerprint(*args: Any, **kwargs: Any) -> str:
+    """Polymorphic configuration fingerprint dispatcher for backward compatibility.
+
+    - If 2 or more positional arguments are provided, or 'manifest' is in kwargs, or the 1st
+      argument is an EnvironmentManifest, dispatches to manifest_config_fingerprint.
+    - Otherwise dispatches to runtime_identity_fingerprint.
+    """
+    if len(args) >= 2 or "manifest" in kwargs:
+        return manifest_config_fingerprint(*args, **kwargs)
+    if args and isinstance(args[0], EnvironmentManifest):
+        return manifest_config_fingerprint(*args, **kwargs)
+    return runtime_identity_fingerprint(*args, **kwargs)
+
 
 __all__ = [
     "APP_OWNED_TIERS",

@@ -302,3 +302,35 @@ def test_manifest_config_fingerprint_is_canonical() -> None:
     data = {"A": "val"}
     assert manifest_config_fingerprint(manifest, data) == configuration_fingerprint(manifest, data)
 
+
+def test_runtime_top_level_configuration_fingerprint_polymorphic_dispatch() -> None:
+    from infra2_sdk.runtime import (
+        configuration_fingerprint as top_level_fp,
+        manifest_config_fingerprint,
+        runtime_identity_fingerprint,
+    )
+    from infra2_sdk.runtime.config_schema import EnvironmentField, EnvironmentManifest
+
+    manifest = EnvironmentManifest(source="sc", fields=(EnvironmentField("a", "A"),))
+    manifest_data = {"A": "val"}
+
+    # 1. Two positional arguments: manifest + values -> dispatches to manifest_config_fingerprint
+    res2 = top_level_fp(manifest, manifest_data)
+    assert res2 == manifest_config_fingerprint(manifest, manifest_data)
+    assert len(res2) == 64
+
+    # 2. Kwargs with manifest -> dispatches to manifest_config_fingerprint
+    res_kw = top_level_fp(manifest=manifest, values=manifest_data)
+    assert res_kw == manifest_config_fingerprint(manifest, manifest_data)
+
+    # 3. Single argument: parts dict -> dispatches to runtime_identity_fingerprint
+    parts = {"svc": "alerting", "ver": "1.0.0"}
+    res1 = top_level_fp(parts)
+    assert res1 == runtime_identity_fingerprint(parts)
+    assert len(res1) == 64
+
+    # 4. Explicit functions are directly callable and produce matching results
+    assert manifest_config_fingerprint(manifest, manifest_data) == res2
+    assert runtime_identity_fingerprint(parts) == res1
+
+
