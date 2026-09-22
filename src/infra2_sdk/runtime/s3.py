@@ -119,8 +119,12 @@ def create_s3_client(settings: S3Settings, *, session: Any | None = None) -> Any
 
 def probe_s3(settings: S3Settings, *, client: Any | None = None) -> ProbeResult:
     started = time.perf_counter()
+    owned = client is None
+    s3_client = client
     try:
-        (client or create_s3_client(settings)).head_bucket(Bucket=settings.bucket)
+        if s3_client is None:
+            s3_client = create_s3_client(settings)
+        s3_client.head_bucket(Bucket=settings.bucket)
         return ProbeResult(
             "object_storage",
             DependencyStatus.PRESENT,
@@ -134,6 +138,10 @@ def probe_s3(settings: S3Settings, *, client: Any | None = None) -> ProbeResult:
             f"{type(exc).__name__}: {exc}",
             _elapsed(started),
         )
+    finally:
+        if owned and s3_client is not None and hasattr(s3_client, "close"):
+            with contextlib.suppress(Exception):
+                s3_client.close()
 
 
 class S3Check:

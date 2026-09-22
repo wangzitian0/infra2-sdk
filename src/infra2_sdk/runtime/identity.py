@@ -233,7 +233,7 @@ def canonical_sha256(payload: Any) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def configuration_fingerprint(parts: Mapping[str, str | bytes]) -> str:
+def runtime_identity_fingerprint(parts: Mapping[str, str | bytes]) -> str:
     """Hash named configuration inputs with unambiguous length framing."""
 
     digest = hashlib.sha256()
@@ -248,6 +248,9 @@ def configuration_fingerprint(parts: Mapping[str, str | bytes]) -> str:
         digest.update(len(encoded).to_bytes(8, "big"))
         digest.update(encoded)
     return digest.hexdigest()
+
+
+configuration_fingerprint = runtime_identity_fingerprint
 
 
 def _string(raw: Mapping[str, Any], key: str, *, required: bool = True) -> str:

@@ -68,6 +68,7 @@ infra2_sdk = ["data/*.yaml"]
 addopts = "--strict-markers --strict-config"
 testpaths = ["tests"]
 asyncio_mode = "auto"
+pythonpath = ["src"]
 
 [tool.coverage.run]
 branch = true
