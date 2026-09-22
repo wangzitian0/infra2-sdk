@@ -140,10 +140,8 @@ def probe_s3(settings: S3Settings, *, client: Any | None = None) -> ProbeResult:
         )
     finally:
         if owned and s3_client is not None and hasattr(s3_client, "close"):
-            try:
+            with contextlib.suppress(Exception):
                 s3_client.close()
-            except Exception:  # noqa: BLE001
-                pass
 
 
 class S3Check:

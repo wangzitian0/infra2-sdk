@@ -256,7 +256,6 @@ def test_configuration_fingerprint_is_stable_and_value_blind() -> None:
     assert secret2 not in fp2
 
 
-
 def test_manifest_from_model_folds_a_side_table_of_overrides() -> None:
     from pydantic import Field
     from pydantic_settings import BaseSettings
@@ -306,6 +305,8 @@ def test_manifest_config_fingerprint_is_canonical() -> None:
 def test_runtime_top_level_configuration_fingerprint_polymorphic_dispatch() -> None:
     from infra2_sdk.runtime import (
         configuration_fingerprint as top_level_fp,
+    )
+    from infra2_sdk.runtime import (
         manifest_config_fingerprint,
         runtime_identity_fingerprint,
     )
@@ -332,5 +333,3 @@ def test_runtime_top_level_configuration_fingerprint_polymorphic_dispatch() -> N
     # 4. Explicit functions are directly callable and produce matching results
     assert manifest_config_fingerprint(manifest, manifest_data) == res2
     assert runtime_identity_fingerprint(parts) == res1
-
-

@@ -221,4 +221,3 @@ def test_runtime_identity_fingerprint_is_canonical() -> None:
     assert imported_fp is runtime_identity_fingerprint
     data = {"key": "value"}
     assert runtime_identity_fingerprint(data) == configuration_fingerprint(data)
-

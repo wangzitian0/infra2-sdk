@@ -261,5 +261,3 @@ def test_probe_s3_swallows_client_close_exception(monkeypatch: pytest.MonkeyPatc
     result = probe_s3(settings)
     assert result.status is DependencyStatus.PRESENT
     assert result.detail == "bucket accessible"
-
-

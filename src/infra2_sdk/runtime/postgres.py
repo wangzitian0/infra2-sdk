@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 import time
 from collections.abc import Callable, Mapping
@@ -87,10 +88,8 @@ def probe_postgres(
     finally:
         target = raw_conn or conn_or_cm if "conn_or_cm" in locals() else None
         if target is not None and hasattr(target, "close"):
-            try:
+            with contextlib.suppress(Exception):
                 target.close()
-            except Exception:  # noqa: BLE001
-                pass
 
 
 class PostgresCheck:

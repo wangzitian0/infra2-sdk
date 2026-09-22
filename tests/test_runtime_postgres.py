@@ -127,4 +127,3 @@ def test_probe_postgres_closes_connection() -> None:
     result = probe_postgres(settings, connector=lambda *a, **kw: ClosableConnection())
     assert result.status is DependencyStatus.PRESENT
     assert closed == [True], "postgres connection must be explicitly closed"
-
