@@ -242,7 +242,19 @@ def test_configuration_fingerprint_is_stable_and_value_blind() -> None:
     one = configuration_fingerprint(manifest, {"B": "2", "A": "1", "IGNORED": "x"})
     assert one == configuration_fingerprint(manifest, {"A": "1", "B": "2"})
     assert one != configuration_fingerprint(manifest, {"A": "1", "B": "3"})
-    assert len(one) == 64 and "1" not in one[:0]
+    assert len(one) == 64
+    assert one != "1" * 64
+
+    # Value-blind: different sensitive values yield different fingerprints,
+    # and sensitive values are never leaked in the output hex string.
+    secret1 = "sensitive-secret-value-alpha"
+    secret2 = "sensitive-secret-value-beta"
+    fp1 = configuration_fingerprint(manifest, {"A": secret1, "B": "2"})
+    fp2 = configuration_fingerprint(manifest, {"A": secret2, "B": "2"})
+    assert fp1 != fp2
+    assert secret1 not in fp1
+    assert secret2 not in fp2
+
 
 
 def test_manifest_from_model_folds_a_side_table_of_overrides() -> None:
@@ -273,3 +285,20 @@ def test_manifest_from_model_folds_a_side_table_of_overrides() -> None:
     assert by_env["PLAIN"].source == "code" and not by_env["PLAIN"].injected
     with pytest.raises(ValueError, match="unknown settings fields"):
         environment_manifest_from_model(Settings, overrides={"nope": {"source": "human"}})
+
+
+def test_manifest_config_fingerprint_is_canonical() -> None:
+    from infra2_sdk.runtime import manifest_config_fingerprint as imported_fp
+    from infra2_sdk.runtime.config_schema import (
+        EnvironmentField,
+        EnvironmentManifest,
+        configuration_fingerprint,
+        manifest_config_fingerprint,
+    )
+
+    assert manifest_config_fingerprint is configuration_fingerprint
+    assert imported_fp is manifest_config_fingerprint
+    manifest = EnvironmentManifest(source="sc", fields=(EnvironmentField("a", "A"),))
+    data = {"A": "val"}
+    assert manifest_config_fingerprint(manifest, data) == configuration_fingerprint(manifest, data)
+

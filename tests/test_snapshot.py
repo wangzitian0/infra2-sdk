@@ -308,6 +308,11 @@ def test_json_schema_is_closed_and_requires_clean_proof() -> None:
 
 def test_shape_validation_is_not_presented_as_producer_attestation() -> None:
     """The pure SDK contract must keep the trust decision with infra2."""
-    readme = Path("README.md").read_text(encoding="utf-8")
+    readme_path = Path(__file__).resolve().parents[1] / "README.md"
+    readme = (
+        readme_path.read_text(encoding="utf-8")
+        if readme_path.exists()
+        else Path("README.md").read_text(encoding="utf-8")
+    )
     assert "does not attest" in readme
     assert "independently authorize" in readme

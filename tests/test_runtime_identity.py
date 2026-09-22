@@ -211,3 +211,14 @@ def test_canonical_sha256_is_formatting_blind_and_matches_the_estate() -> None:
         json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
     ).hexdigest()
     assert canonical_sha256(payload) == expected
+
+
+def test_runtime_identity_fingerprint_is_canonical() -> None:
+    from infra2_sdk.runtime import runtime_identity_fingerprint as imported_fp
+    from infra2_sdk.runtime.identity import configuration_fingerprint, runtime_identity_fingerprint
+
+    assert runtime_identity_fingerprint is configuration_fingerprint
+    assert imported_fp is runtime_identity_fingerprint
+    data = {"key": "value"}
+    assert runtime_identity_fingerprint(data) == configuration_fingerprint(data)
+

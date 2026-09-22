@@ -455,7 +455,7 @@ def reconcile(
     )
 
 
-def configuration_fingerprint(manifest: EnvironmentManifest, values: Mapping[str, str]) -> str:
+def manifest_config_fingerprint(manifest: EnvironmentManifest, values: Mapping[str, str]) -> str:
     """Stable sha256 over the manifest's fields present in ``values``.
 
     Each value is hashed on its own before the outer digest, so the fingerprint input can
@@ -469,6 +469,9 @@ def configuration_fingerprint(manifest: EnvironmentManifest, values: Mapping[str
     ]
     payload = json.dumps(lines, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+configuration_fingerprint = manifest_config_fingerprint
 
 
 def _validation_aliases(alias: Any) -> tuple[str, ...]:

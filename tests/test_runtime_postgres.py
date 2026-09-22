@@ -102,3 +102,29 @@ def test_failure_evidence_redacts_database_credentials() -> None:
 def test_postgres_settings_validation(dsn, timeout, message) -> None:
     with pytest.raises(ValueError, match=message):
         PostgresSettings(dsn, timeout)
+
+
+def test_probe_postgres_closes_connection() -> None:
+    closed = []
+
+    class ClosableConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, query):
+            return self
+
+        def fetchone(self):
+            return (1,)
+
+        def close(self):
+            closed.append(True)
+
+    settings = PostgresSettings("postgresql://db/app")
+    result = probe_postgres(settings, connector=lambda *a, **kw: ClosableConnection())
+    assert result.status is DependencyStatus.PRESENT
+    assert closed == [True], "postgres connection must be explicitly closed"
+

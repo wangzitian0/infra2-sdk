@@ -5,6 +5,7 @@ from infra2_sdk.runtime.config_schema import (
     EnvironmentManifest,
     EnvironmentValidation,
     environment_manifest_from_model,
+    manifest_config_fingerprint,
     settings_json_schema,
     validate_environment,
 )
@@ -36,7 +37,11 @@ from infra2_sdk.runtime.environment import (
     resolve_environment_tier,
     strict_environment_from_env,
 )
-from infra2_sdk.runtime.identity import RuntimeIdentity, configuration_fingerprint
+from infra2_sdk.runtime.identity import (
+    RuntimeIdentity,
+    configuration_fingerprint,
+    runtime_identity_fingerprint,
+)
 from infra2_sdk.runtime.probes import (
     DependencyStatus,
     DependencyUnavailableError,
@@ -71,12 +76,14 @@ __all__ = [
     "configuration_fingerprint",
     "environment_manifest_from_model",
     "environment_from_env",
+    "manifest_config_fingerprint",
     "normalize_deployment_environment",
     "resolve_env",
     "resolve_environment_tier",
     "resolve_runtime_env",
     "runtime_env_contract",
     "runtime_env_spec",
+    "runtime_identity_fingerprint",
     "run_probes",
     "settings_json_schema",
     "strict_environment_from_env",

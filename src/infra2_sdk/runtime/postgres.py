@@ -57,13 +57,20 @@ def probe_postgres(
     connector: Callable[..., Any] | None = None,
 ) -> ProbeResult:
     started = time.perf_counter()
+    raw_conn = None
     try:
         connect = connector or require("psycopg", extra="postgres").connect
-        with connect(
+        conn_or_cm = connect(
             settings.psycopg_dsn,
             connect_timeout=settings.connect_timeout_seconds,
-        ) as connection:
-            connection.execute("SELECT 1").fetchone()
+        )
+        if hasattr(conn_or_cm, "__enter__"):
+            with conn_or_cm as connection:
+                raw_conn = connection
+                connection.execute("SELECT 1").fetchone()
+        else:
+            raw_conn = conn_or_cm
+            raw_conn.execute("SELECT 1").fetchone()
         return ProbeResult(
             "database",
             DependencyStatus.PRESENT,
@@ -77,6 +84,13 @@ def probe_postgres(
             f"{type(exc).__name__}: {_redact_error(str(exc), settings)}",
             _elapsed(started),
         )
+    finally:
+        target = raw_conn or conn_or_cm if "conn_or_cm" in locals() else None
+        if target is not None and hasattr(target, "close"):
+            try:
+                target.close()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 class PostgresCheck:
