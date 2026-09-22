@@ -26,7 +26,10 @@ class PipelineStage(StrEnum):
     CONFIG_PREFLIGHT = "config-preflight"
     DEPLOY_START = "deploy-start"
     DEPLOY_STATUS = "deploy-status"
+    # Deprecated: scheduled for removal in v2.0.0
     ROUTE_CANARY = "route-canary"
+    """Deprecated: scheduled for removal in v2.0.0 (retired in infra2#543,
+    producer deleted)."""
     WATCHDOG = "watchdog"
 
 
@@ -45,8 +48,14 @@ class FailureDomain(StrEnum):
     GITHUB_ACTIONS = "github-actions"
     IAC_RUNNER = "iac-runner"
     DOKPLOY_CONTROL_PLANE = "dokploy-control-plane"
+    # Deprecated: scheduled for removal in v2.0.0
     DOKPLOY_WORKER_OR_DEPLOYMENT_RECORD = "dokploy-worker-or-deployment-record"
+    """Deprecated: scheduled for removal in v2.0.0 (retired Dokploy worker or
+    deployment record domain)."""
+    # Deprecated: scheduled for removal in v2.0.0
     DOKPLOY_COMPOSE_SOURCE_TYPE = "dokploy-compose-source-type"
+    """Deprecated: scheduled for removal in v2.0.0 (retired Dokploy compose
+    source type domain)."""
     DOCKER_RUNTIME = "docker-runtime"
     TRAEFIK_PUBLIC_ROUTE = "traefik-public-route"
     CLOUDFLARE_WORKER_HEALTH = "cloudflare-worker-health"
@@ -70,8 +79,13 @@ class BudgetStatus(StrEnum):
 class DisagreementKind(StrEnum):
     NONE = "none"
     INTERNAL_HEALTH_PUBLIC_ROUTE = "internal-health-public-route"
+    # Deprecated: scheduled for removal in v2.0.0
     HEARTBEAT_PUBLIC_ROUTE = "heartbeat-public-route"
+    """Deprecated: scheduled for removal in v2.0.0 (depends on retired ROUTE_CANARY)."""
+    # Deprecated: scheduled for removal in v2.0.0
     FALLBACK_PUBLIC_ROUTE = "fallback-public-route"
+    """Deprecated: scheduled for removal in v2.0.0 (depends on retired
+    DOKPLOY_WORKER_OR_DEPLOYMENT_RECORD)."""
 
 
 STAGE_DEADLINE_MS: dict[PipelineStage, int] = {

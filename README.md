@@ -226,6 +226,11 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
 - Importing any runtime module performs no network I/O and mutates no global provider state.
 - v0.2 ownership constants and `vault=True` manifest metadata remain compatibility-only; new
   consumers use tier semantics and explicit `injected=True` metadata.
+- Deprecated delivery stages, disagreement kinds, and failure domains scheduled for removal in v2.0.0:
+  - `PipelineStage.ROUTE_CANARY` (retired in infra2#543, producer deleted);
+  - `DisagreementKind.HEARTBEAT_PUBLIC_ROUTE` (depends on retired `ROUTE_CANARY`);
+  - `DisagreementKind.FALLBACK_PUBLIC_ROUTE` (depends on retired `DOKPLOY_WORKER_OR_DEPLOYMENT_RECORD`);
+  - `FailureDomain.DOKPLOY_WORKER_OR_DEPLOYMENT_RECORD` and `FailureDomain.DOKPLOY_COMPOSE_SOURCE_TYPE` (retired failure domains).
 
 ### Anonymized snapshot trust boundary
 
