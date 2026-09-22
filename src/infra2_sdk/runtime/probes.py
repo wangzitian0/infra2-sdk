@@ -170,7 +170,11 @@ async def _run_sync_probe(probe, *, name: str):
             loop.call_soon_threadsafe(callback)
 
     Thread(target=worker, name=f"infra2-probe-{name}", daemon=True).start()
-    return await future
+    try:
+        return await future
+    finally:
+        if not future.done():
+            future.cancel()
 
 
 def assert_required_dependencies(

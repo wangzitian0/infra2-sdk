@@ -261,3 +261,79 @@ def test_probe_s3_swallows_client_close_exception(monkeypatch: pytest.MonkeyPatc
     result = probe_s3(settings)
     assert result.status is DependencyStatus.PRESENT
     assert result.detail == "bucket accessible"
+
+
+def test_ensure_bucket_closes_owned_client_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed = []
+
+    class FakeOwnedClient:
+        def head_bucket(self, **kwargs):
+            return kwargs
+
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(
+        "infra2_sdk.runtime.s3.create_s3_client",
+        lambda settings: FakeOwnedClient(),
+    )
+    settings = S3Settings(bucket="runtime-canary")
+    ensure_bucket(settings)
+    assert closed == [True], "owned S3 client must be closed after successful ensure_bucket"
+
+
+def test_ensure_bucket_closes_owned_client_on_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed = []
+
+    class FakeOwnedClient:
+        def head_bucket(self, **kwargs):
+            raise RuntimeError("head bucket network error")
+
+        def close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(
+        "infra2_sdk.runtime.s3.create_s3_client",
+        lambda settings: FakeOwnedClient(),
+    )
+    settings = S3Settings(bucket="runtime-canary")
+    with pytest.raises(RuntimeError, match="head bucket network error"):
+        ensure_bucket(settings)
+    assert closed == [True], "owned S3 client must be closed even when ensure_bucket raises"
+
+
+def test_ensure_bucket_does_not_close_unowned_client() -> None:
+    closed = []
+
+    class ExternalClient:
+        def head_bucket(self, **kwargs):
+            return kwargs
+
+        def close(self):
+            closed.append(True)
+
+    settings = S3Settings(bucket="runtime-canary")
+    client = ExternalClient()
+    ensure_bucket(settings, client=client)
+    assert closed == [], "unowned S3 client must not be closed by ensure_bucket"
+
+
+def test_probe_s3_does_not_close_unowned_client() -> None:
+    closed = []
+
+    class ExternalClient:
+        def head_bucket(self, **kwargs):
+            return kwargs
+
+        def close(self):
+            closed.append(True)
+
+    settings = S3Settings(bucket="runtime-canary")
+    client = ExternalClient()
+    result = probe_s3(settings, client=client)
+    assert result.status is DependencyStatus.PRESENT
+    assert closed == [], "unowned S3 client must not be closed by probe_s3"

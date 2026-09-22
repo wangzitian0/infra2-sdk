@@ -306,13 +306,44 @@ def test_json_schema_is_closed_and_requires_clean_proof() -> None:
     assert proof["properties"]["residuals_found"] == {"const": 0}
 
 
-def test_shape_validation_is_not_presented_as_producer_attestation() -> None:
+def test_shape_validation_is_not_presented_as_producer_attestation(tmp_path: Path) -> None:
     """The pure SDK contract must keep the trust decision with infra2."""
-    readme_path = Path(__file__).resolve().parents[1] / "README.md"
-    readme = (
-        readme_path.read_text(encoding="utf-8")
-        if readme_path.exists()
-        else Path("README.md").read_text(encoding="utf-8")
+    import ast
+    import hashlib
+    import inspect
+
+    SnapshotManifest = AnonymizedSnapshotManifest
+    validate_snapshot_shape = SnapshotManifest.from_dict
+    verify_digest = verify_snapshot_artifact
+
+    # Direct AST check: verify_digest does not inspect the producer field
+    artifact_ast = ast.parse(inspect.getsource(verify_digest))
+    for node in ast.walk(artifact_ast):
+        if isinstance(node, ast.Attribute) and node.attr == "producer":
+            raise AssertionError("verify_digest must not inspect or attest the producer field")
+
+    # Shape validation accepts any syntactically valid producer without attestation
+    raw = manifest(
+        producer=SnapshotProducer(
+            repository="arbitrary-org/arbitrary-repo",
+            source_sha="c" * 40,
+            run_id="999999",
+            run_url="https://github.com/arbitrary-org/arbitrary-repo/actions/runs/999999",
+        )
+    ).to_dict()
+    parsed = validate_snapshot_shape(raw)
+    assert parsed.producer.repository == "arbitrary-org/arbitrary-repo"
+
+    # Artifact verification binds only bytes, ignoring producer identity entirely
+    artifact = tmp_path / "snapshot.dump"
+    payload = b"snapshot payload"
+    artifact.write_bytes(payload)
+    bound_manifest = replace(
+        parsed,
+        artifact=SnapshotArtifact(
+            format=SnapshotArtifactFormat.POSTGRESQL_CUSTOM,
+            sha256=hashlib.sha256(payload).hexdigest(),
+            size_bytes=len(payload),
+        ),
     )
-    assert "does not attest" in readme
-    assert "independently authorize" in readme
+    verify_digest(bound_manifest, artifact)

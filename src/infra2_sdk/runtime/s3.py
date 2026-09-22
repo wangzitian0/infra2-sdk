@@ -159,7 +159,7 @@ def ensure_bucket(
     settings: S3Settings, *, client: Any | None = None, allow_create: bool = False
 ) -> None:
     """Assert a bucket exists, optionally creating it only when policy explicitly allows."""
-
+    owned = client is None
     s3 = client or create_s3_client(settings)
     try:
         s3.head_bucket(Bucket=settings.bucket)
@@ -167,11 +167,17 @@ def ensure_bucket(
     except Exception as exc:  # noqa: BLE001 - botocore is an optional dependency
         if not allow_create or not is_not_found(exc):
             raise
-    kwargs: dict[str, Any] = {"Bucket": settings.bucket}
-    region_name = settings.region_name or getattr(getattr(s3, "meta", None), "region_name", None)
-    if region_name and region_name != "us-east-1":
-        kwargs["CreateBucketConfiguration"] = {"LocationConstraint": region_name}
-    s3.create_bucket(**kwargs)
+        kwargs: dict[str, Any] = {"Bucket": settings.bucket}
+        region_name = settings.region_name or getattr(
+            getattr(s3, "meta", None), "region_name", None
+        )
+        if region_name and region_name != "us-east-1":
+            kwargs["CreateBucketConfiguration"] = {"LocationConstraint": region_name}
+        s3.create_bucket(**kwargs)
+    finally:
+        if owned and hasattr(s3, "close"):
+            with contextlib.suppress(Exception):
+                s3.close()
 
 
 def read_object_bytes(client: Any, *, bucket: str, key: str) -> bytes:

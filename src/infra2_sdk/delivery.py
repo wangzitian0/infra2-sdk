@@ -174,6 +174,7 @@ def make_stage_result(
     duration_ms: int = 0,
     deadline_ms: int | None = None,
     failure_domain: str | FailureDomain = FailureDomain.NONE,
+    disagreement_kind: str | DisagreementKind = DisagreementKind.NONE,
     external_dependency: bool = False,
     suppressed_reason: str = "",
     skipped_reason: str = "",
@@ -200,6 +201,9 @@ def make_stage_result(
         skipped_reason=skipped_reason,
         current_stage_age_ms=current_stage_age_ms,
         budget_status=classify_budget(duration_ms, deadline_ms=resolved_deadline_ms),
+        disagreement_kind=DisagreementKind(disagreement_kind)
+        if isinstance(disagreement_kind, str)
+        else disagreement_kind,
         evidence_url=evidence_url,
     )
     validate_stage_result(result)
