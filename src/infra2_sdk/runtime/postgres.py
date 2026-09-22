@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import re
 import time
@@ -86,7 +85,9 @@ def probe_postgres(
             _elapsed(started),
         )
     finally:
-        target = raw_conn or conn_or_cm if "conn_or_cm" in locals() else None
+        target = (
+            raw_conn if raw_conn is not None else (conn_or_cm if "conn_or_cm" in locals() else None)
+        )
         if target is not None and hasattr(target, "close"):
             with contextlib.suppress(Exception):
                 target.close()
@@ -104,8 +105,8 @@ class PostgresCheck:
         self.settings = settings
         self.connector = connector
 
-    async def probe(self) -> ProbeResult:
-        return await asyncio.to_thread(probe_postgres, self.settings, connector=self.connector)
+    def probe(self) -> ProbeResult:
+        return probe_postgres(self.settings, connector=self.connector)
 
 
 def _elapsed(started: float) -> float:

@@ -150,3 +150,27 @@ def test_disagreement_classification() -> None:
     worker = result("deploy-status", "fail", "dokploy-worker-or-deployment-record")
     assert detect_disagreement([worker, healthy_watchdog]) == DisagreementKind.FALLBACK_PUBLIC_ROUTE
     assert detect_disagreement([healthy_watchdog]) == DisagreementKind.NONE
+
+
+def test_make_stage_result_with_disagreement_kind() -> None:
+    res_str = make_stage_result(
+        source="infra2",
+        environment="staging",
+        stage="deploy-status",
+        target="app",
+        status="pass",
+        disagreement_kind="internal-health-public-route",
+    )
+    assert res_str.disagreement_kind is DisagreementKind.INTERNAL_HEALTH_PUBLIC_ROUTE
+    assert res_str.to_dict()["disagreement_kind"] == "internal-health-public-route"
+
+    res_enum = make_stage_result(
+        source="infra2",
+        environment="staging",
+        stage="deploy-status",
+        target="app",
+        status="pass",
+        disagreement_kind=DisagreementKind.INTERNAL_HEALTH_PUBLIC_ROUTE,
+    )
+    assert res_enum.disagreement_kind is DisagreementKind.INTERNAL_HEALTH_PUBLIC_ROUTE
+    assert res_enum.to_dict()["disagreement_kind"] == "internal-health-public-route"

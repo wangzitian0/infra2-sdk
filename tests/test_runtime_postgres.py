@@ -6,7 +6,7 @@ from infra2_sdk.runtime.postgres import (
     normalize_postgres_dsn,
     probe_postgres,
 )
-from infra2_sdk.runtime.probes import DependencyStatus
+from infra2_sdk.runtime.probes import DependencyStatus, run_probes
 
 
 class Connection:
@@ -70,12 +70,18 @@ def test_postgres_from_env_requires_dsn_and_integer_timeout() -> None:
 
 async def test_async_check_and_failure_evidence() -> None:
     settings = PostgresSettings("postgresql://db/app")
-    result = await PostgresCheck(
+    check = PostgresCheck(
         settings,
         connector=lambda *_args, **_kwargs: Connection(error=OSError("down")),
-    ).probe()
+    )
+    result = check.probe()
     assert result.status is DependencyStatus.ABSENT
     assert "OSError: down" in result.detail
+
+    probe_results = await run_probes([check])
+    assert len(probe_results) == 1
+    assert probe_results[0].status is DependencyStatus.ABSENT
+    assert "OSError: down" in probe_results[0].detail
 
 
 def test_failure_evidence_redacts_database_credentials() -> None:
@@ -127,3 +133,26 @@ def test_probe_postgres_closes_connection() -> None:
     result = probe_postgres(settings, connector=lambda *a, **kw: ClosableConnection())
     assert result.status is DependencyStatus.PRESENT
     assert closed == [True], "postgres connection must be explicitly closed"
+
+
+def test_probe_postgres_closes_connection_on_execute_error() -> None:
+    closed = []
+
+    class FailingConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, query):
+            raise RuntimeError("query execution error")
+
+        def close(self):
+            closed.append(True)
+
+    settings = PostgresSettings("postgresql://db/app")
+    result = probe_postgres(settings, connector=lambda *a, **kw: FailingConnection())
+    assert result.status is DependencyStatus.ABSENT
+    assert "query execution error" in result.detail
+    assert closed == [True], "postgres connection must be closed even when execute raises"
