@@ -8,7 +8,12 @@ from dataclasses import asdict, dataclass, fields
 from enum import StrEnum
 from typing import Any
 
-from infra2_sdk._wire import _string, parse_contract_version, require_contract_version
+from infra2_sdk._wire import (
+    _string,
+    parse_contract_version,
+    require_contract_version,
+    require_exact_fields,
+)
 
 CONTRACT_VERSION = 1
 _REQUEST_ID_RE = re.compile(r"\A[a-zA-Z0-9][a-zA-Z0-9._:-]{7,127}\Z")
@@ -195,17 +200,21 @@ def validate_wire_shape(raw: Mapping[str, Any]) -> None:
     call it again on ``request.to_dict()`` after round-tripping if the caller
     wants to prove serialization is lossless too.
     """
-    if not isinstance(raw, Mapping):
-        raise ValueError("deploy request must be an object")
     expected = {f.name for f in fields(DeployRequest)}
-    if set(raw) != expected:
-        raise ValueError("request fields must exactly match DeployRequest v1")
+    require_exact_fields(
+        raw,
+        expected,
+        description="deploy request",
+        contract_message="request fields must exactly match DeployRequest v1",
+    )
     evidence = raw.get("evidence")
-    if not isinstance(evidence, Mapping):
-        raise ValueError("evidence must be an object")
     expected_evidence = {f.name for f in fields(DeployEvidence)}
-    if set(evidence) != expected_evidence:
-        raise ValueError("evidence fields must exactly match DeployEvidence v1")
+    require_exact_fields(
+        evidence,  # type: ignore[arg-type]
+        expected_evidence,
+        description="evidence",
+        contract_message="evidence fields must exactly match DeployEvidence v1",
+    )
 
 
 # --- Production evidence policy (infra2#576 / infra2-sdk#8) -----------------------

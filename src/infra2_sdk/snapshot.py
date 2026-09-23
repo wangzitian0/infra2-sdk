@@ -17,7 +17,13 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from infra2_sdk._wire import parse_contract_version, require_contract_version
+from infra2_sdk._wire import (
+    parse_contract_version,
+    require_contract_version,
+)
+from infra2_sdk._wire import (
+    require_exact_fields as _require_exact_fields,
+)
 
 SNAPSHOT_MANIFEST_VERSION = 1
 
@@ -335,13 +341,6 @@ def verify_snapshot_artifact(
         raise ValueError("snapshot artifact is unavailable") from exc
     if digest.hexdigest() != manifest.artifact.sha256:
         raise ValueError("snapshot artifact sha256 mismatch")
-
-
-def _require_exact_fields(raw: Mapping[str, Any], expected: set[str], *, description: str) -> None:
-    if not isinstance(raw, Mapping):
-        raise ValueError(f"{description} must be an object")
-    if set(raw) != expected:
-        raise ValueError(f"{description} fields must exactly match v1")
 
 
 def _string(raw: Mapping[str, Any], key: str) -> str:

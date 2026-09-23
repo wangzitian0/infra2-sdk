@@ -11,3 +11,10 @@ def require(module: str, *, extra: str) -> ModuleType:
         return importlib.import_module(module)
     except ImportError:
         raise RuntimeError(f"{module} is required; install infra2-sdk[{extra}]") from None
+
+
+def require_httpx() -> ModuleType:
+    return require("httpx", extra="http")
+
+
+__all__ = ["require", "require_httpx"]

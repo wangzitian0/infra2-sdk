@@ -194,11 +194,22 @@ def test_s3_settings_validation(changes, message) -> None:
         S3Settings(**values)
 
 
-def test_probe_s3_closes_owned_client(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "error,expected_status",
+    [
+        (None, DependencyStatus.PRESENT),
+        (RuntimeError("connection reset"), DependencyStatus.ABSENT),
+    ],
+)
+def test_probe_s3_closes_owned_client(
+    error, expected_status, monkeypatch: pytest.MonkeyPatch
+) -> None:
     closed = []
 
     class FakeOwnedClient:
         def head_bucket(self, **kwargs):
+            if error is not None:
+                raise error
             return kwargs
 
         def close(self):
@@ -210,28 +221,8 @@ def test_probe_s3_closes_owned_client(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     settings = S3Settings(bucket="runtime-canary")
     result = probe_s3(settings)
-    assert result.status is DependencyStatus.PRESENT
+    assert result.status is expected_status
     assert closed == [True], "owned S3 client must be closed after probe"
-
-
-def test_probe_s3_closes_owned_client_on_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    closed = []
-
-    class FakeOwnedClient:
-        def head_bucket(self, **kwargs):
-            raise RuntimeError("connection reset")
-
-        def close(self):
-            closed.append(True)
-
-    monkeypatch.setattr(
-        "infra2_sdk.runtime.s3.create_s3_client",
-        lambda settings: FakeOwnedClient(),
-    )
-    settings = S3Settings(bucket="runtime-canary")
-    result = probe_s3(settings)
-    assert result.status is DependencyStatus.ABSENT
-    assert closed == [True], "owned S3 client must be closed even on failure"
 
 
 def test_probe_s3_handles_client_creation_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -306,7 +297,8 @@ def test_ensure_bucket_closes_owned_client_on_error(
     assert closed == [True], "owned S3 client must be closed even when ensure_bucket raises"
 
 
-def test_ensure_bucket_does_not_close_unowned_client() -> None:
+@pytest.mark.parametrize("operation", ["ensure_bucket", "probe_s3"])
+def test_unowned_client_is_not_closed(operation: str) -> None:
     closed = []
 
     class ExternalClient:
@@ -318,22 +310,9 @@ def test_ensure_bucket_does_not_close_unowned_client() -> None:
 
     settings = S3Settings(bucket="runtime-canary")
     client = ExternalClient()
-    ensure_bucket(settings, client=client)
-    assert closed == [], "unowned S3 client must not be closed by ensure_bucket"
-
-
-def test_probe_s3_does_not_close_unowned_client() -> None:
-    closed = []
-
-    class ExternalClient:
-        def head_bucket(self, **kwargs):
-            return kwargs
-
-        def close(self):
-            closed.append(True)
-
-    settings = S3Settings(bucket="runtime-canary")
-    client = ExternalClient()
-    result = probe_s3(settings, client=client)
-    assert result.status is DependencyStatus.PRESENT
-    assert closed == [], "unowned S3 client must not be closed by probe_s3"
+    if operation == "ensure_bucket":
+        ensure_bucket(settings, client=client)
+    else:
+        result = probe_s3(settings, client=client)
+        assert result.status is DependencyStatus.PRESENT
+    assert closed == [], f"unowned S3 client must not be closed by {operation}"

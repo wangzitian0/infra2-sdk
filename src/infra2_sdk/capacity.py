@@ -182,6 +182,7 @@ class OnePasswordCapacityReport:
     readings: tuple[CapacityReading, ...]
 
     def __iter__(self) -> Iterator[tuple[CapacityLimit, ...] | tuple[CapacityReading, ...]]:
+        """Deprecated compatibility iterator. Access `.limits` and `.readings` directly."""
         return iter((self.limits, self.readings))
 
     def __getitem__(self, index: int) -> tuple[CapacityLimit, ...] | tuple[CapacityReading, ...]:
