@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 from enum import StrEnum
-from typing import Any
+from typing import Any, get_args
 
 from infra2_sdk._wire import _string, parse_contract_version, require_contract_version
 from infra2_sdk.runtime.environ import EnvironmentConflictError
@@ -479,7 +479,15 @@ def _validation_aliases(alias: Any) -> tuple[str, ...]:
 
 
 def _is_secret(annotation: Any) -> bool:
-    return "secret" in getattr(annotation, "__name__", "").lower()
+    if annotation is None:
+        return False
+    name = getattr(annotation, "__name__", "")
+    if isinstance(name, str) and "secret" in name.lower():
+        return True
+    args = get_args(annotation)
+    if args:
+        return any(_is_secret(arg) for arg in args)
+    return False
 
 
 def _boolean(raw: Mapping[str, Any], key: str, *, default: bool = False) -> bool:

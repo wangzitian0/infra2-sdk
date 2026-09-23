@@ -134,7 +134,8 @@ class OtelSettings:
             RuntimeEnvKey.INSTANCE_ID,
             default=attributes.get("service.instance.id", ""),
         ).value
-        assert service_name is not None and service_version is not None
+        if service_name is None or service_version is None:
+            raise ValueError("service_name and service_version must not be None")
         effective_endpoint = None if disabled else endpoint
         return cls(
             service_name=service_name,

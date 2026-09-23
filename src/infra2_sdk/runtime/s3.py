@@ -74,7 +74,8 @@ class S3Settings:
         secret_key = resolve_runtime_env(environ, RuntimeEnvKey.AWS_SECRET_ACCESS_KEY).value
         session_token = resolve_runtime_env(environ, RuntimeEnvKey.AWS_SESSION_TOKEN).value
         addressing_style = resolve_runtime_env(environ, RuntimeEnvKey.S3_ADDRESSING_STYLE).value
-        assert bucket is not None
+        if bucket is None:
+            raise ValueError("bucket must not be None")
         return cls(
             bucket=bucket,
             endpoint_url=endpoint,

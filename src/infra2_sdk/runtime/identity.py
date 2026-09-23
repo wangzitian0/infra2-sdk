@@ -140,7 +140,8 @@ class RuntimeIdentity:
         commit_sha = resolve_runtime_env(
             environ, RuntimeEnvKey.GIT_COMMIT_SHA, default="unknown"
         ).value
-        assert service_name is not None and service_version is not None and commit_sha is not None
+        if service_name is None or service_version is None or commit_sha is None:
+            raise ValueError("service_name, service_version, and commit_sha must not be None")
         identity = cls(
             service_name=service_name,
             service_version=service_version,

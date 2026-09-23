@@ -52,7 +52,8 @@ class HttpClientSettings:
         user_agent = resolve_runtime_env(
             environ, RuntimeEnvKey.HTTP_USER_AGENT, default=f"infra2-sdk/{__version__}"
         ).value
-        assert user_agent is not None
+        if user_agent is None:
+            raise ValueError("user_agent must not be None")
         return cls(
             timeout_seconds=env_float(environ, RuntimeEnvKey.HTTP_TIMEOUT_SECONDS, default=10.0),
             connect_timeout_seconds=env_float(

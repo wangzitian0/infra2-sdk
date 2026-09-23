@@ -32,7 +32,8 @@ class PostgresSettings:
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> PostgresSettings:
         dsn = resolve_runtime_env(environ, RuntimeEnvKey.DATABASE_URL, required=True).value
-        assert dsn is not None
+        if dsn is None:
+            raise ValueError("dsn must not be None")
         return cls(
             dsn=dsn,
             connect_timeout_seconds=env_int(

@@ -300,9 +300,11 @@ def test_ensure_bucket_closes_owned_client_on_error(
 @pytest.mark.parametrize("operation", ["ensure_bucket", "probe_s3"])
 def test_unowned_client_is_not_closed(operation: str) -> None:
     closed = []
+    calls = []
 
     class ExternalClient:
         def head_bucket(self, **kwargs):
+            calls.append(kwargs)
             return kwargs
 
         def close(self):
@@ -312,7 +314,9 @@ def test_unowned_client_is_not_closed(operation: str) -> None:
     client = ExternalClient()
     if operation == "ensure_bucket":
         ensure_bucket(settings, client=client)
+        assert calls == [{"Bucket": "runtime-canary"}]
     else:
         result = probe_s3(settings, client=client)
         assert result.status is DependencyStatus.PRESENT
+        assert calls == [{"Bucket": "runtime-canary"}]
     assert closed == [], f"unowned S3 client must not be closed by {operation}"

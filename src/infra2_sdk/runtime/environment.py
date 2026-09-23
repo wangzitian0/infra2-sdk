@@ -139,7 +139,8 @@ def environment_from_env(
         default=None if required else EnvironmentTier.LOCAL_DEV.value,
         required=required,
     )
-    assert resolved.value is not None
+    if resolved.value is None:
+        raise ValueError("Resolved environment value must not be None")
     values = os.environ if environ is None else environ
     if github_actions is None:
         github_actions = values.get("GITHUB_ACTIONS", "").strip().lower() == "true"

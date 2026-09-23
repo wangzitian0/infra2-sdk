@@ -300,3 +300,23 @@ def test_manifest_config_fingerprint_is_canonical() -> None:
     res = manifest_config_fingerprint(manifest, data)
     assert len(res) == 64
     assert imported_fp(manifest, data) == res
+
+
+def test_optional_secret_str_is_recognized_as_sensitive() -> None:
+    from typing import Optional
+
+    from pydantic import SecretStr
+    from pydantic_settings import BaseSettings
+
+    class SecretSettings(BaseSettings):
+        direct_secret: SecretStr
+        optional_secret_typing: Optional[SecretStr] = None  # noqa: UP045
+        optional_secret_union: SecretStr | None = None
+        plain_str: str = "open"
+
+    manifest = environment_manifest_from_model(SecretSettings, source="app")
+    by_env = {field.env: field for field in manifest.fields}
+    assert by_env["DIRECT_SECRET"].sensitive is True
+    assert by_env["OPTIONAL_SECRET_TYPING"].sensitive is True
+    assert by_env["OPTIONAL_SECRET_UNION"].sensitive is True
+    assert by_env["PLAIN_STR"].sensitive is False

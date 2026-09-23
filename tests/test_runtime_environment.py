@@ -33,8 +33,7 @@ from infra2_sdk.runtime.environment import (
 )
 def test_environment_aliases(value, expected) -> None:
     assert to_environment_tier(value) is expected
-    if isinstance(value, (str, EnvironmentTier)):
-        assert resolve_environment_tier(value) is expected
+    assert resolve_environment_tier(value) is expected
 
 
 def test_ci_and_unknown_policies_are_explicit() -> None:
