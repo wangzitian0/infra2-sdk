@@ -231,6 +231,9 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   - `DisagreementKind.HEARTBEAT_PUBLIC_ROUTE` (depends on retired `ROUTE_CANARY`);
   - `DisagreementKind.FALLBACK_PUBLIC_ROUTE` (depends on retired `DOKPLOY_WORKER_OR_DEPLOYMENT_RECORD`);
   - `FailureDomain.DOKPLOY_WORKER_OR_DEPLOYMENT_RECORD` and `FailureDomain.DOKPLOY_COMPOSE_SOURCE_TYPE` (retired failure domains).
+- In v1.6.0, `to_environment_tier`, `to_pipeline_environment`, and `to_deploy_type` provide canonical bridging mappings across `EnvironmentTier`, `PipelineEnvironment`, and `DeployType` with deterministic defaults for dimensional convergence. `PipelineEnvironment` is scheduled for removal in v2.0.0.
+- `CommandRunner` protocol is exported from `infra2_sdk.refs` for subprocess runner injection.
+- `OnePasswordCapacityReport` provides structured access to limits and usage while preserving tuple unpacking.
 
 ### Anonymized snapshot trust boundary
 

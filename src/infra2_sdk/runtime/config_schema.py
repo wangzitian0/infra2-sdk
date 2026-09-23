@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass, replace
 from enum import StrEnum
 from typing import Any
 
-from infra2_sdk._wire import parse_contract_version, require_contract_version
+from infra2_sdk._wire import _string, parse_contract_version, require_contract_version
 from infra2_sdk.runtime.environ import EnvironmentConflictError
 
 JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
@@ -483,16 +483,6 @@ def _validation_aliases(alias: Any) -> tuple[str, ...]:
 
 def _is_secret(annotation: Any) -> bool:
     return "secret" in getattr(annotation, "__name__", "").lower()
-
-
-def _string(raw: Mapping[str, Any], key: str, *, required: bool = True) -> str:
-    value = raw.get(key, "")
-    if not isinstance(value, str):
-        raise ValueError(f"{key} must be a string")
-    value = value.strip()
-    if required and not value:
-        raise ValueError(f"{key} is required")
-    return value
 
 
 def _boolean(raw: Mapping[str, Any], key: str, *, default: bool = False) -> bool:

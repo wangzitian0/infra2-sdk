@@ -7,6 +7,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
 from infra2_sdk.runtime.environ import RuntimeEnvKey, resolve_runtime_env
 
@@ -159,3 +160,95 @@ def normalize_deployment_environment(
     if resolve_environment_tier(display) is not resolved_tier:
         raise ValueError("deployment_environment disagrees with environment tier")
     return resolved_tier.value
+
+
+def to_environment_tier(
+    value: str | EnvironmentTier | Any,
+    *,
+    github_actions: bool = False,
+    unknown: str | UnknownEnvironmentPolicy = UnknownEnvironmentPolicy.ERROR,
+) -> EnvironmentTier:
+    """Map any environment representation to canonical EnvironmentTier.
+
+    Accepts:
+    - EnvironmentTier instance
+    - PipelineEnvironment instance or value (LOCAL -> LOCAL_DEV, PR -> PREVIEW)
+    - DeployType instance or value (STAGING -> STAGING, PRODUCTION -> PRODUCTION,
+      PREVIEW_* -> PREVIEW, CANARY -> PREVIEW)
+    - Raw environment strings and aliases ("prod", "production", "preview", "local_ci", etc.)
+    """
+    if isinstance(value, EnvironmentTier):
+        return value
+
+    if isinstance(value, str):
+        cleaned = value.strip().lower()
+        if cleaned == "local":
+            return EnvironmentTier.LOCAL_DEV
+        if cleaned == "pr":
+            return EnvironmentTier.PREVIEW
+        if cleaned == "canary":
+            return EnvironmentTier.PREVIEW
+        if cleaned.startswith("preview/"):
+            return EnvironmentTier.PREVIEW
+        return resolve_environment_tier(cleaned, github_actions=github_actions, unknown=unknown)
+
+    if hasattr(value, "value") and isinstance(value.value, str):
+        return to_environment_tier(value.value, github_actions=github_actions, unknown=unknown)
+
+    raise TypeError(f"cannot convert {type(value).__name__} to EnvironmentTier")
+
+
+def to_pipeline_environment(
+    value: str | EnvironmentTier | Any,
+) -> Any:
+    """Map an environment representation to PipelineEnvironment.
+
+    Note: PipelineEnvironment is deprecated and scheduled for removal in v2.0.0.
+    """
+    from infra2_sdk.delivery import PipelineEnvironment
+
+    if isinstance(value, PipelineEnvironment):
+        return value
+    tier = to_environment_tier(value)
+    if tier in (EnvironmentTier.LOCAL_DEV, EnvironmentTier.LOCAL_TEST):
+        return PipelineEnvironment.LOCAL
+    if tier in (EnvironmentTier.GITHUB_CI, EnvironmentTier.PREVIEW):
+        return PipelineEnvironment.PR
+    if tier is EnvironmentTier.STAGING:
+        return PipelineEnvironment.STAGING
+    if tier is EnvironmentTier.PRODUCTION:
+        return PipelineEnvironment.PRODUCTION
+    raise ValueError(f"cannot map {tier} to PipelineEnvironment")
+
+
+def to_deploy_type(
+    value: str | EnvironmentTier | Any,
+    *,
+    preview_variant: str = "branch",
+) -> Any:
+    """Map an environment representation to canonical DeployType."""
+    from infra2_sdk.deploy import DeployType
+
+    if isinstance(value, DeployType):
+        return value
+    if isinstance(value, str):
+        cleaned = value.strip().lower()
+        try:
+            return DeployType(cleaned)
+        except ValueError:
+            pass
+    tier = to_environment_tier(value)
+    if tier is EnvironmentTier.STAGING:
+        return DeployType.STAGING
+    if tier is EnvironmentTier.PRODUCTION:
+        return DeployType.PRODUCTION
+    if tier is EnvironmentTier.PREVIEW:
+        variant = preview_variant.lower().strip()
+        if variant == "pr":
+            return DeployType.PREVIEW_PR
+        if variant == "commit":
+            return DeployType.PREVIEW_COMMIT
+        if variant == "tag":
+            return DeployType.PREVIEW_TAG
+        return DeployType.PREVIEW_BRANCH
+    raise ValueError(f"cannot map non-deployable tier {tier} to DeployType")

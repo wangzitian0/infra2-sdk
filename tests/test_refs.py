@@ -100,3 +100,16 @@ def test_malformed_remote_rows_are_ignored() -> None:
 def test_os_error_is_wrapped() -> None:
     with pytest.raises(ValueError, match="git ls-remote failed"):
         resolve_to_sha("main", repo=REPO, runner=runner(error=OSError("git missing")))
+
+
+def test_command_runner_protocol() -> None:
+    from infra2_sdk.refs import CommandRunner
+
+    # Verify a custom callable satisfies CommandRunner
+    class CustomRunner:
+        def __call__(self, args, **kwargs):
+            return SimpleNamespace(stdout="custom\trefs/heads/main\n")
+
+    c = CustomRunner()
+    assert isinstance(c, CommandRunner)
+    assert resolve_to_sha("main", repo=REPO, runner=c) == "custom"

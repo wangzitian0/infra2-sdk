@@ -5,15 +5,27 @@ from __future__ import annotations
 import re
 import subprocess
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol, runtime_checkable
 
 _SHA_RE = re.compile(r"\A[0-9a-fA-F]{7,40}\Z")
 _TAG_RE = re.compile(r"\Av\d+\.\d+\.\d+\Z")
 _LS_REMOTE_TIMEOUT_SECONDS = 30
 
 
+@runtime_checkable
 class CommandRunner(Protocol):
-    def __call__(self, *args, **kwargs): ...
+    """Callable protocol for command execution (compatible with subprocess.run)."""
+
+    def __call__(
+        self,
+        args: list[str],
+        *,
+        capture_output: bool = True,
+        text: bool = True,
+        check: bool = True,
+        timeout: float | None = None,
+        **kwargs: Any,
+    ) -> Any: ...
 
 
 @dataclass(frozen=True)

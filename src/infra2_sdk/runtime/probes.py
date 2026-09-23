@@ -14,6 +14,7 @@ from functools import partial
 from threading import Thread
 from typing import Any, Protocol, runtime_checkable
 
+from infra2_sdk._wire import _string
 from infra2_sdk.runtime.dependencies import DependencyManifest
 from infra2_sdk.runtime.environment import EnvironmentTier
 
@@ -200,13 +201,3 @@ def assert_required_dependencies(
 
 def _elapsed(started: float) -> float:
     return (time.perf_counter() - started) * 1000
-
-
-def _string(raw: Mapping[str, Any], key: str, *, required: bool = True) -> str:
-    value = raw.get(key, "")
-    if not isinstance(value, str):
-        raise ValueError(f"{key} must be a string")
-    value = value.strip()
-    if required and not value:
-        raise ValueError(f"{key} is required")
-    return value

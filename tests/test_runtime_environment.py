@@ -7,6 +7,7 @@ from infra2_sdk.runtime.environment import (
     RuntimeEnvironment,
     environment_from_env,
     resolve_environment_tier,
+    strict_environment_from_env,
 )
 
 
@@ -60,10 +61,23 @@ def test_environment_from_env_is_transparent_and_conflict_safe() -> None:
 
 def test_strict_environment_requires_explicit_configuration() -> None:
     with pytest.raises(ValueError, match="ENVIRONMENT is required"):
-        environment_from_env({}, required=True)
-    assert environment_from_env({"ENVIRONMENT": "preview"}, required=True) == RuntimeEnvironment(
+        strict_environment_from_env({})
+    assert strict_environment_from_env({"ENVIRONMENT": "preview"}) == RuntimeEnvironment(
         "preview", EnvironmentTier.PREVIEW
     )
+
+
+def test_normalize_deployment_environment() -> None:
+    from infra2_sdk.runtime.environment import normalize_deployment_environment
+
+    assert normalize_deployment_environment("", EnvironmentTier.STAGING) == "staging"
+    assert (
+        normalize_deployment_environment("branch-feature", EnvironmentTier.PREVIEW)
+        == "branch-feature"
+    )
+    assert normalize_deployment_environment("staging", EnvironmentTier.STAGING) == "staging"
+    with pytest.raises(ValueError, match="disagrees with environment tier"):
+        normalize_deployment_environment("staging", EnvironmentTier.PRODUCTION)
 
 
 def test_environment_from_env_detects_github_actions_from_supplied_mapping() -> None:
@@ -82,3 +96,78 @@ def test_process_environment_is_read_only_when_requested(monkeypatch) -> None:
 def test_malformed_deploy_v2_preview_aliases_fail_closed(name) -> None:
     with pytest.raises(ValueError, match="unknown environment"):
         environment_from_env({"ENVIRONMENT": name})
+
+
+def test_to_environment_tier_conversions() -> None:
+    from infra2_sdk.delivery import PipelineEnvironment
+    from infra2_sdk.deploy import DeployType
+    from infra2_sdk.runtime.environment import to_environment_tier
+
+    # PipelineEnvironment mapping
+    assert to_environment_tier(PipelineEnvironment.LOCAL) is EnvironmentTier.LOCAL_DEV
+    assert to_environment_tier(PipelineEnvironment.PR) is EnvironmentTier.PREVIEW
+    assert to_environment_tier(PipelineEnvironment.STAGING) is EnvironmentTier.STAGING
+    assert to_environment_tier(PipelineEnvironment.PRODUCTION) is EnvironmentTier.PRODUCTION
+
+    # DeployType mapping
+    assert to_environment_tier(DeployType.STAGING) is EnvironmentTier.STAGING
+    assert to_environment_tier(DeployType.PRODUCTION) is EnvironmentTier.PRODUCTION
+    assert to_environment_tier(DeployType.CANARY) is EnvironmentTier.PREVIEW
+    assert to_environment_tier(DeployType.PREVIEW_BRANCH) is EnvironmentTier.PREVIEW
+    assert to_environment_tier(DeployType.PREVIEW_PR) is EnvironmentTier.PREVIEW
+    assert to_environment_tier(DeployType.PREVIEW_COMMIT) is EnvironmentTier.PREVIEW
+    assert to_environment_tier(DeployType.PREVIEW_TAG) is EnvironmentTier.PREVIEW
+
+    # String mapping
+    assert to_environment_tier("local") is EnvironmentTier.LOCAL_DEV
+    assert to_environment_tier("pr") is EnvironmentTier.PREVIEW
+    assert to_environment_tier("canary") is EnvironmentTier.PREVIEW
+    assert to_environment_tier("preview/branch") is EnvironmentTier.PREVIEW
+    assert to_environment_tier("staging") is EnvironmentTier.STAGING
+    assert to_environment_tier("prod") is EnvironmentTier.PRODUCTION
+    assert to_environment_tier("production") is EnvironmentTier.PRODUCTION
+    assert to_environment_tier(EnvironmentTier.STAGING) is EnvironmentTier.STAGING
+
+    # Errors
+    with pytest.raises(TypeError, match="cannot convert"):
+        to_environment_tier(123)
+    with pytest.raises(ValueError, match="unknown environment"):
+        to_environment_tier("unknown_val")
+
+
+def test_to_pipeline_environment_conversions() -> None:
+    from infra2_sdk.delivery import PipelineEnvironment
+    from infra2_sdk.runtime.environment import to_pipeline_environment
+
+    assert to_pipeline_environment(EnvironmentTier.LOCAL_DEV) is PipelineEnvironment.LOCAL
+    assert to_pipeline_environment(EnvironmentTier.LOCAL_TEST) is PipelineEnvironment.LOCAL
+    assert to_pipeline_environment(EnvironmentTier.GITHUB_CI) is PipelineEnvironment.PR
+    assert to_pipeline_environment(EnvironmentTier.PREVIEW) is PipelineEnvironment.PR
+    assert to_pipeline_environment(EnvironmentTier.STAGING) is PipelineEnvironment.STAGING
+    assert to_pipeline_environment(EnvironmentTier.PRODUCTION) is PipelineEnvironment.PRODUCTION
+    assert to_pipeline_environment(PipelineEnvironment.STAGING) is PipelineEnvironment.STAGING
+
+
+def test_to_deploy_type_conversions() -> None:
+    from infra2_sdk.deploy import DeployType
+    from infra2_sdk.runtime.environment import to_deploy_type
+
+    assert to_deploy_type(EnvironmentTier.STAGING) is DeployType.STAGING
+    assert to_deploy_type(EnvironmentTier.PRODUCTION) is DeployType.PRODUCTION
+    assert to_deploy_type(EnvironmentTier.PREVIEW) is DeployType.PREVIEW_BRANCH
+    assert to_deploy_type(EnvironmentTier.PREVIEW, preview_variant="pr") is DeployType.PREVIEW_PR
+    assert (
+        to_deploy_type(EnvironmentTier.PREVIEW, preview_variant="commit")
+        is DeployType.PREVIEW_COMMIT
+    )
+    assert to_deploy_type(EnvironmentTier.PREVIEW, preview_variant="tag") is DeployType.PREVIEW_TAG
+    assert to_deploy_type(DeployType.STAGING) is DeployType.STAGING
+    assert to_deploy_type("preview/commit") is DeployType.PREVIEW_COMMIT
+    assert to_deploy_type("canary") is DeployType.CANARY
+    assert to_deploy_type("prod") is DeployType.PRODUCTION
+    assert to_deploy_type("staging") is DeployType.STAGING
+
+    with pytest.raises(ValueError, match="cannot map non-deployable tier"):
+        to_deploy_type(EnvironmentTier.LOCAL_DEV)
+    with pytest.raises(ValueError, match="cannot map non-deployable tier"):
+        to_deploy_type(EnvironmentTier.GITHUB_CI)

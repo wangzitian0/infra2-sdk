@@ -38,6 +38,9 @@ from infra2_sdk.runtime.environment import (
     normalize_deployment_environment,
     resolve_environment_tier,
     strict_environment_from_env,
+    to_deploy_type,
+    to_environment_tier,
+    to_pipeline_environment,
 )
 from infra2_sdk.runtime.identity import (
     RuntimeIdentity,
@@ -103,5 +106,8 @@ __all__ = [
     "run_probes",
     "settings_json_schema",
     "strict_environment_from_env",
+    "to_deploy_type",
+    "to_environment_tier",
+    "to_pipeline_environment",
     "validate_environment",
 ]
