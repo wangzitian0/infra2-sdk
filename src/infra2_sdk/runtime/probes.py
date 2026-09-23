@@ -149,7 +149,7 @@ async def _run_sync_probe(probe, *, name: str):
     future = loop.create_future()
     context = copy_context()
 
-    def publish(*, result=None, error: Exception | None = None) -> None:
+    def publish(*, result=None, error: BaseException | None = None) -> None:
         if future.done():
             return
         if error is not None:
@@ -160,6 +160,8 @@ async def _run_sync_probe(probe, *, name: str):
     def worker() -> None:
         try:
             result = context.run(probe)
+        except (KeyboardInterrupt, SystemExit) as exc:
+            callback = partial(publish, error=exc)
         except Exception as exc:  # noqa: BLE001 - forwarded to the async runner
             callback = partial(publish, error=exc)
         except BaseException as exc:  # pragma: no cover - defensive thread boundary

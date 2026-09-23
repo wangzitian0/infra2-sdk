@@ -138,3 +138,14 @@ async def test_runner_rejects_bad_input() -> None:
     result = await run_probes((Check("x", ProbeResult("other", DependencyStatus.PRESENT)),))
     assert result[0].status is DependencyStatus.ABSENT
     assert "does not match" in result[0].detail
+
+
+async def test_sync_probe_propagates_system_exit() -> None:
+    from infra2_sdk.runtime.probes import _run_sync_probe
+
+    def exit_probe():
+        raise SystemExit(42)
+
+    with pytest.raises(SystemExit) as exc_info:
+        await _run_sync_probe(exit_probe, name="exit")
+    assert exc_info.value.code == 42
