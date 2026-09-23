@@ -4,13 +4,10 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
-
-class PipelineEnvironment(StrEnum):
-    LOCAL = "local"
-    PR = "pr"
-    STAGING = "staging"
-    PRODUCTION = "production"
+if TYPE_CHECKING:
+    from infra2_sdk.runtime.environment import EnvironmentTier
 
 
 class PipelineStage(StrEnum):
@@ -26,10 +23,6 @@ class PipelineStage(StrEnum):
     CONFIG_PREFLIGHT = "config-preflight"
     DEPLOY_START = "deploy-start"
     DEPLOY_STATUS = "deploy-status"
-    # Deprecated: scheduled for removal in v2.0.0
-    ROUTE_CANARY = "route-canary"
-    """Deprecated: scheduled for removal in v2.0.0 (retired in infra2#543,
-    producer deleted)."""
     WATCHDOG = "watchdog"
 
 
@@ -48,14 +41,6 @@ class FailureDomain(StrEnum):
     GITHUB_ACTIONS = "github-actions"
     IAC_RUNNER = "iac-runner"
     DOKPLOY_CONTROL_PLANE = "dokploy-control-plane"
-    # Deprecated: scheduled for removal in v2.0.0
-    DOKPLOY_WORKER_OR_DEPLOYMENT_RECORD = "dokploy-worker-or-deployment-record"
-    """Deprecated: scheduled for removal in v2.0.0 (retired Dokploy worker or
-    deployment record domain)."""
-    # Deprecated: scheduled for removal in v2.0.0
-    DOKPLOY_COMPOSE_SOURCE_TYPE = "dokploy-compose-source-type"
-    """Deprecated: scheduled for removal in v2.0.0 (retired Dokploy compose
-    source type domain)."""
     DOCKER_RUNTIME = "docker-runtime"
     TRAEFIK_PUBLIC_ROUTE = "traefik-public-route"
     CLOUDFLARE_WORKER_HEALTH = "cloudflare-worker-health"
@@ -79,13 +64,6 @@ class BudgetStatus(StrEnum):
 class DisagreementKind(StrEnum):
     NONE = "none"
     INTERNAL_HEALTH_PUBLIC_ROUTE = "internal-health-public-route"
-    # Deprecated: scheduled for removal in v2.0.0
-    HEARTBEAT_PUBLIC_ROUTE = "heartbeat-public-route"
-    """Deprecated: scheduled for removal in v2.0.0 (depends on retired ROUTE_CANARY)."""
-    # Deprecated: scheduled for removal in v2.0.0
-    FALLBACK_PUBLIC_ROUTE = "fallback-public-route"
-    """Deprecated: scheduled for removal in v2.0.0 (depends on retired
-    DOKPLOY_WORKER_OR_DEPLOYMENT_RECORD)."""
 
 
 STAGE_DEADLINE_MS: dict[PipelineStage, int] = {
@@ -101,7 +79,6 @@ STAGE_DEADLINE_MS: dict[PipelineStage, int] = {
     PipelineStage.CONFIG_PREFLIGHT: 60_000,
     PipelineStage.DEPLOY_START: 120_000,
     PipelineStage.DEPLOY_STATUS: 1_200_000,
-    PipelineStage.ROUTE_CANARY: 180_000,
     PipelineStage.WATCHDOG: 120_000,
 }
 
@@ -110,7 +87,6 @@ PREVIEW_RELEVANT_STAGES = frozenset(
         PipelineStage.REGRESSION_E2E,
         PipelineStage.IMAGE_BUILD,
         PipelineStage.DEPLOY_SMOKE,
-        PipelineStage.ROUTE_CANARY,
     }
 )
 
@@ -118,7 +94,7 @@ PREVIEW_RELEVANT_STAGES = frozenset(
 @dataclass(frozen=True)
 class StageResult:
     source: str
-    environment: PipelineEnvironment
+    environment: EnvironmentTier
     stage: PipelineStage
     target: str
     status: StageStatus
@@ -167,7 +143,7 @@ def classify_budget(
 def make_stage_result(
     *,
     source: str,
-    environment: str | PipelineEnvironment,
+    environment: str | EnvironmentTier,
     stage: str | PipelineStage,
     target: str,
     status: str | StageStatus,
@@ -181,15 +157,12 @@ def make_stage_result(
     current_stage_age_ms: int = 0,
     evidence_url: str = "",
 ) -> StageResult:
-    if isinstance(environment, PipelineEnvironment):
+    from infra2_sdk.runtime.environment import EnvironmentTier, to_environment_tier
+
+    if isinstance(environment, EnvironmentTier):
         env_value = environment
     else:
-        try:
-            env_value = PipelineEnvironment(environment)
-        except ValueError:
-            from infra2_sdk.runtime.environment import to_pipeline_environment
-
-            env_value = to_pipeline_environment(environment)
+        env_value = to_environment_tier(environment)
     stage_value = PipelineStage(stage)
     status_value = StageStatus(status)
     domain_value = FailureDomain(failure_domain)
@@ -238,9 +211,11 @@ def validate_stage_result(result: StageResult) -> None:
 
 
 def acceleration_allowed(result: StageResult) -> bool:
+    from infra2_sdk.runtime.environment import EnvironmentTier
+
     if result.status != StageStatus.SKIP:
         return False
-    if result.environment == PipelineEnvironment.PRODUCTION:
+    if result.environment == EnvironmentTier.PRODUCTION:
         return False
     if not (result.skipped_reason or result.suppressed_reason):
         return False
@@ -258,14 +233,6 @@ def detect_disagreement(results: list[StageResult]) -> DisagreementKind:
         results, FailureDomain.TRAEFIK_PUBLIC_ROUTE
     ):
         return DisagreementKind.INTERNAL_HEALTH_PUBLIC_ROUTE
-    if _has_fail(results, FailureDomain.HEARTBEAT_STALE) and _has_pass(
-        results, PipelineStage.ROUTE_CANARY
-    ):
-        return DisagreementKind.HEARTBEAT_PUBLIC_ROUTE
-    if _has_fail(results, FailureDomain.DOKPLOY_WORKER_OR_DEPLOYMENT_RECORD) and _has_pass(
-        results, PipelineStage.WATCHDOG
-    ):
-        return DisagreementKind.FALLBACK_PUBLIC_ROUTE
     return DisagreementKind.NONE
 
 

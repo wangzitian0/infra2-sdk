@@ -4,7 +4,6 @@ from infra2_sdk.delivery import (
     BudgetStatus,
     DisagreementKind,
     FailureDomain,
-    PipelineEnvironment,
     PipelineStage,
     StageResult,
     StageStatus,
@@ -14,6 +13,7 @@ from infra2_sdk.delivery import (
     make_stage_result,
     validate_stage_result,
 )
+from infra2_sdk.runtime.environment import EnvironmentTier
 
 
 def test_stage_result_serializes_enum_values() -> None:
@@ -79,7 +79,7 @@ def test_budget_rejects_negative_values(duration: int, deadline: int) -> None:
 def test_stage_validation_rejects_incomplete_evidence(changes: dict, message: str) -> None:
     values = {
         "source": "infra2",
-        "environment": PipelineEnvironment.STAGING,
+        "environment": EnvironmentTier.STAGING,
         "stage": PipelineStage.DEPLOY_SMOKE,
         "target": "finance_report/app",
         "status": StageStatus.PASS,
@@ -142,13 +142,6 @@ def test_disagreement_classification() -> None:
     assert detect_disagreement([route_failure, healthy_watchdog]) == (
         DisagreementKind.INTERNAL_HEALTH_PUBLIC_ROUTE
     )
-
-    stale = result("deploy-status", "fail", "heartbeat-stale")
-    canary = result("route-canary", "pass")
-    assert detect_disagreement([stale, canary]) == DisagreementKind.HEARTBEAT_PUBLIC_ROUTE
-
-    worker = result("deploy-status", "fail", "dokploy-worker-or-deployment-record")
-    assert detect_disagreement([worker, healthy_watchdog]) == DisagreementKind.FALLBACK_PUBLIC_ROUTE
     assert detect_disagreement([healthy_watchdog]) == DisagreementKind.NONE
 
 
@@ -177,8 +170,6 @@ def test_make_stage_result_with_disagreement_kind() -> None:
 
 
 def test_make_stage_result_accepts_environment_tier() -> None:
-    from infra2_sdk.runtime.environment import EnvironmentTier
-
     r1 = make_stage_result(
         source="infra2",
         environment=EnvironmentTier.PREVIEW,
@@ -186,7 +177,7 @@ def test_make_stage_result_accepts_environment_tier() -> None:
         target="app",
         status="pass",
     )
-    assert r1.environment is PipelineEnvironment.PR
+    assert r1.environment is EnvironmentTier.PREVIEW
 
     r2 = make_stage_result(
         source="infra2",
@@ -195,7 +186,7 @@ def test_make_stage_result_accepts_environment_tier() -> None:
         target="app",
         status="pass",
     )
-    assert r2.environment is PipelineEnvironment.LOCAL
+    assert r2.environment is EnvironmentTier.LOCAL_DEV
 
     r3 = make_stage_result(
         source="infra2",
@@ -204,4 +195,4 @@ def test_make_stage_result_accepts_environment_tier() -> None:
         target="app",
         status="pass",
     )
-    assert r3.environment is PipelineEnvironment.LOCAL
+    assert r3.environment is EnvironmentTier.LOCAL_DEV

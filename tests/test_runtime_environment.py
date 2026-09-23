@@ -99,15 +99,8 @@ def test_malformed_deploy_v2_preview_aliases_fail_closed(name) -> None:
 
 
 def test_to_environment_tier_conversions() -> None:
-    from infra2_sdk.delivery import PipelineEnvironment
     from infra2_sdk.deploy import DeployType
     from infra2_sdk.runtime.environment import to_environment_tier
-
-    # PipelineEnvironment mapping
-    assert to_environment_tier(PipelineEnvironment.LOCAL) is EnvironmentTier.LOCAL_DEV
-    assert to_environment_tier(PipelineEnvironment.PR) is EnvironmentTier.PREVIEW
-    assert to_environment_tier(PipelineEnvironment.STAGING) is EnvironmentTier.STAGING
-    assert to_environment_tier(PipelineEnvironment.PRODUCTION) is EnvironmentTier.PRODUCTION
 
     # DeployType mapping
     assert to_environment_tier(DeployType.STAGING) is EnvironmentTier.STAGING
@@ -133,19 +126,6 @@ def test_to_environment_tier_conversions() -> None:
         to_environment_tier(123)
     with pytest.raises(ValueError, match="unknown environment"):
         to_environment_tier("unknown_val")
-
-
-def test_to_pipeline_environment_conversions() -> None:
-    from infra2_sdk.delivery import PipelineEnvironment
-    from infra2_sdk.runtime.environment import to_pipeline_environment
-
-    assert to_pipeline_environment(EnvironmentTier.LOCAL_DEV) is PipelineEnvironment.LOCAL
-    assert to_pipeline_environment(EnvironmentTier.LOCAL_TEST) is PipelineEnvironment.LOCAL
-    assert to_pipeline_environment(EnvironmentTier.GITHUB_CI) is PipelineEnvironment.PR
-    assert to_pipeline_environment(EnvironmentTier.PREVIEW) is PipelineEnvironment.PR
-    assert to_pipeline_environment(EnvironmentTier.STAGING) is PipelineEnvironment.STAGING
-    assert to_pipeline_environment(EnvironmentTier.PRODUCTION) is PipelineEnvironment.PRODUCTION
-    assert to_pipeline_environment(PipelineEnvironment.STAGING) is PipelineEnvironment.STAGING
 
 
 def test_to_deploy_type_conversions() -> None:
