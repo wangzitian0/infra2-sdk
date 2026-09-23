@@ -181,7 +181,15 @@ def make_stage_result(
     current_stage_age_ms: int = 0,
     evidence_url: str = "",
 ) -> StageResult:
-    env_value = PipelineEnvironment(environment)
+    if isinstance(environment, PipelineEnvironment):
+        env_value = environment
+    else:
+        try:
+            env_value = PipelineEnvironment(environment)
+        except ValueError:
+            from infra2_sdk.runtime.environment import to_pipeline_environment
+
+            env_value = to_pipeline_environment(environment)
     stage_value = PipelineStage(stage)
     status_value = StageStatus(status)
     domain_value = FailureDomain(failure_domain)

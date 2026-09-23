@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import asdict, dataclass
 from datetime import date
 
@@ -153,14 +153,17 @@ def cloudflare_readings(
     payload = json.loads(response.body.decode("utf-8"))
     if payload.get("errors"):
         raise RuntimeError("Cloudflare analytics returned errors")
-    accounts = payload.get("data", {}).get("viewer", {}).get("accounts", [])
+    data = payload.get("data") or {}
+    viewer = data.get("viewer") or {}
+    accounts = viewer.get("accounts") or []
     if not accounts:
         return ()
     kv: dict[str, int] = {}
-    for row in accounts[0].get("kv", []):
+    for row in accounts[0].get("kv") or []:
         action = str(row["dimensions"]["actionType"])
         kv[action] = kv.get(action, 0) + int(row["sum"]["requests"])
-    workers = sum(int(row["sum"]["requests"]) for row in accounts[0].get("workers", []))
+    worker_rows = accounts[0].get("workers") or []
+    workers = sum(int(row["sum"]["requests"]) for row in worker_rows)
     readings = [
         CapacityReading(f"cloudflare.kv.{action}", used) for action, used in sorted(kv.items())
     ]
@@ -168,12 +171,34 @@ def cloudflare_readings(
     return tuple(readings)
 
 
+@dataclass(frozen=True)
+class OnePasswordCapacityReport:
+    """Structured report of 1Password service account rate limits and usage.
+
+    Supports tuple unpacking `limits, readings = report` for backward compatibility.
+    """
+
+    limits: tuple[CapacityLimit, ...]
+    readings: tuple[CapacityReading, ...]
+
+    def __iter__(self) -> Iterator[tuple[CapacityLimit, ...] | tuple[CapacityReading, ...]]:
+        return iter((self.limits, self.readings))
+
+    def __getitem__(
+        self, index: int
+    ) -> tuple[CapacityLimit, ...] | tuple[CapacityReading, ...]:
+        return (self.limits, self.readings)[index]
+
+    def __len__(self) -> int:
+        return 2
+
+
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
 
 def onepassword_capacity(
     service_account: str, *, runner: Runner = subprocess.run
-) -> tuple[tuple[CapacityLimit, ...], tuple[CapacityReading, ...]]:
+) -> OnePasswordCapacityReport:
     """Limits and usage from ``op service-account ratelimit``; the CLI reports both."""
 
     result = runner(
@@ -201,4 +226,4 @@ def onepassword_capacity(
         )
         limits.append(CapacityLimit(name, limit, window))
         readings.append(CapacityReading(name, int(row.get("used", 0))))
-    return tuple(limits), tuple(readings)
+    return OnePasswordCapacityReport(tuple(limits), tuple(readings))

@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from infra2_sdk._wire import _string
 from infra2_sdk.runtime._otel_env import load_resource_attributes
 from infra2_sdk.runtime.environment import (
     EnvironmentTier,
@@ -251,13 +252,3 @@ def runtime_identity_fingerprint(parts: Mapping[str, str | bytes]) -> str:
 
 
 configuration_fingerprint = runtime_identity_fingerprint
-
-
-def _string(raw: Mapping[str, Any], key: str, *, required: bool = True) -> str:
-    value = raw.get(key, "")
-    if not isinstance(value, str):
-        raise ValueError(f"{key} must be a string")
-    value = value.strip()
-    if required and not value:
-        raise ValueError(f"{key} is required")
-    return value

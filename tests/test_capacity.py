@@ -29,11 +29,11 @@ def test_evaluate_levels_and_unknowns() -> None:
 
 
 def test_limit_and_reading_validation() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="positive limit"):
         CapacityLimit("a", 0)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="window must be one of"):
         CapacityLimit("a", 1, "week")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="used cannot be negative"):
         CapacityReading("a", -1)
 
 
@@ -72,6 +72,30 @@ def test_cloudflare_readings_sum_kv_actions_and_workers() -> None:
     assert [i.name for i in report.at_level("exceeded")] == ["cloudflare.kv.write"]
 
 
+def test_cloudflare_readings_handles_errors_and_empty() -> None:
+    def http_fail(*args, **kwargs) -> HttpResponse:
+        return HttpResponse(500, {}, b"error")
+
+    with pytest.raises(RuntimeError, match="HTTP 500"):
+        cloudflare_readings(account="a", token="t", day=date(2026, 9, 6), transport=http_fail)
+
+    def gql_fail(*args, **kwargs) -> HttpResponse:
+        return HttpResponse(200, {}, json.dumps({"errors": ["bad query"]}).encode())
+
+    with pytest.raises(RuntimeError, match="returned errors"):
+        cloudflare_readings(account="a", token="t", day=date(2026, 9, 6), transport=gql_fail)
+
+    def empty_accounts(*args, **kwargs) -> HttpResponse:
+        return HttpResponse(200, {}, json.dumps({"data": {"viewer": {"accounts": []}}}).encode())
+
+    assert (
+        cloudflare_readings(
+            account="a", token="t", day=date(2026, 9, 6), transport=empty_accounts
+        )
+        == ()
+    )
+
+
 def test_onepassword_capacity_reads_limits_and_usage_from_the_cli() -> None:
     rows = [
         {
@@ -99,3 +123,29 @@ def test_onepassword_capacity_reads_limits_and_usage_from_the_cli() -> None:
         CapacityReading("onepassword.token.read", 120),
         CapacityReading("onepassword.account.write", 3),
     )
+
+
+def test_onepassword_capacity_report_structured_interface() -> None:
+    from infra2_sdk.capacity import OnePasswordCapacityReport
+
+    rows = [{"type": "token", "action": "read", "limit": 100, "used": 10, "reset": "in 10m"}]
+
+    def runner(args, **kw):
+        return subprocess.CompletedProcess(args, 0, json.dumps(rows), "")
+
+    report = onepassword_capacity("infra2-cli", runner=runner)
+    assert isinstance(report, OnePasswordCapacityReport)
+    assert len(report) == 2
+    assert report.limits == report[0]
+    assert report.readings == report[1]
+    assert len(report.limits) == 1
+    assert report.limits[0].name == "onepassword.token.read"
+    assert report.readings[0].used == 10
+
+
+def test_onepassword_capacity_cli_failure_raises() -> None:
+    def fail_runner(args, **kwargs):
+        return subprocess.CompletedProcess(args, 1, "", "authentication failed")
+
+    with pytest.raises(RuntimeError, match="op service-account ratelimit failed"):
+        onepassword_capacity("infra2-cli", runner=fail_runner)

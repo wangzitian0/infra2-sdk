@@ -174,3 +174,34 @@ def test_make_stage_result_with_disagreement_kind() -> None:
     )
     assert res_enum.disagreement_kind is DisagreementKind.INTERNAL_HEALTH_PUBLIC_ROUTE
     assert res_enum.to_dict()["disagreement_kind"] == "internal-health-public-route"
+
+
+def test_make_stage_result_accepts_environment_tier() -> None:
+    from infra2_sdk.runtime.environment import EnvironmentTier
+
+    r1 = make_stage_result(
+        source="infra2",
+        environment=EnvironmentTier.PREVIEW,
+        stage=PipelineStage.DEPLOY_SMOKE,
+        target="app",
+        status="pass",
+    )
+    assert r1.environment is PipelineEnvironment.PR
+
+    r2 = make_stage_result(
+        source="infra2",
+        environment=EnvironmentTier.LOCAL_DEV,
+        stage=PipelineStage.DEPLOY_SMOKE,
+        target="app",
+        status="pass",
+    )
+    assert r2.environment is PipelineEnvironment.LOCAL
+
+    r3 = make_stage_result(
+        source="infra2",
+        environment="local_dev",
+        stage=PipelineStage.DEPLOY_SMOKE,
+        target="app",
+        status="pass",
+    )
+    assert r3.environment is PipelineEnvironment.LOCAL

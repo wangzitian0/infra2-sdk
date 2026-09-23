@@ -43,6 +43,13 @@ def test_standard_http_clients_and_retry_policy() -> None:
     assert not retryable_request("GET", 404)
 
 
+@pytest.mark.asyncio
+async def test_create_async_http_client() -> None:
+    async_client = create_http_client(async_client=True, headers={"X-Async": "1"})
+    assert async_client.headers["x-async"] == "1"
+    await async_client.aclose()
+
+
 def test_http_settings_load_from_generic_env() -> None:
     settings = HttpClientSettings.from_env(
         {
@@ -77,6 +84,14 @@ async def test_http_probe_reports_status_and_errors() -> None:
     assert failed.status is DependencyStatus.ABSENT
     error = await probe_http("https://example.test", client=Client(error=OSError("down")))
     assert "OSError: down" in error.detail
+
+
+@pytest.mark.asyncio
+async def test_http_probe_creates_and_closes_owned_client() -> None:
+    settings = HttpClientSettings(timeout_seconds=0.5, connect_timeout_seconds=0.2)
+    result = await probe_http("http://127.0.0.1:59999", settings=settings)
+    assert result.status is DependencyStatus.ABSENT
+    assert result.name == "http"
 
 
 def test_retry_after_supports_both_standard_forms() -> None:

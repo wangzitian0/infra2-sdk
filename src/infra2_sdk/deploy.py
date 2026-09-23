@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, fields
 from enum import StrEnum
 from typing import Any
 
-from infra2_sdk._wire import parse_contract_version, require_contract_version
+from infra2_sdk._wire import _string, parse_contract_version, require_contract_version
 
 CONTRACT_VERSION = 1
 _REQUEST_ID_RE = re.compile(r"\A[a-zA-Z0-9][a-zA-Z0-9._:-]{7,127}\Z")
@@ -176,16 +176,6 @@ def validate_deploy_request(request: DeployRequest) -> None:
         DeployType.CANARY,
     }:
         raise ValueError("remove is limited to preview and canary targets")
-
-
-def _string(raw: Mapping[str, Any], key: str, *, required: bool = True) -> str:
-    value = raw.get(key, "")
-    if not isinstance(value, str):
-        raise ValueError(f"{key} must be a string")
-    value = value.strip()
-    if required and not value:
-        raise ValueError(f"{key} is required")
-    return value
 
 
 def validate_wire_shape(raw: Mapping[str, Any]) -> None:

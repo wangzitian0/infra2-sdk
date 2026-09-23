@@ -7,7 +7,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal, overload
+
+if TYPE_CHECKING:
+    import httpx
 
 from infra2_sdk import __version__
 from infra2_sdk.runtime._optional import require
@@ -63,6 +66,33 @@ class HttpClientSettings:
             user_agent=user_agent,
             follow_redirects=env_bool(environ, RuntimeEnvKey.HTTP_FOLLOW_REDIRECTS, default=False),
         )
+
+
+@overload
+def create_http_client(
+    settings: HttpClientSettings | None = None,
+    *,
+    async_client: Literal[False] = False,
+    headers: dict[str, str] | None = None,
+) -> httpx.Client: ...
+
+
+@overload
+def create_http_client(
+    settings: HttpClientSettings | None = None,
+    *,
+    async_client: Literal[True],
+    headers: dict[str, str] | None = None,
+) -> httpx.AsyncClient: ...
+
+
+@overload
+def create_http_client(
+    settings: HttpClientSettings | None = None,
+    *,
+    async_client: bool,
+    headers: dict[str, str] | None = None,
+) -> httpx.Client | httpx.AsyncClient: ...
 
 
 def create_http_client(

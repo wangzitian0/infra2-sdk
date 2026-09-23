@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from infra2_sdk._wire import parse_contract_version, require_contract_version
+from infra2_sdk._wire import _string, parse_contract_version, require_contract_version
 from infra2_sdk.runtime.environment import EnvironmentTier, resolve_environment_tier
 
 DEPENDENCY_MANIFEST_VERSION = 1
@@ -176,13 +176,3 @@ class DependencyManifest:
             (Dependency.from_dict(item) for item in dependencies),
             contract_version=contract_version,
         )
-
-
-def _string(raw: Mapping[str, Any], key: str, *, required: bool = True) -> str:
-    value = raw.get(key, "")
-    if not isinstance(value, str):
-        raise ValueError(f"{key} must be a string")
-    value = value.strip()
-    if required and not value:
-        raise ValueError(f"{key} is required")
-    return value
