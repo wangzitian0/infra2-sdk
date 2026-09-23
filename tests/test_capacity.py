@@ -89,9 +89,7 @@ def test_cloudflare_readings_handles_errors_and_empty() -> None:
         return HttpResponse(200, {}, json.dumps({"data": {"viewer": {"accounts": []}}}).encode())
 
     assert (
-        cloudflare_readings(
-            account="a", token="t", day=date(2026, 9, 6), transport=empty_accounts
-        )
+        cloudflare_readings(account="a", token="t", day=date(2026, 9, 6), transport=empty_accounts)
         == ()
     )
 

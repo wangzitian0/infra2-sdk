@@ -184,9 +184,7 @@ class OnePasswordCapacityReport:
     def __iter__(self) -> Iterator[tuple[CapacityLimit, ...] | tuple[CapacityReading, ...]]:
         return iter((self.limits, self.readings))
 
-    def __getitem__(
-        self, index: int
-    ) -> tuple[CapacityLimit, ...] | tuple[CapacityReading, ...]:
+    def __getitem__(self, index: int) -> tuple[CapacityLimit, ...] | tuple[CapacityReading, ...]:
         return (self.limits, self.readings)[index]
 
     def __len__(self) -> int:
