@@ -224,9 +224,9 @@ def github_api_client(
 
 
 def _require_httpx() -> Any:
-    from infra2_sdk.runtime._optional import require
+    from infra2_sdk.runtime._optional import require_httpx
 
-    return require("httpx", extra="http")
+    return require_httpx()
 
 
 def _workflow_runs(payload: object) -> list[Mapping[str, object]]:

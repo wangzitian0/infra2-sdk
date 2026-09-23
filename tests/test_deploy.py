@@ -44,47 +44,45 @@ def test_request_round_trip() -> None:
 
 
 def test_validate_wire_shape_accepts_the_real_wire_dict() -> None:
-    validate_wire_shape(request().to_dict())
-
-
-def test_validate_wire_shape_rejects_an_extra_top_level_field() -> None:
     raw = request().to_dict()
-    raw["unexpected_field"] = "oops"
-    with pytest.raises(ValueError, match="request fields must exactly match"):
-        validate_wire_shape(raw)
+    validate_wire_shape(raw)
+    assert DeployRequest.from_dict(raw) == request()
 
 
-def test_validate_wire_shape_rejects_a_missing_top_level_field() -> None:
+@pytest.mark.parametrize(
+    "mutator,message",
+    [
+        (
+            lambda r: (r.update({"unexpected_field": "oops"}), r)[1],
+            "request fields must exactly match",
+        ),
+        (
+            lambda r: (r.pop("source_sha"), r)[1],
+            "request fields must exactly match",
+        ),
+        (
+            lambda r: (r["evidence"].update({"unexpected_field": "oops"}), r)[1],
+            "evidence fields must exactly match",
+        ),
+        (
+            lambda r: (r["evidence"].pop("source_run_id"), r)[1],
+            "evidence fields must exactly match",
+        ),
+        (
+            lambda r: (r.update({"evidence": "not-an-object"}), r)[1],
+            "evidence must be an object",
+        ),
+        (
+            lambda r: "not-an-object",
+            "deploy request must be an object",
+        ),
+    ],
+)
+def test_validate_wire_shape_rejects_malformed_input(mutator, message) -> None:
     raw = request().to_dict()
-    del raw["source_sha"]
-    with pytest.raises(ValueError, match="request fields must exactly match"):
-        validate_wire_shape(raw)
-
-
-def test_validate_wire_shape_rejects_an_extra_evidence_field() -> None:
-    raw = request().to_dict()
-    raw["evidence"]["unexpected_field"] = "oops"
-    with pytest.raises(ValueError, match="evidence fields must exactly match"):
-        validate_wire_shape(raw)
-
-
-def test_validate_wire_shape_rejects_a_missing_evidence_field() -> None:
-    raw = request().to_dict()
-    del raw["evidence"]["source_run_id"]
-    with pytest.raises(ValueError, match="evidence fields must exactly match"):
-        validate_wire_shape(raw)
-
-
-def test_validate_wire_shape_rejects_a_non_object_evidence() -> None:
-    raw = request().to_dict()
-    raw["evidence"] = "not-an-object"
-    with pytest.raises(ValueError, match="evidence must be an object"):
-        validate_wire_shape(raw)
-
-
-def test_validate_wire_shape_rejects_a_non_object_request() -> None:
-    with pytest.raises(ValueError, match="deploy request must be an object"):
-        validate_wire_shape("not-an-object")  # type: ignore[arg-type]
+    target = mutator(raw)
+    with pytest.raises(ValueError, match=message):
+        validate_wire_shape(target)  # type: ignore[arg-type]
 
 
 def test_validate_wire_shape_field_sets_track_the_dataclasses_not_a_hardcoded_copy() -> None:

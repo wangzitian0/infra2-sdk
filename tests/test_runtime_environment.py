@@ -8,6 +8,7 @@ from infra2_sdk.runtime.environment import (
     environment_from_env,
     resolve_environment_tier,
     strict_environment_from_env,
+    to_environment_tier,
 )
 
 
@@ -15,17 +16,25 @@ from infra2_sdk.runtime.environment import (
     "value,expected",
     [
         ("development", EnvironmentTier.LOCAL_DEV),
+        ("dev", EnvironmentTier.LOCAL_DEV),
+        ("local", EnvironmentTier.LOCAL_DEV),
         ("local-ci", EnvironmentTier.LOCAL_TEST),
         ("local_test", EnvironmentTier.LOCAL_TEST),
         ("github_ci", EnvironmentTier.GITHUB_CI),
         ("preview", EnvironmentTier.PREVIEW),
+        ("pr", EnvironmentTier.PREVIEW),
+        ("canary", EnvironmentTier.PREVIEW),
+        ("preview/branch", EnvironmentTier.PREVIEW),
         ("staging", EnvironmentTier.STAGING),
         ("prod", EnvironmentTier.PRODUCTION),
+        ("production", EnvironmentTier.PRODUCTION),
         (EnvironmentTier.PRODUCTION, EnvironmentTier.PRODUCTION),
     ],
 )
 def test_environment_aliases(value, expected) -> None:
-    assert resolve_environment_tier(value) is expected
+    assert to_environment_tier(value) is expected
+    if isinstance(value, (str, EnvironmentTier)):
+        assert resolve_environment_tier(value) is expected
 
 
 def test_ci_and_unknown_policies_are_explicit() -> None:
@@ -110,16 +119,6 @@ def test_to_environment_tier_conversions() -> None:
     assert to_environment_tier(DeployType.PREVIEW_PR) is EnvironmentTier.PREVIEW
     assert to_environment_tier(DeployType.PREVIEW_COMMIT) is EnvironmentTier.PREVIEW
     assert to_environment_tier(DeployType.PREVIEW_TAG) is EnvironmentTier.PREVIEW
-
-    # String mapping
-    assert to_environment_tier("local") is EnvironmentTier.LOCAL_DEV
-    assert to_environment_tier("pr") is EnvironmentTier.PREVIEW
-    assert to_environment_tier("canary") is EnvironmentTier.PREVIEW
-    assert to_environment_tier("preview/branch") is EnvironmentTier.PREVIEW
-    assert to_environment_tier("staging") is EnvironmentTier.STAGING
-    assert to_environment_tier("prod") is EnvironmentTier.PRODUCTION
-    assert to_environment_tier("production") is EnvironmentTier.PRODUCTION
-    assert to_environment_tier(EnvironmentTier.STAGING) is EnvironmentTier.STAGING
 
     # Errors
     with pytest.raises(TypeError, match="cannot convert"):

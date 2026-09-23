@@ -64,5 +64,31 @@ def parse_integer(
     return value
 
 
+def require_exact_fields(
+    raw: Mapping[str, Any],
+    expected: set[str],
+    *,
+    description: str,
+    contract_message: str | None = None,
+) -> None:
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"{description} must be an object")
+    if set(raw) != expected:
+        message = contract_message or f"{description} fields must exactly match v1"
+        raise ValueError(message)
+
+
 _string = parse_string
 _integer = parse_integer
+_require_exact_fields = require_exact_fields
+
+__all__ = [
+    "_integer",
+    "_require_exact_fields",
+    "_string",
+    "parse_contract_version",
+    "parse_integer",
+    "parse_string",
+    "require_contract_version",
+    "require_exact_fields",
+]

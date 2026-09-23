@@ -185,7 +185,11 @@ class RuntimeIdentity:
         return attributes
 
     def to_otel_resource_attributes(self) -> dict[str, str]:
-        """Compatibility output; new consumers should use the standard-only method."""
+        """Compatibility output; new consumers should use the standard-only method.
+
+        .. deprecated:: 2.1.0
+            Use :meth:`to_standard_otel_resource_attributes` instead.
+        """
 
         attributes = self.to_standard_otel_resource_attributes()
         optional = {

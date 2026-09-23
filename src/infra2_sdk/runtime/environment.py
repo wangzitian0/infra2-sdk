@@ -61,43 +61,67 @@ class RuntimeEnvironment:
     tier: EnvironmentTier
 
 
+def to_environment_tier(
+    value: str | EnvironmentTier | Any,
+    *,
+    github_actions: bool = False,
+    unknown: str | UnknownEnvironmentPolicy = UnknownEnvironmentPolicy.ERROR,
+) -> EnvironmentTier:
+    """Map any environment representation to canonical EnvironmentTier.
+
+    Accepts:
+    - EnvironmentTier instance
+    - DeployType instance or value (STAGING -> STAGING, PRODUCTION -> PRODUCTION,
+      PREVIEW_* -> PREVIEW, CANARY -> PREVIEW)
+    - Raw environment strings and aliases ("prod", "production", "preview",
+      "local", "pr", "local_ci", etc.)
+    """
+    if isinstance(value, EnvironmentTier):
+        return value
+
+    if isinstance(value, str):
+        cleaned = value.strip().lower()
+        if cleaned in ("pr", "canary") or cleaned.startswith("preview/"):
+            return EnvironmentTier.PREVIEW
+
+        normalized = cleaned.replace("-", "_")
+        if normalized in _LOCAL_DEV_ALIASES:
+            return EnvironmentTier.LOCAL_DEV
+        if normalized in _LOCAL_TEST_ALIASES:
+            return EnvironmentTier.GITHUB_CI if github_actions else EnvironmentTier.LOCAL_TEST
+        if normalized == EnvironmentTier.GITHUB_CI.value:
+            return EnvironmentTier.GITHUB_CI
+        if normalized == EnvironmentTier.PREVIEW.value or _PREVIEW_ALIAS_RE.match(cleaned):
+            return EnvironmentTier.PREVIEW
+        if normalized == EnvironmentTier.STAGING.value:
+            return EnvironmentTier.STAGING
+        if normalized in _PRODUCTION_ALIASES:
+            return EnvironmentTier.PRODUCTION
+
+        policy = UnknownEnvironmentPolicy(unknown)
+        if policy is UnknownEnvironmentPolicy.PRODUCTION:
+            return EnvironmentTier.PRODUCTION
+        raise ValueError(f"unknown environment: {value!r}")
+
+    if hasattr(value, "value") and isinstance(value.value, str):
+        return to_environment_tier(value.value, github_actions=github_actions, unknown=unknown)
+
+    raise TypeError(f"cannot convert {type(value).__name__} to EnvironmentTier")
+
+
 def resolve_environment_tier(
-    value: str | EnvironmentTier,
+    value: str | EnvironmentTier | Any,
     *,
     github_actions: bool = False,
     unknown: str | UnknownEnvironmentPolicy = UnknownEnvironmentPolicy.ERROR,
 ) -> EnvironmentTier:
     """Normalize common aliases while making fail-closed behavior explicit.
 
-    ``local_ci`` remains accepted as a migration alias for Finance Report, while
-    ``local_test`` is the canonical wire value. Consumers that historically map
-    unknown names to Production can opt into ``unknown="production"``.
+    Delegates to the canonical implementation `to_environment_tier`.
     """
-
-    if isinstance(value, EnvironmentTier):
-        return value
-    if not isinstance(value, str):
+    if not isinstance(value, (str, EnvironmentTier)):
         raise TypeError("environment must be a string or EnvironmentTier")
-    normalized = value.strip().lower().replace("-", "_")
-    display = value.strip().lower()
-    if normalized in _LOCAL_DEV_ALIASES:
-        return EnvironmentTier.LOCAL_DEV
-    if normalized in _LOCAL_TEST_ALIASES:
-        return EnvironmentTier.GITHUB_CI if github_actions else EnvironmentTier.LOCAL_TEST
-    if normalized == EnvironmentTier.GITHUB_CI.value:
-        return EnvironmentTier.GITHUB_CI
-    if normalized == EnvironmentTier.PREVIEW.value:
-        return EnvironmentTier.PREVIEW
-    if _PREVIEW_ALIAS_RE.match(display):
-        return EnvironmentTier.PREVIEW
-    if normalized == EnvironmentTier.STAGING.value:
-        return EnvironmentTier.STAGING
-    if normalized in _PRODUCTION_ALIASES:
-        return EnvironmentTier.PRODUCTION
-    policy = UnknownEnvironmentPolicy(unknown)
-    if policy is UnknownEnvironmentPolicy.PRODUCTION:
-        return EnvironmentTier.PRODUCTION
-    raise ValueError(f"unknown environment: {value!r}")
+    return to_environment_tier(value, github_actions=github_actions, unknown=unknown)
 
 
 def environment_from_env(
@@ -119,7 +143,7 @@ def environment_from_env(
     values = os.environ if environ is None else environ
     if github_actions is None:
         github_actions = values.get("GITHUB_ACTIONS", "").strip().lower() == "true"
-    tier = resolve_environment_tier(
+    tier = to_environment_tier(
         resolved.value,
         github_actions=github_actions,
         unknown=unknown,
@@ -151,51 +175,15 @@ def normalize_deployment_environment(
 ) -> str:
     """Validate a display identity without imposing a platform's preview naming scheme."""
 
-    resolved_tier = resolve_environment_tier(tier)
+    resolved_tier = to_environment_tier(tier)
     display = value.strip().lower()
     if not display:
         return resolved_tier.value
     if resolved_tier is EnvironmentTier.PREVIEW:
         return display
-    if resolve_environment_tier(display) is not resolved_tier:
+    if to_environment_tier(display) is not resolved_tier:
         raise ValueError("deployment_environment disagrees with environment tier")
     return resolved_tier.value
-
-
-def to_environment_tier(
-    value: str | EnvironmentTier | Any,
-    *,
-    github_actions: bool = False,
-    unknown: str | UnknownEnvironmentPolicy = UnknownEnvironmentPolicy.ERROR,
-) -> EnvironmentTier:
-    """Map any environment representation to canonical EnvironmentTier.
-
-    Accepts:
-    - EnvironmentTier instance
-    - DeployType instance or value (STAGING -> STAGING, PRODUCTION -> PRODUCTION,
-      PREVIEW_* -> PREVIEW, CANARY -> PREVIEW)
-    - Raw environment strings and aliases ("prod", "production", "preview",
-      "local", "pr", "local_ci", etc.)
-    """
-    if isinstance(value, EnvironmentTier):
-        return value
-
-    if isinstance(value, str):
-        cleaned = value.strip().lower()
-        if cleaned == "local":
-            return EnvironmentTier.LOCAL_DEV
-        if cleaned == "pr":
-            return EnvironmentTier.PREVIEW
-        if cleaned == "canary":
-            return EnvironmentTier.PREVIEW
-        if cleaned.startswith("preview/"):
-            return EnvironmentTier.PREVIEW
-        return resolve_environment_tier(cleaned, github_actions=github_actions, unknown=unknown)
-
-    if hasattr(value, "value") and isinstance(value.value, str):
-        return to_environment_tier(value.value, github_actions=github_actions, unknown=unknown)
-
-    raise TypeError(f"cannot convert {type(value).__name__} to EnvironmentTier")
 
 
 def to_deploy_type(
