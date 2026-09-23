@@ -6,8 +6,8 @@ from infra2_sdk.runtime.config_schema import (
     JSON_SCHEMA_DIALECT,
     EnvironmentField,
     EnvironmentManifest,
-    configuration_fingerprint,
     environment_manifest_from_model,
+    manifest_config_fingerprint,
     reconcile,
     settings_json_schema,
     validate_environment,
@@ -235,13 +235,13 @@ def test_reconcile_reports_names_only() -> None:
     assert reconcile(manifest, {"C": "v"}).missing == ("A",)
 
 
-def test_configuration_fingerprint_is_stable_and_value_blind() -> None:
+def test_manifest_config_fingerprint_is_stable_and_value_blind() -> None:
     manifest = EnvironmentManifest(
         source="sc", fields=(EnvironmentField("a", "A"), EnvironmentField("b", "B"))
     )
-    one = configuration_fingerprint(manifest, {"B": "2", "A": "1", "IGNORED": "x"})
-    assert one == configuration_fingerprint(manifest, {"A": "1", "B": "2"})
-    assert one != configuration_fingerprint(manifest, {"A": "1", "B": "3"})
+    one = manifest_config_fingerprint(manifest, {"B": "2", "A": "1", "IGNORED": "x"})
+    assert one == manifest_config_fingerprint(manifest, {"A": "1", "B": "2"})
+    assert one != manifest_config_fingerprint(manifest, {"A": "1", "B": "3"})
     assert len(one) == 64
     assert one != "1" * 64
 
@@ -249,8 +249,8 @@ def test_configuration_fingerprint_is_stable_and_value_blind() -> None:
     # and sensitive values are never leaked in the output hex string.
     secret1 = "sensitive-secret-value-alpha"
     secret2 = "sensitive-secret-value-beta"
-    fp1 = configuration_fingerprint(manifest, {"A": secret1, "B": "2"})
-    fp2 = configuration_fingerprint(manifest, {"A": secret2, "B": "2"})
+    fp1 = manifest_config_fingerprint(manifest, {"A": secret1, "B": "2"})
+    fp2 = manifest_config_fingerprint(manifest, {"A": secret2, "B": "2"})
     assert fp1 != fp2
     assert secret1 not in fp1
     assert secret2 not in fp2
@@ -291,45 +291,12 @@ def test_manifest_config_fingerprint_is_canonical() -> None:
     from infra2_sdk.runtime.config_schema import (
         EnvironmentField,
         EnvironmentManifest,
-        configuration_fingerprint,
         manifest_config_fingerprint,
     )
 
-    assert manifest_config_fingerprint is configuration_fingerprint
     assert imported_fp is manifest_config_fingerprint
     manifest = EnvironmentManifest(source="sc", fields=(EnvironmentField("a", "A"),))
     data = {"A": "val"}
-    assert manifest_config_fingerprint(manifest, data) == configuration_fingerprint(manifest, data)
-
-
-def test_runtime_top_level_configuration_fingerprint_polymorphic_dispatch() -> None:
-    from infra2_sdk.runtime import (
-        configuration_fingerprint as top_level_fp,
-    )
-    from infra2_sdk.runtime import (
-        manifest_config_fingerprint,
-        runtime_identity_fingerprint,
-    )
-    from infra2_sdk.runtime.config_schema import EnvironmentField, EnvironmentManifest
-
-    manifest = EnvironmentManifest(source="sc", fields=(EnvironmentField("a", "A"),))
-    manifest_data = {"A": "val"}
-
-    # 1. Two positional arguments: manifest + values -> dispatches to manifest_config_fingerprint
-    res2 = top_level_fp(manifest, manifest_data)
-    assert res2 == manifest_config_fingerprint(manifest, manifest_data)
-    assert len(res2) == 64
-
-    # 2. Kwargs with manifest -> dispatches to manifest_config_fingerprint
-    res_kw = top_level_fp(manifest=manifest, values=manifest_data)
-    assert res_kw == manifest_config_fingerprint(manifest, manifest_data)
-
-    # 3. Single argument: parts dict -> dispatches to runtime_identity_fingerprint
-    parts = {"svc": "alerting", "ver": "1.0.0"}
-    res1 = top_level_fp(parts)
-    assert res1 == runtime_identity_fingerprint(parts)
-    assert len(res1) == 64
-
-    # 4. Explicit functions are directly callable and produce matching results
-    assert manifest_config_fingerprint(manifest, manifest_data) == res2
-    assert runtime_identity_fingerprint(parts) == res1
+    res = manifest_config_fingerprint(manifest, data)
+    assert len(res) == 64
+    assert imported_fp(manifest, data) == res

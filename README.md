@@ -226,12 +226,13 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
 - Importing any runtime module performs no network I/O and mutates no global provider state.
 - v0.2 ownership constants and `vault=True` manifest metadata remain compatibility-only; new
   consumers use tier semantics and explicit `injected=True` metadata.
-- Deprecated delivery stages, disagreement kinds, and failure domains scheduled for removal in v2.0.0:
-  - `PipelineStage.ROUTE_CANARY` (retired in infra2#543, producer deleted);
-  - `DisagreementKind.HEARTBEAT_PUBLIC_ROUTE` (depends on retired `ROUTE_CANARY`);
-  - `DisagreementKind.FALLBACK_PUBLIC_ROUTE` (depends on retired `DOKPLOY_WORKER_OR_DEPLOYMENT_RECORD`);
-  - `FailureDomain.DOKPLOY_WORKER_OR_DEPLOYMENT_RECORD` and `FailureDomain.DOKPLOY_COMPOSE_SOURCE_TYPE` (retired failure domains).
-- In v1.6.0, `to_environment_tier`, `to_pipeline_environment`, and `to_deploy_type` provide canonical bridging mappings across `EnvironmentTier`, `PipelineEnvironment`, and `DeployType` with deterministic defaults for dimensional convergence. `PipelineEnvironment` is scheduled for removal in v2.0.0.
+- In v2.0.0, legacy compatibility symbols scheduled for removal have been eradicated:
+  - `PipelineStage.ROUTE_CANARY` and associated timeouts;
+  - `DisagreementKind.HEARTBEAT_PUBLIC_ROUTE` and `DisagreementKind.FALLBACK_PUBLIC_ROUTE`;
+  - `FailureDomain.DOKPLOY_WORKER_OR_DEPLOYMENT_RECORD` and `FailureDomain.DOKPLOY_COMPOSE_SOURCE_TYPE`;
+  - `PipelineEnvironment` and `to_pipeline_environment` (all delivery results and runtime functions now canonicalize to `EnvironmentTier`);
+  - Legacy `configuration_fingerprint` aliases across `runtime` modules (use `manifest_config_fingerprint` for manifest contracts and `runtime_identity_fingerprint` for runtime identity).
+- `to_environment_tier` and `to_deploy_type` provide canonical bridging mappings across `EnvironmentTier` and `DeployType`.
 - `CommandRunner` protocol is exported from `infra2_sdk.refs` for subprocess runner injection.
 - `OnePasswordCapacityReport` provides structured access to limits and usage while preserving tuple unpacking.
 

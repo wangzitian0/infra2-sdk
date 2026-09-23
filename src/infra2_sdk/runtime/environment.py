@@ -172,10 +172,10 @@ def to_environment_tier(
 
     Accepts:
     - EnvironmentTier instance
-    - PipelineEnvironment instance or value (LOCAL -> LOCAL_DEV, PR -> PREVIEW)
     - DeployType instance or value (STAGING -> STAGING, PRODUCTION -> PRODUCTION,
       PREVIEW_* -> PREVIEW, CANARY -> PREVIEW)
-    - Raw environment strings and aliases ("prod", "production", "preview", "local_ci", etc.)
+    - Raw environment strings and aliases ("prod", "production", "preview",
+      "local", "pr", "local_ci", etc.)
     """
     if isinstance(value, EnvironmentTier):
         return value
@@ -196,29 +196,6 @@ def to_environment_tier(
         return to_environment_tier(value.value, github_actions=github_actions, unknown=unknown)
 
     raise TypeError(f"cannot convert {type(value).__name__} to EnvironmentTier")
-
-
-def to_pipeline_environment(
-    value: str | EnvironmentTier | Any,
-) -> Any:
-    """Map an environment representation to PipelineEnvironment.
-
-    Note: PipelineEnvironment is deprecated and scheduled for removal in v2.0.0.
-    """
-    from infra2_sdk.delivery import PipelineEnvironment
-
-    if isinstance(value, PipelineEnvironment):
-        return value
-    tier = to_environment_tier(value)
-    if tier in (EnvironmentTier.LOCAL_DEV, EnvironmentTier.LOCAL_TEST):
-        return PipelineEnvironment.LOCAL
-    if tier in (EnvironmentTier.GITHUB_CI, EnvironmentTier.PREVIEW):
-        return PipelineEnvironment.PR
-    if tier is EnvironmentTier.STAGING:
-        return PipelineEnvironment.STAGING
-    if tier is EnvironmentTier.PRODUCTION:
-        return PipelineEnvironment.PRODUCTION
-    raise ValueError(f"cannot map {tier} to PipelineEnvironment")
 
 
 def to_deploy_type(

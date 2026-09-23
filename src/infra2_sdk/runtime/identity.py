@@ -249,6 +249,3 @@ def runtime_identity_fingerprint(parts: Mapping[str, str | bytes]) -> str:
         digest.update(len(encoded).to_bytes(8, "big"))
         digest.update(encoded)
     return digest.hexdigest()
-
-
-configuration_fingerprint = runtime_identity_fingerprint

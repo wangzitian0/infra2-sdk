@@ -471,9 +471,6 @@ def manifest_config_fingerprint(manifest: EnvironmentManifest, values: Mapping[s
     return hashlib.sha256(payload).hexdigest()
 
 
-configuration_fingerprint = manifest_config_fingerprint
-
-
 def _validation_aliases(alias: Any) -> tuple[str, ...]:
     if isinstance(alias, str):
         return (alias,)
