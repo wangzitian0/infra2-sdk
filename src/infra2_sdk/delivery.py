@@ -4,10 +4,24 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from infra2_sdk.runtime.environment import EnvironmentTier
+from infra2_sdk.runtime.environment import EnvironmentTier, to_environment_tier
+
+__all__ = [
+    "PREVIEW_RELEVANT_STAGES",
+    "STAGE_DEADLINE_MS",
+    "BudgetStatus",
+    "DisagreementKind",
+    "FailureDomain",
+    "PipelineStage",
+    "StageResult",
+    "StageStatus",
+    "acceleration_allowed",
+    "classify_budget",
+    "detect_disagreement",
+    "make_stage_result",
+    "validate_stage_result",
+]
 
 
 class PipelineStage(StrEnum):
@@ -157,8 +171,6 @@ def make_stage_result(
     current_stage_age_ms: int = 0,
     evidence_url: str = "",
 ) -> StageResult:
-    from infra2_sdk.runtime.environment import EnvironmentTier, to_environment_tier
-
     if isinstance(environment, EnvironmentTier):
         env_value = environment
     else:
@@ -192,6 +204,9 @@ def make_stage_result(
 
 
 def validate_stage_result(result: StageResult) -> None:
+    if not isinstance(result.environment, EnvironmentTier):
+        got = type(result.environment).__name__
+        raise TypeError(f"result.environment must be an EnvironmentTier, got {got}")
     if not result.source:
         raise ValueError("source is required")
     if not result.target:
@@ -211,8 +226,6 @@ def validate_stage_result(result: StageResult) -> None:
 
 
 def acceleration_allowed(result: StageResult) -> bool:
-    from infra2_sdk.runtime.environment import EnvironmentTier
-
     if result.status != StageStatus.SKIP:
         return False
     if result.environment == EnvironmentTier.PRODUCTION:

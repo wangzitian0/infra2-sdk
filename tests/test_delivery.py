@@ -196,3 +196,32 @@ def test_make_stage_result_accepts_environment_tier() -> None:
         status="pass",
     )
     assert r3.environment is EnvironmentTier.LOCAL_DEV
+
+
+def test_stage_result_runtime_type_hints_resolve() -> None:
+    import typing
+
+    hints = typing.get_type_hints(StageResult)
+    assert hints["environment"] is EnvironmentTier
+
+
+def test_validate_stage_result_rejects_non_environment_tier() -> None:
+    result = StageResult(
+        source="test",
+        environment="staging",  # type: ignore[arg-type]
+        stage=PipelineStage.DEPLOY_SMOKE,
+        target="app",
+        status=StageStatus.PASS,
+        duration_ms=10,
+        deadline_ms=1000,
+        failure_domain=FailureDomain.NONE,
+        external_dependency=False,
+        suppressed_reason="",
+        skipped_reason="",
+        current_stage_age_ms=0,
+        budget_status=BudgetStatus.WITHIN_BUDGET,
+        disagreement_kind=DisagreementKind.NONE,
+        evidence_url="",
+    )
+    with pytest.raises(TypeError, match="EnvironmentTier"):
+        validate_stage_result(result)
