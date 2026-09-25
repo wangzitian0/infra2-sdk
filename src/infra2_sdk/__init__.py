@@ -17,5 +17,7 @@ __all__ = [
     "HttpResponse",
     "HttpTransport",
     "__version__",
+    "images",
     "urllib_transport",
 ]
+

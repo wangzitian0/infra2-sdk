@@ -1,0 +1,22 @@
+schema_version: 1
+images:
+  postgres:
+    image: "postgres:16-alpine"
+    recommended_mem_limit: "512m"
+    summary: "PostgreSQL database server"
+  redis:
+    image: "redis:7-alpine"
+    recommended_mem_limit: "256m"
+    summary: "Redis in-memory cache and message store"
+  minio:
+    image: "ghcr.io/wangzitian0/minio-mirror@sha256:986342c576435342b38fa75d14ed2bb63831242f37907fd1c83239631f9c5b80"
+    recommended_mem_limit: "512m"
+    summary: "MinIO S3-compatible object storage"
+  mc:
+    image: "ghcr.io/wangzitian0/mc-mirror@sha256:94c4c001e47985ca3e609e50e0239b33c3f48ca95e0d04122f7935fb8166e4d2"
+    recommended_mem_limit: "128m"
+    summary: "MinIO client utility"
+  vault_agent:
+    image: "hashicorp/vault:1.15"
+    recommended_mem_limit: "128m"
+    summary: "HashiCorp Vault agent sidecar for AppRole auth and secrets rendering"

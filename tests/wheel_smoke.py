@@ -18,6 +18,7 @@ def smoke_core() -> None:
     assert SNAPSHOT_MANIFEST_VERSION == 1
     assert environment_from_env({}).name == "local_dev"
     assert runtime_env_contract()["contract_version"] == 1
+    import infra2_sdk.images  # noqa: F401
     import infra2_sdk.rules.compose  # noqa: F401
     import infra2_sdk.runtime.http  # noqa: F401
     import infra2_sdk.runtime.otel  # noqa: F401
