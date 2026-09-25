@@ -127,9 +127,7 @@ def inspect_compose(path_or_text: str | Path) -> ComposeReport:
     """Parse and inspect a compose file or text for both bare latest tags and resource limits."""
     path_str = str(path_or_text)
     is_existing_file = isinstance(path_or_text, Path) or (
-        isinstance(path_or_text, str)
-        and "\n" not in path_or_text
-        and Path(path_or_text).exists()
+        isinstance(path_or_text, str) and "\n" not in path_or_text and Path(path_or_text).exists()
     )
     if is_existing_file:
         try:
@@ -242,7 +240,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"❌ {path}: Bare ':latest' tag: {ref}")
                 total_bare += 1
         unlimited = [
-            svc for svc in report.unlimited_services
+            svc
+            for svc in report.unlimited_services
             if svc not in allowed_set and f"{path}::{svc}" not in allowed_set
         ]
         if unlimited:
