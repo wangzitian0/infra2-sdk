@@ -305,3 +305,27 @@ def test_expectation_rejects_a_non_boolean_require_head_sha() -> None:
     raw["require_head_sha"] = "false"
     with pytest.raises(ValueError, match="require_head_sha must be a boolean"):
         RunEvidenceExpectation.from_dict(raw)
+
+
+def test_build_deploy_request_constructs_valid_request() -> None:
+    from infra2_sdk.deploy import DeployOperation, DeployType, build_deploy_request
+
+    req = build_deploy_request(
+        service="finance_report/app",
+        deploy_type=DeployType.STAGING,
+        version_ref="v1.2.3",
+        source_repository="wangzitian0/finance_report",
+        source_sha="a" * 40,
+        source_run_url="https://github.com/wangzitian0/finance_report/actions/runs/1",
+    )
+    assert req.service == "finance_report/app"
+    assert req.deploy_type == DeployType.STAGING
+    assert req.operation == DeployOperation.DEPLOY
+    assert req.version_ref == "v1.2.3"
+    assert req.source_repository == "wangzitian0/finance_report"
+    assert req.source_sha == "a" * 40
+    assert (
+        req.evidence.source_run_url
+        == "https://github.com/wangzitian0/finance_report/actions/runs/1"
+    )
+    assert req.request_id.startswith("req-")

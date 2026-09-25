@@ -340,3 +340,41 @@ class ProductionEvidencePolicy:
             staging=RunEvidenceExpectation.from_dict(staging),
             review_base_ref=_string(raw, "review_base_ref"),
         )
+
+
+def build_deploy_request(
+    service: str,
+    deploy_type: DeployType | str,
+    version_ref: str,
+    source_repository: str,
+    source_sha: str,
+    *,
+    source_run_url: str,
+    operation: DeployOperation | str = DeployOperation.DEPLOY,
+    request_id: str | None = None,
+    source_run_id: str = "",
+    staging_run_url: str = "",
+    reviewed_change_url: str = "",
+) -> DeployRequest:
+    """Helper to build a validated DeployRequest instance."""
+    import uuid
+
+    req_id = request_id or f"req-{uuid.uuid4().hex[:12]}"
+    op = DeployOperation(operation) if isinstance(operation, str) else operation
+    dt = DeployType(deploy_type) if isinstance(deploy_type, str) else deploy_type
+    evidence = DeployEvidence(
+        source_run_url=source_run_url,
+        source_run_id=source_run_id,
+        staging_run_url=staging_run_url,
+        reviewed_change_url=reviewed_change_url,
+    )
+    return DeployRequest(
+        request_id=req_id,
+        operation=op,
+        service=service,
+        deploy_type=dt,
+        version_ref=version_ref,
+        source_repository=source_repository,
+        source_sha=source_sha,
+        evidence=evidence,
+    )
