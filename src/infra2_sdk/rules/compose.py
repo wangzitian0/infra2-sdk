@@ -99,6 +99,8 @@ def inspect_service_resource_limits(
     """
     if isinstance(services, (str, Path)):
         report = inspect_compose(services)
+        if report.errors:
+            raise ValueError(f"Failed to inspect compose: {'; '.join(report.errors)}")
         return list(report.compliant_services), list(report.unlimited_services)
 
     if (
@@ -126,10 +128,17 @@ def inspect_service_resource_limits(
 def inspect_compose(path_or_text: str | Path) -> ComposeReport:
     """Parse and inspect a compose file or text for both bare latest tags and resource limits."""
     path_str = str(path_or_text)
-    is_existing_file = isinstance(path_or_text, Path) or (
-        isinstance(path_or_text, str) and "\n" not in path_or_text and Path(path_or_text).exists()
+    is_path = isinstance(path_or_text, Path) or (
+        isinstance(path_or_text, str)
+        and "\n" not in path_or_text
+        and (
+            Path(path_or_text).exists()
+            or "/" in path_or_text
+            or "\\" in path_or_text
+            or path_or_text.endswith((".yaml", ".yml"))
+        )
     )
-    if is_existing_file:
+    if is_path:
         try:
             text = Path(path_or_text).read_text(encoding="utf-8")
         except OSError as exc:
