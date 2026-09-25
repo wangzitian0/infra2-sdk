@@ -101,7 +101,11 @@ def inspect_service_resource_limits(
         report = inspect_compose(services)
         return list(report.compliant_services), list(report.unlimited_services)
 
-    if isinstance(services, Mapping) and "services" in services and isinstance(services["services"], Mapping):
+    if (
+        isinstance(services, Mapping)
+        and "services" in services
+        and isinstance(services["services"], Mapping)
+    ):
         services = services["services"]
 
     compliant: list[str] = []
@@ -122,7 +126,12 @@ def inspect_service_resource_limits(
 def inspect_compose(path_or_text: str | Path) -> ComposeReport:
     """Parse and inspect a compose file or text for both bare latest tags and resource limits."""
     path_str = str(path_or_text)
-    if isinstance(path_or_text, Path) or (isinstance(path_or_text, str) and "\n" not in path_or_text and Path(path_or_text).exists()):
+    is_existing_file = isinstance(path_or_text, Path) or (
+        isinstance(path_or_text, str)
+        and "\n" not in path_or_text
+        and Path(path_or_text).exists()
+    )
+    if is_existing_file:
         try:
             text = Path(path_or_text).read_text(encoding="utf-8")
         except OSError as exc:
@@ -182,10 +191,21 @@ def inspect_compose(path_or_text: str | Path) -> ComposeReport:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI runner for compose linting."""
-    parser = argparse.ArgumentParser(description="Lint Compose files for resource limits and image pin rules.")
-    parser.add_argument("files", nargs="*", help="Compose files to inspect (default: scans **/compose.yaml)")
-    parser.add_argument("--glob", dest="glob_pattern", default=None, help="Optional glob pattern to search for files")
-    parser.add_argument("--allow-unlimited", nargs="*", default=(), help="List of service names or path::service to grandfather")
+    parser = argparse.ArgumentParser(
+        description="Lint Compose files for resource limits and image pin rules."
+    )
+    parser.add_argument(
+        "files", nargs="*", help="Compose files to inspect (default: scans **/compose.yaml)"
+    )
+    parser.add_argument(
+        "--glob", dest="glob_pattern", default=None, help="Optional glob pattern to search files"
+    )
+    parser.add_argument(
+        "--allow-unlimited",
+        nargs="*",
+        default=(),
+        help="List of service names or path::service to grandfather",
+    )
     args = parser.parse_args(argv)
 
     paths: list[Path] = []
@@ -198,7 +218,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         for name in ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"):
             for p in sorted(Path(".").rglob(name)):
-                if not any(part.startswith(".") or part in ("node_modules", ".venv", "venv") for part in p.parts):
+                ignored = any(
+                    part.startswith(".") or part in ("node_modules", ".venv", "venv")
+                    for part in p.parts
+                )
+                if not ignored:
                     paths.append(p)
 
     if not paths:
@@ -227,7 +251,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 total_violations += 1
 
     if total_violations > 0 or total_bare > 0:
-        print(f"\n❌ FAILED: {total_bare} bare ':latest' and {total_violations} resource ceiling violations.")
+        msg = f"\n❌ FAILED: {total_bare} bare ':latest' and {total_violations} ceiling violations."
+        print(msg)
         return 1
 
     print(f"✅ PASSED: Inspected {len(paths)} compose file(s) with no violations.")

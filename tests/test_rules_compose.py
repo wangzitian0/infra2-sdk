@@ -121,5 +121,6 @@ def test_compose_main_cli(tmp_path: Path) -> None:
     assert main([str(file_path)]) == 1
     assert main([str(file_path), "--allow-unlimited", "bad"]) == 1  # still has bare latest
 
-    file_path.write_text("services:\n  ok:\n    image: app:1.0\n    mem_limit: 256m\n", encoding="utf-8")
+    content = "services:\n  ok:\n    image: app:1.0\n    mem_limit: 256m\n"
+    file_path.write_text(content, encoding="utf-8")
     assert main([str(file_path)]) == 0
