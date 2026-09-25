@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 from infra2_sdk.rules.compose import (
+    ComposeReport,
     find_bare_latest_violations,
+    inspect_compose,
     inspect_service_resource_limits,
     is_memory_ceiling,
+    main,
     tag_of_image_ref,
 )
 
@@ -66,3 +73,70 @@ def test_inspect_service_resource_limits() -> None:
     compliant, non_compliant = inspect_service_resource_limits(services)
     assert compliant == ["web", "worker"]
     assert non_compliant == ["broken", "cache", "db"]
+
+    # Test passing a root document dict containing 'services'
+    root_doc = {"version": "3", "services": services}
+    compliant, non_compliant = inspect_service_resource_limits(root_doc)
+    assert compliant == ["web", "worker"]
+    assert non_compliant == ["broken", "cache", "db"]
+
+
+def test_inspect_compose_text_and_report() -> None:
+    compose = """
+services:
+  app:
+    image: myrepo/app:latest
+    mem_limit: 512m
+  db:
+    image: postgres:16-alpine
+"""
+    report = inspect_compose(compose)
+    assert isinstance(report, ComposeReport)
+    assert report.bare_latest_violations == ("myrepo/app:latest",)
+    assert report.compliant_services == ("app",)
+    assert report.unlimited_services == ("db",)
+    assert not report.is_valid
+
+
+def test_inspect_compose_valid_clean(tmp_path: Path) -> None:
+    clean_compose = """
+services:
+  app:
+    image: myrepo/app:1.0.0
+    mem_limit: 512m
+  db:
+    image: postgres:16-alpine
+    mem_limit: 1g
+"""
+    file_path = tmp_path / "compose.yaml"
+    file_path.write_text(clean_compose, encoding="utf-8")
+    report = inspect_compose(file_path)
+    assert report.is_valid
+    assert len(report.bare_latest_violations) == 0
+    assert len(report.unlimited_services) == 0
+    assert report.compliant_services == ("app", "db")
+
+
+def test_compose_main_cli(tmp_path: Path) -> None:
+    file_path = tmp_path / "compose.yaml"
+    file_path.write_text("services:\n  bad:\n    image: app:latest\n", encoding="utf-8")
+    assert main([str(file_path)]) == 1
+    assert main([str(file_path), "--allow-unlimited", "bad"]) == 1  # still has bare latest
+
+    content = "services:\n  ok:\n    image: app:1.0\n    mem_limit: 256m\n"
+    file_path.write_text(content, encoding="utf-8")
+    assert main([str(file_path)]) == 0
+
+
+def test_inspect_compose_missing_file(tmp_path: Path) -> None:
+    missing_file = tmp_path / "nonexistent-compose.yaml"
+    report = inspect_compose(str(missing_file))
+    assert not report.is_valid
+    assert len(report.errors) == 1
+    assert "cannot read file" in report.errors[0]
+
+
+def test_inspect_service_resource_limits_propagates_error() -> None:
+    bad_yaml = "services: [invalid yaml"
+    with pytest.raises(ValueError, match="Failed to inspect compose"):
+        inspect_service_resource_limits(bad_yaml)
