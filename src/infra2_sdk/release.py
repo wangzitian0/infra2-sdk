@@ -15,9 +15,9 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from urllib.parse import urlencode
 
-from infra2_sdk._transport import HttpResponse, HttpTransport, urllib_transport
 from infra2_sdk.refs import CommandRunner, resolve_image_ref
 from infra2_sdk.runtime.identity import RuntimeIdentity
+from infra2_sdk.transport import HttpResponse, HttpTransport, urllib_transport
 
 _OCI_DIGEST_RE = re.compile(r"\Asha256:[0-9a-f]{64}\Z")
 _REFERENCE_RE = re.compile(r"\A[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\Z")

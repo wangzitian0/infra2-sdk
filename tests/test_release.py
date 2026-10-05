@@ -3,7 +3,6 @@ import subprocess
 
 import pytest
 
-from infra2_sdk._transport import HttpResponse
 from infra2_sdk.release import (
     ReleaseError,
     ReleaseIdentity,
@@ -12,6 +11,7 @@ from infra2_sdk.release import (
     verify_runtime_identity,
 )
 from infra2_sdk.runtime.identity import RuntimeIdentity
+from infra2_sdk.transport import HttpResponse
 
 SHA = "0123456789abcdef0123456789abcdef01234567"
 DIGEST = "sha256:" + "f" * 64

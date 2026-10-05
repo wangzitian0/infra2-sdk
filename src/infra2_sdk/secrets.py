@@ -15,7 +15,6 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from infra2_sdk._transport import HttpResponse, HttpTransport, urllib_transport
 from infra2_sdk.runtime.config_schema import (
     EnvironmentField,
     EnvironmentManifest,
@@ -23,6 +22,7 @@ from infra2_sdk.runtime.config_schema import (
     ReconcileReport,
     reconcile,
 )
+from infra2_sdk.transport import HttpResponse, HttpTransport, urllib_transport
 
 VAULT_USER_AGENT = "infra2-sdk/secrets (+https://github.com/wangzitian0/infra2-sdk)"
 

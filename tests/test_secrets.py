@@ -3,7 +3,6 @@ import subprocess
 
 import pytest
 
-from infra2_sdk._transport import HttpResponse
 from infra2_sdk.runtime.config_schema import EnvironmentField, EnvironmentManifest
 from infra2_sdk.secrets import (
     EnvBackend,
@@ -20,6 +19,7 @@ from infra2_sdk.secrets import (
     vault_path,
     vault_token_status,
 )
+from infra2_sdk.transport import HttpResponse
 
 MANIFEST = EnvironmentManifest(
     source="example.Settings",

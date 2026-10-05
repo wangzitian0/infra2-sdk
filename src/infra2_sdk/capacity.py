@@ -13,7 +13,7 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import asdict, dataclass
 from datetime import date
 
-from infra2_sdk._transport import HttpTransport, urllib_transport
+from infra2_sdk.transport import HttpTransport, urllib_transport
 
 WINDOWS = ("hour", "day", "month")
 LEVELS = ("ok", "warn", "exceeded", "unknown")

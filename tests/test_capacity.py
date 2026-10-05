@@ -4,7 +4,6 @@ from datetime import date
 
 import pytest
 
-from infra2_sdk._transport import HttpResponse
 from infra2_sdk.capacity import (
     CLOUDFLARE_FREE_TIER,
     CapacityLimit,
@@ -13,6 +12,7 @@ from infra2_sdk.capacity import (
     evaluate,
     onepassword_capacity,
 )
+from infra2_sdk.transport import HttpResponse
 
 
 def test_evaluate_levels_and_unknowns() -> None:

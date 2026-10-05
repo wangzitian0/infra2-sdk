@@ -62,7 +62,7 @@ def resolve_to_sha(
     if not sha:
         raise ValueError(
             f"deploy ref {ref!r} ({_remote_ref_for(form, cleaned)}) not found in "
-            f"{_redact_repo(repo)}"
+            f"{redact_repo(repo)}"
         )
     return sha
 
@@ -78,7 +78,7 @@ def resolve_image_ref(
     if form == "tag":
         sha = _resolve_remote_sha(repo, form, cleaned, runner=runner)
         if not sha:
-            raise ValueError(f"tag {cleaned!r} not found in {_redact_repo(repo)}")
+            raise ValueError(f"tag {cleaned!r} not found in {redact_repo(repo)}")
         return ResolvedRef(sha=sha, image_ref=cleaned, form=form)
     sha = resolve_to_sha(ref, repo=repo, runner=runner)
     return ResolvedRef(sha=sha, image_ref=sha[:7], form=form)
@@ -94,10 +94,10 @@ def resolve_pr(
     if not (number.isdigit() and int(number) > 0):
         raise ValueError(f"PR number must be a positive integer, got {pr_number!r}")
     remote_ref = f"refs/pull/{number}/head"
-    for sha, name in _ls_remote_rows(repo, remote_ref, runner=runner):
+    for sha, name in ls_remote_rows(repo, remote_ref, runner=runner):
         if name == remote_ref:
             return ResolvedRef(sha=sha, image_ref=sha[:7], form="pr")
-    raise ValueError(f"PR #{number} head not found in {_redact_repo(repo)}")
+    raise ValueError(f"PR #{number} head not found in {redact_repo(repo)}")
 
 
 def _remote_ref_for(form: str, cleaned: str) -> str:
@@ -114,7 +114,7 @@ def _resolve_remote_sha(
     remote_ref = _remote_ref_for(form, cleaned)
     peeled = remote_ref + "^{}" if form == "tag" else None
     query = [remote_ref, peeled] if peeled else [remote_ref]
-    rows = _ls_remote_rows(repo, *query, runner=runner)
+    rows = ls_remote_rows(repo, *query, runner=runner)
     if peeled:
         for sha, name in rows:
             if name == peeled:
@@ -125,11 +125,18 @@ def _resolve_remote_sha(
     return None
 
 
-def _ls_remote_rows(
+def ls_remote_rows(
     repo: str,
     *remote_refs: str,
-    runner: CommandRunner,
+    runner: CommandRunner = subprocess.run,
 ) -> list[tuple[str, str]]:
+    """Run ``git ls-remote repo *remote_refs`` and return ``(sha, ref name)`` rows.
+
+    ``runner`` is injectable (any ``subprocess.run``-compatible callable). A failing command,
+    a missing ``git``, or a timeout raises ``ValueError`` whose message has credentials
+    embedded in the repository URL redacted by ``redact_repo``.
+    """
+
     try:
         result = runner(
             ["git", "ls-remote", repo, *remote_refs],
@@ -140,8 +147,8 @@ def _ls_remote_rows(
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise ValueError(
-            f"git ls-remote failed for {list(remote_refs)!r} in {_redact_repo(repo)}: "
-            f"{_redact_repo(str(exc))}"
+            f"git ls-remote failed for {list(remote_refs)!r} in {redact_repo(repo)}: "
+            f"{redact_repo(str(exc))}"
         ) from None
     rows: list[tuple[str, str]] = []
     for line in (result.stdout or "").strip().splitlines():
@@ -151,5 +158,14 @@ def _ls_remote_rows(
     return rows
 
 
-def _redact_repo(repo: str) -> str:
+def redact_repo(repo: str) -> str:
+    """Replace credentials embedded in a URL (``scheme://user:token@host``) with ``<redacted>``."""
+
     return re.sub(r"(://)[^/@\s]+@", r"\1<redacted>@", repo)
+
+
+# Deprecated aliases (since 2.4.0): these were private before they were published. They stay
+# plain module attributes, the very same functions, until consumers have moved to the public
+# names; use ``ls_remote_rows`` and ``redact_repo``.
+_ls_remote_rows = ls_remote_rows
+_redact_repo = redact_repo

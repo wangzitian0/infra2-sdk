@@ -3,7 +3,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from infra2_sdk.refs import classify_ref, resolve_image_ref, resolve_pr, resolve_to_sha
+from infra2_sdk import refs
+from infra2_sdk.refs import (
+    classify_ref,
+    ls_remote_rows,
+    redact_repo,
+    resolve_image_ref,
+    resolve_pr,
+    resolve_to_sha,
+)
 
 SHA = "1234567890abcdef1234567890abcdef12345678"
 TAG_OBJECT = "a" * 40
@@ -113,3 +121,63 @@ def test_command_runner_protocol() -> None:
     c = CustomRunner()
     assert isinstance(c, CommandRunner)
     assert resolve_to_sha("main", repo=REPO, runner=c) == "custom"
+
+
+def test_ls_remote_rows_is_public_and_passes_the_command_through() -> None:
+    seen: list[list[str]] = []
+
+    def run(command, **kwargs):
+        seen.append(command)
+        assert (kwargs["capture_output"], kwargs["text"], kwargs["check"]) == (True, True, True)
+        assert kwargs["timeout"] == 30
+        return SimpleNamespace(stdout=f"{SHA}\trefs/heads/main\n\nmalformed\n\trefs/x\n")
+
+    rows = ls_remote_rows(REPO, "refs/heads/main", "refs/tags/v1.0.0", runner=run)
+    assert rows == [(SHA, "refs/heads/main")]
+    assert seen == [["git", "ls-remote", REPO, "refs/heads/main", "refs/tags/v1.0.0"]]
+    assert ls_remote_rows(REPO, runner=lambda *a, **k: SimpleNamespace(stdout=None)) == []
+
+
+def test_ls_remote_rows_defaults_to_subprocess_run_like_the_other_resolvers() -> None:
+    assert ls_remote_rows.__kwdefaults__["runner"] is subprocess.run
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        OSError("git missing"),
+        subprocess.TimeoutExpired(["git", "ls-remote"], 30),
+        subprocess.CalledProcessError(
+            128, ["git", "ls-remote", "https://user:secret-token@github.com/o/r.git"]
+        ),
+    ],
+)
+def test_ls_remote_rows_wraps_failures_and_never_leaks_embedded_credentials(error) -> None:
+    authenticated = "https://user:secret-token@github.com/o/r.git"
+    with pytest.raises(ValueError, match="git ls-remote failed") as exc_info:
+        ls_remote_rows(authenticated, "refs/heads/main", runner=runner(error=error))
+    assert "secret-token" not in str(exc_info.value)
+    assert "<redacted>@github.com" in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("https://ghp_secret@github.com/x/y.git", "https://<redacted>@github.com/x/y.git"),
+        ("https://user:pass@github.com/x/y.git", "https://<redacted>@github.com/x/y.git"),
+        ("https://github.com/x/y.git", "https://github.com/x/y.git"),
+        ("git@github.com:x/y.git", "git@github.com:x/y.git"),
+        (
+            "fatal: https://a:b@h/x and http://c@h/y",
+            "fatal: https://<redacted>@h/x and http://<redacted>@h/y",
+        ),
+    ],
+)
+def test_redact_repo_is_public_and_strips_url_credentials(value: str, expected: str) -> None:
+    assert redact_repo(value) == expected
+
+
+def test_private_names_remain_as_deprecated_aliases_of_the_public_functions() -> None:
+    # infra2's libs/deploy/refs.py imports these two private spellings until it migrates.
+    assert refs._ls_remote_rows is refs.ls_remote_rows
+    assert refs._redact_repo is refs.redact_repo
