@@ -78,3 +78,13 @@ def test_an_explicit_catalog_still_warns_but_is_used_as_given() -> None:
     catalog = {"custom": {"image": "example/custom:1"}}
     with pytest.warns(DeprecationWarning):
         assert get_platform_image("custom", catalog=catalog) == "example/custom:1"
+
+
+def test_a_catalog_file_without_an_images_mapping_is_rejected(tmp_path) -> None:
+    bad = tmp_path / "platform_images.yaml"
+    bad.write_text("schema_version: 1\nimages: []\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="'images' must be a mapping"):
+        load_platform_images(bad)
+    good = tmp_path / "good.yaml"
+    good.write_text("images:\n  custom:\n    image: example/custom:1\n", encoding="utf-8")
+    assert load_platform_images(good) == {"custom": {"image": "example/custom:1"}}
