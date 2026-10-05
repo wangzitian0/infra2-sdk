@@ -3,11 +3,12 @@
   "dirty_inputs": [],
   "inputs": {
     "repo": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "root": "84316115f61a8fb2c8d4392cb405128b9ebd5829c705adfef5f251cdd84c1829"
+    "root": "a74d0d51f95a1cb230ca9a8fee57536ee90c506f09b7c6c49d29fbe59058687f",
+    "skills": "65fd1d27c697c8ba8ef5832929a5d5b013cc8ca97ebc096a28b0d5863fea5b6a"
   },
   "language": "en",
   "outputs": {
-    "AGENTS.md": "2bf9a27cd81696ce8874f972682e91b9a680e24faa07c759b244d4efe39b11b3",
+    "AGENTS.md": "d6cedd77807f76edaf1611b05925a926155bdd181791ea91f606a36b2ad1695b",
     "CLAUDE.md": "a54ff182c7e8acf56acfd6e4b9c3ff41e2c41a31c9b211b2deb9df75d9a478f9"
   },
   "profiles": [
@@ -15,7 +16,42 @@
     "delivery"
   ],
   "schema": 2,
-  "source_revision": "3bd08b82cdbc44268e4e3b7234836fd0cbe5275f",
+  "skills": {
+    "files": {
+      "skills/audit/SKILL.md": "50f721df45da65f421032c7b7bc3890a7a6a25380c34684c1366dc4cfc65d39a",
+      "skills/close/SKILL.md": "4dca0217d2aba9144489403bbec22d95f4ec8c0687d022062278414d9bc67021",
+      "skills/codegraph/SKILL.md": "846a10e24f95f87ebf4a6f8a2f9cb715476dcde4f3ac06de3bd29d0d4dda32fc",
+      "skills/prr/SKILL.md": "a07a5a27e4b4e4f72f99e18d40451aa33401b5a68d370eb808a7e343688a75b7",
+      "skills/recall/SKILL.md": "a5f59d1cc77831b3f848c04a426177585c1dac3e0bd8f43e2bd84a3715aeaa76",
+      "skills/smoke/SKILL.md": "88c20db19e4d7355fb3cd707515e4b312ff8e66b166fcbe9e82004af1d43da8f",
+      "skills/ssot/SKILL.md": "a6e04d3bd2dcc8a5a98e3a8b8010a99501932b3a22a5cc1532179dc8db52cac9",
+      "skills/start/SKILL.md": "d6db080443d3973c8ca9230e447e783b606ae203840c2ce2585eda5f9d5bdcf8"
+    },
+    "link_dirs": [
+      ".claude/skills",
+      ".agents/skills"
+    ],
+    "links": {
+      ".agents/skills/audit": "../../skills/audit",
+      ".agents/skills/close": "../../skills/close",
+      ".agents/skills/codegraph": "../../skills/codegraph",
+      ".agents/skills/prr": "../../skills/prr",
+      ".agents/skills/recall": "../../skills/recall",
+      ".agents/skills/smoke": "../../skills/smoke",
+      ".agents/skills/ssot": "../../skills/ssot",
+      ".agents/skills/start": "../../skills/start",
+      ".claude/skills/audit": "../../skills/audit",
+      ".claude/skills/close": "../../skills/close",
+      ".claude/skills/codegraph": "../../skills/codegraph",
+      ".claude/skills/prr": "../../skills/prr",
+      ".claude/skills/recall": "../../skills/recall",
+      ".claude/skills/smoke": "../../skills/smoke",
+      ".claude/skills/ssot": "../../skills/ssot",
+      ".claude/skills/start": "../../skills/start"
+    },
+    "root": "skills"
+  },
+  "source_revision": "42b59501ee21c72a57899a5202060c49acec6020",
   "target": {
     "remote": "github.com/wangzitian0/infra2-sdk",
     "repo": "infra2-sdk",
