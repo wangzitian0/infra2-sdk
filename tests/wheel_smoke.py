@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import importlib
 import json
 import os
 import subprocess
 import sys
+import warnings
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
@@ -18,12 +21,50 @@ def smoke_core() -> None:
     assert SNAPSHOT_MANIFEST_VERSION == 1
     assert environment_from_env({}).name == "local_dev"
     assert runtime_env_contract()["contract_version"] == 1
-    import infra2_sdk.images  # noqa: F401
     import infra2_sdk.rules.compose  # noqa: F401
+    import infra2_sdk.runtime.health  # noqa: F401
     import infra2_sdk.runtime.http  # noqa: F401
     import infra2_sdk.runtime.otel  # noqa: F401
     import infra2_sdk.runtime.postgres  # noqa: F401
     import infra2_sdk.runtime.s3  # noqa: F401
+
+    smoke_package_data()
+    smoke_health()
+
+
+def smoke_package_data() -> None:
+    """The wheel ships py.typed and the data files; the deprecated catalog is clean."""
+
+    from importlib.resources import files
+
+    package = files("infra2_sdk")
+    assert package.joinpath("py.typed").is_file(), "py.typed must ship in the wheel"
+    assert package.joinpath("data/stages.yaml").is_file()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        images = importlib.import_module("infra2_sdk.images")
+        catalog = images.load_platform_images()
+    assert any(issubclass(w.category, DeprecationWarning) for w in caught), (
+        "infra2_sdk.images must warn that it is deprecated"
+    )
+    assert sorted(catalog) == ["postgres", "redis", "vault_agent"], sorted(catalog)
+
+
+def smoke_health() -> None:
+    from infra2_sdk.runtime import DependencyStatus, ProbeResult, check_health
+
+    class Probe:
+        def __init__(self, name: str, status: DependencyStatus) -> None:
+            self.name = name
+            self.status = status
+
+        def probe(self) -> ProbeResult:
+            return ProbeResult(self.name, self.status)
+
+    code, body = asyncio.run(check_health([Probe("db", DependencyStatus.PRESENT)]))
+    assert (code, body["status"]) == (200, "healthy"), (code, body)
+    code, body = asyncio.run(check_health([Probe("db", DependencyStatus.ABSENT)]))
+    assert (code, body["status"]) == (503, "unhealthy"), (code, body)
 
 
 def smoke_s3() -> None:
@@ -137,7 +178,13 @@ def smoke_standalone_app() -> None:
 def smoke_otel() -> None:
     import opentelemetry.sdk.trace  # noqa: F401
 
-    from infra2_sdk.runtime.otel import OtelSettings, configure_telemetry
+    from infra2_sdk.runtime.otel import (
+        OtelSettings,
+        configure_telemetry,
+        extract_trace_context,
+        inject_trace_context,
+        signal_endpoint,
+    )
 
     settings = OtelSettings.from_env(
         {
@@ -147,6 +194,10 @@ def smoke_otel() -> None:
     )
     assert not settings.enabled
     assert configure_telemetry(settings).tracer_provider is None
+    assert signal_endpoint("http://collector:4318", "logs") == "http://collector:4318/v1/logs"
+    inbound = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+    carried = inject_trace_context({}, context=extract_trace_context({"traceparent": inbound}))
+    assert carried.get("traceparent") == inbound, carried
 
 
 def smoke_all() -> None:

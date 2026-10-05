@@ -39,6 +39,11 @@ from infra2_sdk.runtime.environment import (
     to_deploy_type,
     to_environment_tier,
 )
+from infra2_sdk.runtime.health import (
+    HealthStatus,
+    check_health,
+    health_response,
+)
 from infra2_sdk.runtime.identity import (
     RuntimeIdentity,
     runtime_identity_fingerprint,
@@ -64,6 +69,7 @@ __all__ = [
     "EnvironmentManifest",
     "EnvironmentTier",
     "EnvironmentValidation",
+    "HealthStatus",
     "ProbeResult",
     "RUNTIME_ENV_CONTRACT_VERSION",
     "RUNTIME_ENV_SPECS",
@@ -74,8 +80,10 @@ __all__ = [
     "ResolvedEnvValue",
     "UnknownEnvironmentPolicy",
     "assert_required_dependencies",
+    "check_health",
     "environment_manifest_from_model",
     "environment_from_env",
+    "health_response",
     "manifest_config_fingerprint",
     "normalize_deployment_environment",
     "resolve_env",

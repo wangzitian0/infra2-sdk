@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import warnings
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -189,9 +190,17 @@ class RuntimeIdentity:
         """Compatibility output; new consumers should use the standard-only method.
 
         .. deprecated:: 2.1.0
-            Use :meth:`to_standard_otel_resource_attributes` instead.
+            Use :meth:`to_standard_otel_resource_attributes` instead. Calling this emits a
+            ``DeprecationWarning`` since 2.4.0; it is removed in 3.0.0 (removing a public
+            method needs a major release). No repository calls it today.
         """
 
+        warnings.warn(
+            "RuntimeIdentity.to_otel_resource_attributes() is deprecated since 2.1.0 and will "
+            "be removed in 3.0.0; use to_standard_otel_resource_attributes()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         attributes = self.to_standard_otel_resource_attributes()
         optional = {
             "infra2.configuration.sha256": self.configuration_sha256,

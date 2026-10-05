@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Mapping
 from urllib.parse import unquote_to_bytes
@@ -87,3 +88,46 @@ def parse_otel_boolean(value: str | None, *, default: bool = False) -> bool:
     if normalized == "false":
         return False
     raise ValueError("OpenTelemetry boolean environment variables must be true or false")
+
+
+DEFAULT_TRACES_SAMPLER = "parentbased_always_on"
+TRACES_SAMPLER_NAMES = (
+    "always_on",
+    "always_off",
+    "traceidratio",
+    "parentbased_always_on",
+    "parentbased_always_off",
+    "parentbased_traceidratio",
+)
+_RATIO_SAMPLERS = frozenset({"traceidratio", "parentbased_traceidratio"})
+
+
+def parse_traces_sampler(name: str | None, arg: str | None = None) -> tuple[str, float | None]:
+    """Validate the standard ``OTEL_TRACES_SAMPLER`` / ``OTEL_TRACES_SAMPLER_ARG`` pair.
+
+    Returns the normalized sampler name and, for the ratio samplers, the sampling
+    probability (1.0 when no argument is given, as in the specification). An unset name
+    selects the specification default. The argument is ignored by samplers that take none.
+    Unknown names and unparsable or out-of-range ratios raise ``ValueError``.
+    """
+
+    normalized = (name or "").strip().lower()
+    if not normalized:
+        return DEFAULT_TRACES_SAMPLER, None
+    if normalized not in TRACES_SAMPLER_NAMES:
+        raise ValueError(
+            f"unsupported OTEL_TRACES_SAMPLER {normalized!r}; "
+            f"expected one of {', '.join(TRACES_SAMPLER_NAMES)}"
+        )
+    if normalized not in _RATIO_SAMPLERS:
+        return normalized, None
+    raw = (arg or "").strip()
+    if not raw:
+        return normalized, 1.0
+    try:
+        ratio = float(raw)
+    except ValueError:
+        raise ValueError("OTEL_TRACES_SAMPLER_ARG must be a number between 0 and 1") from None
+    if not math.isfinite(ratio) or not 0.0 <= ratio <= 1.0:
+        raise ValueError("OTEL_TRACES_SAMPLER_ARG must be a number between 0 and 1")
+    return normalized, ratio

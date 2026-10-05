@@ -25,7 +25,7 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v2.0.1"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v2.4.0"
 ```
 
 ## Modules
@@ -38,20 +38,25 @@ python -m pip install \
 | `infra2_sdk.dispatch` | Dispatch a `DeployRequest` to infra2's receiver workflow and correlate/verify the resulting run (watermark, ambiguity guard, log-content check) |
 | `infra2_sdk.deploy_health` | Poll a deployed app URL until the new version is live (HTTP-200 + optional status/version checks) |
 | `infra2_sdk.snapshot` | Versioned anonymized-snapshot manifest, residual-proof shape, and artifact digest verification |
-| `infra2_sdk.refs` | Pure Git ref classification and resolution |
+| `infra2_sdk.refs` | Git ref classification and resolution (`classify_ref`, `resolve_to_sha`, `resolve_image_ref`, `resolve_pr`), plus the public `ls_remote_rows` (`git ls-remote` rows through an injectable runner) and `redact_repo` (strip URL credentials) |
 | `infra2_sdk.release` | Tag → commit + image digest (`ReleaseIdentity`; digest passthrough, Bearer-challenge auth for any registry) and runtime identity verification against the release, never against a store |
 | `infra2_sdk.secrets` | Secret-store adapters (`VaultKvBackend` with `write_mode="patch"|"update"` / `replace` (prune a store document), `vault_token_status`, `OnePasswordBackend`, `EnvBackend`), the manifest-driven `SecretsResolver` (sync human values, generate runtime values, mirror, compose, reconcile), and the Vault Agent template/policy renderers |
 | `infra2_sdk.manifests` | The one `--write` / `--check` / `--validate-env` driver an application repository wraps around its settings models (side-table overrides, freshness, offline gate, boot-time validation) |
+| `infra2_sdk.routing` | Canonical domain and routing SSOT: `AppRoutePreference`, `RouteEndpoint`, `DokployDomainSpec`, `resolve_app_hostname`, `resolve_dokploy_domains`, `resolve_service_url` |
+| `infra2_sdk.transport` | Minimal injectable HTTP transport (`HttpTransport`, `HttpResponse`, `urllib_transport`) shared by the open-protocol adapters |
+| `infra2_sdk.rules.compose` | Pure compose-file rules (memory ceilings, bare `:latest` image refs); `python -m infra2_sdk.rules` is its CLI |
+| `infra2_sdk.images` | **Deprecated since 2.4.0, removed in 3.0.0.** A platform image catalog nothing consumes and that is not kept in sync with infra2's compose pins; importing it warns |
 | `infra2_sdk.capacity` | Capacity limits, readings, and levels; collectors for Cloudflare analytics and the 1Password rate-limit command |
 | `infra2_sdk.runtime.environment` | Canonical six-tier environment vocabulary and aliases |
 | `infra2_sdk.runtime.environ` | Versioned canonical env registry and conflict-safe resolution |
 | `infra2_sdk.runtime.config_schema` | JSON Schema 2020-12 and environment injection manifests |
 | `infra2_sdk.runtime.dependencies` | Dependency declaration and per-tier requirements |
 | `infra2_sdk.runtime.probes` | Sync/async probe contract, runner, and required-dependency gate |
+| `infra2_sdk.runtime.health` | Framework-agnostic readiness: `check_health` runs the probes and returns `(status_code, body)` with the `healthy`/`degraded`/`unhealthy` body; required dependency failure is 503 with reasons |
 | `infra2_sdk.runtime.s3` | Standard boto3 S3 client, probe, and safe primitives |
 | `infra2_sdk.runtime.postgres` | PostgreSQL DSN normalization and psycopg probe |
 | `infra2_sdk.runtime.http` | Standard httpx clients and HTTP retry semantics |
-| `infra2_sdk.runtime.otel` | Explicit OTLP trace/metric/log provider bootstrap |
+| `infra2_sdk.runtime.otel` | Explicit OTLP trace/metric/log provider bootstrap, env-configured sampler, W3C trace-context `extract_trace_context` / `inject_trace_context`, and the public `signal_endpoint` |
 | `infra2_sdk.runtime.identity` | OCI/config/release identity, `canonical_sha256`, and OTel resource coordinates |
 
 ## Runtime extras
@@ -61,10 +66,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v2.0.1'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v2.4.0'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v2.0.1'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v2.4.0'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -79,6 +84,51 @@ storage, database, HTTP, or telemetry abstractions:
 - OpenTelemetry configures OTLP/HTTP providers and W3C Trace Context propagation only when
   explicitly requested. OTLP endpoints require a valid HTTP(S) host, reject embedded credentials
   and fragments, and preserve query parameters when deriving per-signal paths.
+
+Telemetry and readiness in an application (`infra2-sdk[otel]`):
+
+```python
+from opentelemetry import trace
+
+from infra2_sdk.runtime.otel import (
+    OtelSettings,
+    configure_telemetry,
+    extract_trace_context,
+    inject_trace_context,
+)
+
+tracer = trace.get_tracer("my-app")
+
+# Reads OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_SERVICE_NAME, OTEL_RESOURCE_ATTRIBUTES,
+# OTEL_TRACES_SAMPLER and OTEL_TRACES_SAMPLER_ARG; no endpoint (or OTEL_SDK_DISABLED) means off.
+providers = configure_telemetry(OtelSettings.from_env(), set_global=True)
+
+# Inbound: continue the caller's trace. Outbound: propagate the active span.
+with tracer.start_as_current_span("handle", context=extract_trace_context(request.headers)):
+    outbound_headers = inject_trace_context({"Accept": "application/json"})
+
+providers.shutdown()  # on exit: flushes exporters and detaches the logging handler
+```
+
+`set_global=True` installs the providers as the OpenTelemetry globals (the API allows this once
+per process), adds `otelTraceID`/`otelSpanID` to log records, and attaches an OpenTelemetry
+logging handler bound to the SDK's `LoggerProvider` to the root logger (`capture_logs=False`
+opts out of the handler). Calling it again returns the active installation. Without
+`set_global`, nothing outside the returned providers changes. The sampler comes from the
+settings (standard `OTEL_TRACES_SAMPLER` names; `OTEL_TRACES_SAMPLER_ARG` for the ratio
+samplers); ambient `os.environ` is only read by `from_env()`.
+
+```python
+from infra2_sdk.runtime import check_health
+from infra2_sdk.runtime.http import HttpCheck
+
+# In a readiness handler (async, any framework); DEPENDENCIES is your DependencyManifest and
+# `environment` comes from environment_from_env(). A required dependency down is 503 with the
+# reasons; an optional one down is 200 "degraded"; a raising probe is reported, never a 200.
+status_code, body = await check_health(
+    [HttpCheck("catalog", url)], manifest=DEPENDENCIES, tier=environment.tier
+)
+```
 
 `run_probes()` bounds both async checks and the caller-visible lifetime of sync checks. Timed-out
 sync work runs only in a daemon thread and cannot delay CLI shutdown, but Python cannot cancel its
@@ -122,7 +172,7 @@ Install the published wheel in a fresh Python 3.11+ environment:
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install \
-  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v2.0.1/infra2_sdk-2.0.1-py3-none-any.whl'
+  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v2.4.0/infra2_sdk-2.4.0-py3-none-any.whl'
 ```
 
 For a local connectivity exercise, start this server in another terminal:
@@ -160,7 +210,7 @@ aliases, and sensitivity. Canonical names prefer existing open ecosystem convent
 | Runtime | `ENVIRONMENT`, `OTEL_SERVICE_NAME`, `SERVICE_VERSION`, `GIT_COMMIT_SHA`, `INSTANCE_ID` | `ENV`, `APP_ENV`, `SERVICE_NAME`, `IMAGE_TAG` |
 | PostgreSQL | `DATABASE_URL`, `DATABASE_CONNECT_TIMEOUT_SECONDS` | — |
 | S3 | `OBJECT_STORAGE_PROTOCOL=s3`, `S3_BUCKET`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, standard AWS credentials | `OBJECT_STORAGE_DRIVER`, `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` |
-| Telemetry | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_SDK_DISABLED` | — |
+| Telemetry | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_SDK_DISABLED`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | — |
 
 Canonical and alias values may coexist only when equal. Conflicts fail before clients are
 created, and secret values never appear in errors. Missing OTLP configuration disables
@@ -232,6 +282,13 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   - `FailureDomain.DOKPLOY_WORKER_OR_DEPLOYMENT_RECORD` and `FailureDomain.DOKPLOY_COMPOSE_SOURCE_TYPE`;
   - `PipelineEnvironment` and `to_pipeline_environment` (all delivery results and runtime functions now canonicalize to `EnvironmentTier`);
   - Legacy `configuration_fingerprint` aliases across `runtime` modules (use `manifest_config_fingerprint` for manifest contracts and `runtime_identity_fingerprint` for runtime identity).
+- Since 2.4.0 the package ships a `py.typed` marker, so type checkers use its annotations.
+- Deprecated in 2.4.0, removed in 3.0.0: the `infra2_sdk.images` module and
+  `RuntimeIdentity.to_otel_resource_attributes()` (both now emit a `DeprecationWarning`).
+  Former private names stay as plain aliases until consumers have moved to the public ones:
+  `runtime.otel._signal_endpoint` is `signal_endpoint`, `refs._ls_remote_rows` is
+  `ls_remote_rows`, `refs._redact_repo` is `redact_repo`. The private module
+  `infra2_sdk._transport` is gone; import `infra2_sdk.transport`.
 - `to_environment_tier` and `to_deploy_type` provide canonical bridging mappings across `EnvironmentTier` and `DeployType`.
 - `CommandRunner` protocol is exported from `infra2_sdk.refs` for subprocess runner injection.
 - `OnePasswordCapacityReport` provides structured access to limits and usage while preserving tuple unpacking.
