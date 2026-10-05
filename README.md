@@ -91,7 +91,10 @@ Telemetry and readiness in an application (`infra2-sdk[otel]`):
 from opentelemetry import trace
 
 from infra2_sdk.runtime.otel import (
-    OtelSettings, configure_telemetry, extract_trace_context, inject_trace_context,
+    OtelSettings,
+    configure_telemetry,
+    extract_trace_context,
+    inject_trace_context,
 )
 
 tracer = trace.get_tracer("my-app")
