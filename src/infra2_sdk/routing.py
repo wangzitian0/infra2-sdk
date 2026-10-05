@@ -7,9 +7,8 @@ import warnings
 from dataclasses import dataclass
 from typing import Any
 
-from infra2_sdk.runtime.environment import EnvironmentTier, to_environment_tier
+from infra2_sdk.runtime.environment import CANARY_SLOT, EnvironmentTier, to_environment_tier
 
-CANARY_SLOT = "canary-preview"
 LEGACY_CANARY_PR = 999
 DEFAULT_BASE_DOMAIN = "zitian.party"
 

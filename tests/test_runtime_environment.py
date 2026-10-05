@@ -149,3 +149,20 @@ def test_to_deploy_type_conversions() -> None:
         to_deploy_type(EnvironmentTier.LOCAL_DEV)
     with pytest.raises(ValueError, match="cannot map non-deployable tier"):
         to_deploy_type(EnvironmentTier.GITHUB_CI)
+
+
+def test_the_canary_slot_is_a_preview_tier_and_routing_shares_the_definition() -> None:
+    """#54: the SDK names the canary slot (``routing.CANARY_SLOT``) and infra2 issues it as that
+    slot's ``deployment.environment.name``; resolving it must give the preview tier, not
+    ``unknown environment`` — and routing must re-export the one definition, not a copy."""
+    from infra2_sdk import routing
+    from infra2_sdk.runtime import environment
+
+    assert routing.CANARY_SLOT is environment.CANARY_SLOT == "canary-preview"
+    assert to_environment_tier(environment.CANARY_SLOT) is EnvironmentTier.PREVIEW
+    assert to_environment_tier(environment.CANARY_SLOT.upper()) is EnvironmentTier.PREVIEW
+    normalize = environment.normalize_deployment_environment
+    assert normalize(environment.CANARY_SLOT, EnvironmentTier.PREVIEW) == "canary-preview"
+    # A preview display under a non-preview tier still disagrees (fail-closed unchanged).
+    with pytest.raises(ValueError, match="disagrees"):
+        normalize(environment.CANARY_SLOT, EnvironmentTier.STAGING)

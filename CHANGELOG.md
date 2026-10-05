@@ -5,6 +5,18 @@ changes are minor releases, removing or changing a public symbol is a major rele
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 2.4.1 - 2026-10-05
+
+### Fixed
+
+- `runtime.environment.to_environment_tier` now resolves the SDK's own canary slot name
+  (`"canary-preview"`) to `EnvironmentTier.PREVIEW` instead of raising `unknown environment`.
+  infra2 issues that name as the canary slot's `deployment.environment.name`, so every consumer
+  that derives the tier from the issued identity (for example `OtelSettings.from_env`) failed on
+  the canary slot ([#54](https://github.com/wangzitian0/infra2-sdk/issues/54)).
+- `CANARY_SLOT` is now defined once in `runtime.environment`; `routing.CANARY_SLOT` (and the
+  top-level export) re-exports the same object. No public name changed.
+
 ## 2.4.0 - 2026-10-05
 
 Completes the observability base package, publishes the private helpers consumers imported,

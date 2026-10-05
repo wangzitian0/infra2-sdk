@@ -45,6 +45,11 @@ PLATFORM_OWNED_TIERS = frozenset(
     }
 )
 
+#: The canary deployment slot, and therefore that slot's ``deployment.environment.name``.
+#: Defined here, not in ``routing`` (which re-exports it), because ``routing`` imports this
+#: module: one definition, and the tier vocabulary below recognises it as a preview (#54).
+CANARY_SLOT = "canary-preview"
+
 _LOCAL_DEV_ALIASES = frozenset({"dev", "development", "local", "local_dev"})
 _LOCAL_TEST_ALIASES = frozenset({"test", "testing", "ci", "local_ci", "local_test"})
 _PRODUCTION_ALIASES = frozenset({"prod", "production"})
@@ -91,7 +96,11 @@ def to_environment_tier(
             return EnvironmentTier.GITHUB_CI if github_actions else EnvironmentTier.LOCAL_TEST
         if normalized == EnvironmentTier.GITHUB_CI.value:
             return EnvironmentTier.GITHUB_CI
-        if normalized == EnvironmentTier.PREVIEW.value or _PREVIEW_ALIAS_RE.match(cleaned):
+        if (
+            normalized == EnvironmentTier.PREVIEW.value
+            or cleaned == CANARY_SLOT
+            or _PREVIEW_ALIAS_RE.match(cleaned)
+        ):
             return EnvironmentTier.PREVIEW
         if normalized == EnvironmentTier.STAGING.value:
             return EnvironmentTier.STAGING
