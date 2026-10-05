@@ -181,3 +181,37 @@ def test_version_mismatch_streak_resets_when_the_reported_version_changes() -> N
         max_attempts=10,
     )
     assert result.attempts == 3
+
+
+def test_deploy_health_main_cli_success(monkeypatch, capsys) -> None:
+    from infra2_sdk.deploy_health import main
+
+    monkeypatch.setattr(
+        "infra2_sdk.deploy_health.default_http_get",
+        lambda timeout: lambda url: (200, json.dumps({"status": "ok", "version": "v1.0.0"})),
+    )
+    rc = main(
+        [
+            "https://example.test/health",
+            "--expected-version",
+            "v1.0.0",
+            "--require-status",
+            "ok",
+        ]
+    )
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "[OK] Health check passed" in captured.out
+
+
+def test_deploy_health_main_cli_failure(monkeypatch, capsys) -> None:
+    from infra2_sdk.deploy_health import main
+
+    monkeypatch.setattr(
+        "infra2_sdk.deploy_health.default_http_get",
+        lambda timeout: lambda url: (500, "error"),
+    )
+    rc = main(["https://example.test/health", "--max-attempts", "2", "--interval", "0.01"])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "[FAIL] Health check failed" in captured.err

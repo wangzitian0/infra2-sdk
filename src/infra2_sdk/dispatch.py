@@ -49,14 +49,18 @@ same optional-dependency convention.
 
 from __future__ import annotations
 
+import argparse
+import json
+import os
+import sys
 import time
 import zipfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Any
 
-from infra2_sdk.deploy import DeployRequest
+from infra2_sdk.deploy import DeployRequest, validate_wire_shape
 
 INFRA_REPOSITORY = "wangzitian0/infra2"
 RECEIVER_WORKFLOW_FILE = "app-deploy-request.yml"
@@ -243,3 +247,95 @@ def _run_id(run: Mapping[str, object]) -> int:
     if isinstance(run_id, bool) or not isinstance(run_id, int) or run_id <= 0:
         raise RuntimeError("GitHub workflow run id must be a positive integer")
     return run_id
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="python -m infra2_sdk.dispatch",
+        description="Dispatch a DeployRequest to infra2 receiver and verify execution.",
+    )
+    parser.add_argument(
+        "--request",
+        "-r",
+        default="",
+        help="Path to request JSON file, inline JSON, or '-' for standard input",
+    )
+    parser.add_argument(
+        "--token-env",
+        default="INFRA2_PAT",
+        help="Environment variable containing GitHub token (default: INFRA2_PAT)",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=1800,
+        help="Timeout in seconds to wait for receiver run (default: 1800)",
+    )
+    parser.add_argument(
+        "--poll-interval",
+        type=int,
+        default=5,
+        help="Seconds between status checks (default: 5)",
+    )
+    parser.add_argument(
+        "--user-agent",
+        default="infra2-sdk-dispatch",
+        help="HTTP User-Agent header (default: infra2-sdk-dispatch)",
+    )
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entrypoint to dispatch a DeployRequest and wait for completion."""
+    parser = _parser()
+    args = parser.parse_args(argv)
+
+    token = os.getenv(args.token_env, "")
+    if not token:
+        print(f"error: {args.token_env} environment variable is required", file=sys.stderr)
+        return 1
+    if args.timeout <= 0 or args.poll_interval <= 0:
+        print("error: timeout and poll interval must be positive", file=sys.stderr)
+        return 1
+
+    try:
+        raw_text = ""
+        if not args.request or args.request == "-":
+            raw_text = sys.stdin.read()
+        elif os.path.exists(args.request):
+            with open(args.request, encoding="utf-8") as f:
+                raw_text = f.read()
+        else:
+            raw_text = args.request
+
+        raw = json.loads(raw_text)
+        if not isinstance(raw, Mapping):
+            raise ValueError("deploy request must be a JSON object")
+
+        validate_wire_shape(raw)
+        request = DeployRequest.from_dict(raw)
+
+        api, fetch_logs = github_api_client(
+            token=token,
+            user_agent=args.user_agent,
+            timeout=30.0,
+        )
+
+        max_attempts = max(1, (args.timeout + args.poll_interval - 1) // args.poll_interval)
+        result = dispatch_and_wait(
+            request,
+            api=api,
+            fetch_logs=fetch_logs,
+            poll_interval=float(args.poll_interval),
+            max_attempts=max_attempts,
+        )
+        print(json.dumps({"receiver_run_id": result.run_id, "receiver_run_url": result.url}))
+        return 0
+
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

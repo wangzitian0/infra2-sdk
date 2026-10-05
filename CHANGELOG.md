@@ -5,6 +5,19 @@ changes are minor releases, removing or changing a public symbol is a major rele
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 2.5.0 - 2026-10-05
+
+### Added
+
+- `deploy.verify_production_evidence`: Verifies production deploy requests against GitHub API actions and pull requests.
+- `deploy.derive_release_evidence`: Derives release evidence from GitHub workflow runs and merged pull requests.
+- `deploy.canonical_json`: Serializes `DeployRequest` to deterministic canonical wire JSON.
+- `deploy.fetch_production_evidence_policy`: Fetches the application production evidence contract from GitHub.
+- CLI entrypoints for deploy protocol contracts and operations:
+  - `python -m infra2_sdk.deploy`: Build requests, derive evidence, and verify production evidence.
+  - `python -m infra2_sdk.dispatch`: Dispatch requests to infra2 receiver and wait for completion.
+  - `python -m infra2_sdk.deploy_health`: Poll HTTP health endpoints until healthy with version checks.
+
 ## 2.4.1 - 2026-10-05
 
 ### Fixed

@@ -2,7 +2,13 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
-from infra2_sdk.deploy import build_deploy_request
+from infra2_sdk.deploy import (
+    build_deploy_request,
+    canonical_json,
+    derive_release_evidence,
+    fetch_production_evidence_policy,
+    verify_production_evidence,
+)
 from infra2_sdk.routing import (
     CANARY_SLOT,
     DEFAULT_BASE_DOMAIN,
@@ -36,10 +42,14 @@ __all__ = [
     "RouteEndpoint",
     "__version__",
     "build_deploy_request",
+    "canonical_json",
+    "derive_release_evidence",
+    "fetch_production_evidence_policy",
     "images",
     "resolve_app_hostname",
     "resolve_dokploy_domains",
     "resolve_service_url",
     "routing",
     "urllib_transport",
+    "verify_production_evidence",
 ]

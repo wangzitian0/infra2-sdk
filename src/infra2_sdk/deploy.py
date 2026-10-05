@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+import argparse
+import base64
+import binascii
+import json
+import os
 import re
-from collections.abc import Mapping
+import sys
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, fields
 from enum import StrEnum
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 from infra2_sdk._wire import (
     _string,
@@ -378,3 +387,553 @@ def build_deploy_request(
         source_sha=source_sha,
         evidence=evidence,
     )
+
+
+def canonical_json(request: DeployRequest) -> str:
+    """Return stable wire JSON for a deployment request."""
+    return (
+        json.dumps(
+            request.to_dict(),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
+        + "\n"
+    )
+
+
+def default_github_json_fetcher(
+    *,
+    token: str = "",
+    token_env: str = "GITHUB_TOKEN",
+    user_agent: str = "infra2-sdk",
+    timeout: float = 10.0,
+) -> Callable[[str], Any]:
+    """Return a GitHub API JSON fetcher using the standard library."""
+    auth_token = token or os.getenv(token_env, "")
+
+    def fetch(path: str) -> Any:
+        url = path if path.startswith("https://") else f"https://api.github.com{path}"
+        req = Request(url)
+        req.add_header("Accept", "application/vnd.github+json")
+        req.add_header("User-Agent", user_agent)
+        req.add_header("X-GitHub-Api-Version", "2022-11-28")
+        if auth_token:
+            req.add_header("Authorization", f"Bearer {auth_token}")
+        try:
+            with urlopen(req, timeout=timeout) as response:
+                content = response.read()
+                return json.loads(content)
+        except HTTPError as exc:
+            raise ValueError(
+                f"GitHub evidence request failed for {path}: HTTP {exc.code}"
+            ) from None
+        except (URLError, json.JSONDecodeError) as exc:
+            raise ValueError(
+                f"GitHub evidence request failed for {path}: {type(exc).__name__}"
+            ) from None
+
+    return fetch
+
+
+def _require_github_path(url: str, *, prefix: str, field: str) -> None:
+    parsed = urlparse(url)
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != "github.com"
+        or not parsed.path.startswith(prefix)
+    ):
+        raise ValueError(f"evidence.{field} must point to {prefix} on github.com")
+
+
+def _github_evidence_number(
+    url: str,
+    *,
+    repository: str,
+    resource: str,
+    field: str,
+) -> str:
+    parsed = urlparse(url)
+    prefix = f"/{repository}/{resource}/"
+    number = parsed.path.removeprefix(prefix)
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != "github.com"
+        or not parsed.path.startswith(prefix)
+        or not number.isdigit()
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError(f"evidence.{field} must be a canonical github.com {resource} URL")
+    return number
+
+
+def _validate_evidence_urls(request: DeployRequest) -> None:
+    repository_path = f"/{request.source_repository}/"
+    _require_github_path(
+        request.evidence.source_run_url,
+        prefix=f"{repository_path}actions/runs/",
+        field="source_run_url",
+    )
+    if request.deploy_type == DeployType.PRODUCTION:
+        _require_github_path(
+            request.evidence.staging_run_url,
+            prefix=f"{repository_path}actions/runs/",
+            field="staging_run_url",
+        )
+        _require_github_path(
+            request.evidence.reviewed_change_url,
+            prefix=f"{repository_path}pull/",
+            field="reviewed_change_url",
+        )
+
+
+def _verify_run(
+    run: Mapping[str, object],
+    *,
+    label: str,
+    repository: str,
+    url: str,
+    sha: str | None,
+    event: str,
+    workflow_path: str,
+    display_title: str,
+) -> None:
+    remote_repository = run.get("repository")
+    if (
+        not isinstance(remote_repository, Mapping)
+        or remote_repository.get("full_name") != repository
+    ):
+        raise ValueError(f"{label} repository does not match source_repository")
+    if run.get("html_url") != url:
+        raise ValueError(f"{label} html_url does not match submitted evidence")
+    if run.get("status") != "completed" or run.get("conclusion") != "success":
+        raise ValueError(f"{label} must be completed successfully")
+    if sha is not None and run.get("head_sha") != sha:
+        raise ValueError(f"{label} head_sha does not match source_sha")
+    if run.get("path") != workflow_path:
+        raise ValueError(f"{label} workflow is not approved for Production evidence")
+    if run.get("event") != event:
+        raise ValueError(f"{label} event does not match the evidence policy")
+    if run.get("display_title") != display_title:
+        raise ValueError(f"{label} title does not match the requested version_ref")
+
+
+def _verify_reviewed_pull(
+    pull: Mapping[str, object],
+    *,
+    reviews: Sequence[object] | None = None,
+    repository: str,
+    url: str,
+    sha: str,
+    base_ref: str,
+) -> None:
+    base = pull.get("base")
+    remote_repository = base.get("repo") if isinstance(base, Mapping) else None
+    if (
+        not isinstance(remote_repository, Mapping)
+        or remote_repository.get("full_name") != repository
+    ):
+        raise ValueError("reviewed pull request repository does not match source_repository")
+    if pull.get("html_url") != url:
+        raise ValueError("reviewed pull request html_url does not match submitted evidence")
+    if pull.get("state") != "closed" or not pull.get("merged_at"):
+        raise ValueError("reviewed pull request must be merged")
+    if not isinstance(base, Mapping) or base.get("ref") != base_ref:
+        raise ValueError("reviewed pull request base branch is not approved")
+    if pull.get("merge_commit_sha") != sha:
+        raise ValueError("reviewed pull request merge_commit_sha does not match source_sha")
+
+    if reviews is not None:
+        user = pull.get("user")
+        pull_author = user.get("login") if isinstance(user, Mapping) else None
+
+        latest_states: dict[str, str] = {}
+        for r in reviews:
+            if not isinstance(r, Mapping):
+                continue
+            r_user = r.get("user")
+            reviewer = r_user.get("login") if isinstance(r_user, Mapping) else None
+            state = r.get("state")
+            if reviewer and isinstance(state, str):
+                latest_states[reviewer] = state
+
+        if pull_author:
+            latest_states.pop(pull_author, None)
+
+        if any(s == "CHANGES_REQUESTED" for s in latest_states.values()):
+            raise ValueError("reviewed pull request has pending CHANGES_REQUESTED")
+
+
+def fetch_production_evidence_policy(
+    request: DeployRequest,
+    *,
+    fetch_json: Callable[[str], Any] | None = None,
+) -> ProductionEvidencePolicy:
+    """Fetch and validate the production evidence policy for a request."""
+    where = f"{request.source_repository}:{PRODUCTION_EVIDENCE_POLICY_PATH}@{request.source_sha}"
+    fetch = fetch_json or default_github_json_fetcher()
+    try:
+        payload = fetch(
+            f"/repos/{request.source_repository}/contents/"
+            f"{PRODUCTION_EVIDENCE_POLICY_PATH}?ref={request.source_sha}"
+        )
+    except Exception as exc:
+        raise ValueError(
+            f"service {request.service!r} has no Production evidence contract: "
+            f"fetching {where} failed ({exc}). Production releases require the "
+            "app repo to declare its own contract file (infra2#576); without one "
+            "the app is staging-only."
+        ) from exc
+    if not isinstance(payload, Mapping):
+        raise ValueError(f"{where} must contain a JSON object")
+    content = payload.get("content")
+    if not isinstance(content, str):
+        raise ValueError(f"{where} did not return file content")
+    try:
+        raw = json.loads(base64.b64decode(content, validate=False))
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError(f"{where} is not valid JSON: {exc}") from exc
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"{where} must contain a JSON object")
+    try:
+        policy = ProductionEvidencePolicy.from_dict(raw)
+    except ValueError as exc:
+        raise ValueError(f"{where} is not a valid evidence contract: {exc}") from exc
+    if policy.service != request.service:
+        raise ValueError(f"{where} declares service {policy.service!r}, not {request.service!r}")
+    return policy
+
+
+def verify_production_evidence(
+    request: DeployRequest,
+    policy: ProductionEvidencePolicy | None = None,
+    *,
+    fetch_json: Callable[[str], Any] | None = None,
+) -> None:
+    """Verify production evidence runs and pull requests against GitHub API."""
+    fetch = fetch_json or default_github_json_fetcher()
+    _validate_evidence_urls(request)
+    source_run_id = _github_evidence_number(
+        request.evidence.source_run_url,
+        repository=request.source_repository,
+        resource="actions/runs",
+        field="source_run_url",
+    )
+    if source_run_id != request.evidence.source_run_id:
+        raise ValueError("evidence.source_run_id must match source_run_url")
+    staging_run_id = _github_evidence_number(
+        request.evidence.staging_run_url,
+        repository=request.source_repository,
+        resource="actions/runs",
+        field="staging_run_url",
+    )
+    pull_number = _github_evidence_number(
+        request.evidence.reviewed_change_url,
+        repository=request.source_repository,
+        resource="pull",
+        field="reviewed_change_url",
+    )
+    effective_policy = policy or fetch_production_evidence_policy(request, fetch_json=fetch)
+
+    source_run = fetch(f"/repos/{request.source_repository}/actions/runs/{source_run_id}")
+    staging_run = fetch(f"/repos/{request.source_repository}/actions/runs/{staging_run_id}")
+    reviewed_pull = fetch(f"/repos/{request.source_repository}/pulls/{pull_number}")
+    reviews = fetch(f"/repos/{request.source_repository}/pulls/{pull_number}/reviews")
+    if not isinstance(reviews, Sequence) or isinstance(reviews, (str, bytes, Mapping)):
+        raise ValueError(
+            f"GitHub evidence response for "
+            f"/repos/{request.source_repository}/pulls/{pull_number}/reviews must be a list"
+        )
+    _verify_run(
+        source_run,
+        label="source run",
+        repository=request.source_repository,
+        url=request.evidence.source_run_url,
+        sha=request.source_sha if effective_policy.source.require_head_sha else None,
+        event=effective_policy.source.event,
+        workflow_path=effective_policy.source.workflow_path,
+        display_title=effective_policy.source.expected_display_title(request.version_ref),
+    )
+    _verify_run(
+        staging_run,
+        label="staging run",
+        repository=request.source_repository,
+        url=request.evidence.staging_run_url,
+        sha=request.source_sha if effective_policy.staging.require_head_sha else None,
+        event=effective_policy.staging.event,
+        workflow_path=effective_policy.staging.workflow_path,
+        display_title=effective_policy.staging.expected_display_title(request.version_ref),
+    )
+    _verify_reviewed_pull(
+        reviewed_pull,
+        reviews=reviews,
+        repository=request.source_repository,
+        url=request.evidence.reviewed_change_url,
+        sha=request.source_sha,
+        base_ref=effective_policy.review_base_ref,
+    )
+
+
+def derive_release_evidence(
+    repository: str,
+    version_ref: str,
+    deploy_type: str | DeployType,
+    *,
+    tag_sha: str,
+    policy: ProductionEvidencePolicy | None = None,
+    fetch_json: Callable[[str], Any] | None = None,
+    source_run_url: str = "",
+    source_run_id: str = "",
+    staging_run_url: str = "",
+    reviewed_change_url: str = "",
+) -> DeployEvidence:
+    """Derive release evidence from repository GitHub runs and pull requests."""
+    fetch = fetch_json or default_github_json_fetcher()
+    dt = DeployType(deploy_type) if isinstance(deploy_type, str) else deploy_type
+
+    effective_policy = policy
+    if effective_policy is None and dt == DeployType.PRODUCTION:
+        try:
+            policy_payload = fetch(
+                f"/repos/{repository}/contents/{PRODUCTION_EVIDENCE_POLICY_PATH}?ref={tag_sha}"
+            )
+            if isinstance(policy_payload, Mapping):
+                content = policy_payload.get("content")
+                if isinstance(content, str):
+                    raw_policy = json.loads(base64.b64decode(content, validate=False))
+                    if isinstance(raw_policy, Mapping):
+                        effective_policy = ProductionEvidencePolicy.from_dict(raw_policy)
+        except Exception:
+            pass
+
+    derived_source_url = source_run_url
+    derived_source_id = source_run_id
+    if not derived_source_url or not derived_source_id:
+        runs_payload = fetch(f"/repos/{repository}/actions/runs?event=push&branch={version_ref}")
+        workflow_runs = (
+            runs_payload.get("workflow_runs", []) if isinstance(runs_payload, Mapping) else []
+        )
+        candidates = []
+        for run in workflow_runs:
+            if not isinstance(run, Mapping):
+                continue
+            if run.get("head_sha") != tag_sha or run.get("conclusion") != "success":
+                continue
+            if effective_policy:
+                if run.get("path") != effective_policy.source.workflow_path:
+                    continue
+                expected_title = effective_policy.source.expected_display_title(version_ref)
+                actual_title = run.get("display_title") or run.get("name") or ""
+                if actual_title != expected_title:
+                    continue
+            candidates.append(run)
+        if not candidates and not derived_source_url:
+            raise ValueError(
+                f"could not derive source run for {repository}@{version_ref} at {tag_sha}"
+            )
+        if candidates:
+            chosen = candidates[0]
+            if not derived_source_id:
+                derived_source_id = str(chosen.get("id"))
+            if not derived_source_url:
+                derived_source_url = str(chosen.get("html_url"))
+
+    if derived_source_url and not derived_source_id:
+        derived_source_id = _github_evidence_number(
+            derived_source_url,
+            repository=repository,
+            resource="actions/runs",
+            field="source_run_url",
+        )
+
+    derived_staging_url = staging_run_url
+    derived_reviewed_url = reviewed_change_url
+
+    if dt == DeployType.PRODUCTION:
+        if not derived_reviewed_url:
+            pulls_payload = fetch(f"/repos/{repository}/commits/{tag_sha}/pulls")
+            pulls = pulls_payload if isinstance(pulls_payload, Sequence) else []
+            base_ref = effective_policy.review_base_ref if effective_policy else "main"
+            candidates = []
+            for p in pulls:
+                if not isinstance(p, Mapping):
+                    continue
+                if not p.get("merged_at") or p.get("merge_commit_sha") != tag_sha:
+                    continue
+                base = p.get("base")
+                if not isinstance(base, Mapping) or base.get("ref") != base_ref:
+                    continue
+                candidates.append(p)
+            if not candidates:
+                raise ValueError(f"could not derive reviewed PR for {repository} commit {tag_sha}")
+            chosen_pr = candidates[0]
+            derived_reviewed_url = f"https://github.com/{repository}/pull/{chosen_pr.get('number')}"
+
+        if not derived_staging_url:
+            staging_payload = fetch(f"/repos/{repository}/actions/runs?event=workflow_dispatch")
+            staging_runs = (
+                staging_payload.get("workflow_runs", [])
+                if isinstance(staging_payload, Mapping)
+                else []
+            )
+            candidates = []
+            for run in staging_runs:
+                if not isinstance(run, Mapping):
+                    continue
+                if run.get("conclusion") != "success":
+                    continue
+                if effective_policy:
+                    if run.get("path") != effective_policy.staging.workflow_path:
+                        continue
+                    expected_title = effective_policy.staging.expected_display_title(version_ref)
+                    actual_title = run.get("display_title") or run.get("name") or ""
+                    if actual_title != expected_title:
+                        continue
+                else:
+                    title = str(run.get("display_title") or run.get("name") or "")
+                    if version_ref not in title and f"Deploy staging {version_ref}" not in title:
+                        continue
+                candidates.append(run)
+            if not candidates:
+                raise ValueError(
+                    f"could not derive staging run for {repository} version {version_ref}"
+                )
+            chosen_staging = candidates[0]
+            derived_staging_url = (
+                f"https://github.com/{repository}/actions/runs/{chosen_staging.get('id')}"
+            )
+
+    return DeployEvidence(
+        source_run_url=derived_source_url,
+        source_run_id=derived_source_id,
+        staging_run_url=derived_staging_url,
+        reviewed_change_url=derived_reviewed_url,
+    )
+
+
+def _build_request_parser(subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser("build-request", help="Build a validated DeployRequest")
+    parser.add_argument("--service", required=True)
+    parser.add_argument("--source-repo", required=True)
+    parser.add_argument("--source-sha", required=True)
+    parser.add_argument("--version-ref", required=True)
+    parser.add_argument("--source-run-url", required=True)
+    parser.add_argument("--source-run-id", default="")
+    parser.add_argument("--type", "--deploy-type", dest="deploy_type", default="staging")
+    parser.add_argument("--operation", default="deploy")
+    parser.add_argument("--staging-run-url", default="")
+    parser.add_argument("--reviewed-change-url", default="")
+    parser.add_argument("--request-id", default=None)
+    parser.add_argument("--output", "-o", default="")
+
+
+def _derive_evidence_parser(subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser("derive-evidence", help="Derive evidence URLs from GitHub")
+    parser.add_argument("--repo", required=True)
+    parser.add_argument("--version-ref", required=True)
+    parser.add_argument("--type", "--deploy-type", dest="deploy_type", required=True)
+    parser.add_argument("--tag-sha", required=True)
+    parser.add_argument("--token-env", default="GITHUB_TOKEN")
+    parser.add_argument("--token", default="")
+    parser.add_argument("--source-run-url", default="")
+    parser.add_argument("--source-run-id", default="")
+    parser.add_argument("--staging-run-url", default="")
+    parser.add_argument("--reviewed-change-url", default="")
+    parser.add_argument("--output", "-o", default="")
+
+
+def _verify_evidence_parser(subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser("verify-evidence", help="Verify production evidence")
+    parser.add_argument("--request", required=True, help="Path to request JSON or inline JSON")
+    parser.add_argument("--token-env", default="GITHUB_TOKEN")
+    parser.add_argument("--token", default="")
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entrypoint for deploy protocol contracts and derivation."""
+    parser = argparse.ArgumentParser(prog="python -m infra2_sdk.deploy", description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    _build_request_parser(subparsers)
+    _derive_evidence_parser(subparsers)
+    _verify_evidence_parser(subparsers)
+
+    args = parser.parse_args(argv)
+
+    try:
+        if args.command == "build-request":
+            request = build_deploy_request(
+                service=args.service,
+                deploy_type=args.deploy_type,
+                version_ref=args.version_ref,
+                source_repository=args.source_repo,
+                source_sha=args.source_sha,
+                source_run_url=args.source_run_url,
+                operation=args.operation,
+                request_id=args.request_id,
+                source_run_id=args.source_run_id,
+                staging_run_url=args.staging_run_url,
+                reviewed_change_url=args.reviewed_change_url,
+            )
+            raw = request.to_dict()
+            validate_wire_shape(raw)
+            result = canonical_json(request)
+            if args.output:
+                with open(args.output, "w", encoding="utf-8") as f:
+                    f.write(result)
+            else:
+                sys.stdout.write(result)
+            return 0
+
+        if args.command == "derive-evidence":
+            fetcher = default_github_json_fetcher(
+                token=args.token,
+                token_env=args.token_env,
+            )
+            evidence = derive_release_evidence(
+                repository=args.repo,
+                version_ref=args.version_ref,
+                deploy_type=args.deploy_type,
+                tag_sha=args.tag_sha,
+                fetch_json=fetcher,
+                source_run_url=args.source_run_url,
+                source_run_id=args.source_run_id,
+                staging_run_url=args.staging_run_url,
+                reviewed_change_url=args.reviewed_change_url,
+            )
+            result = json.dumps(asdict(evidence), indent=2) + "\n"
+            if args.output:
+                with open(args.output, "w", encoding="utf-8") as f:
+                    f.write(result)
+            else:
+                sys.stdout.write(result)
+            return 0
+
+        if args.command == "verify-evidence":
+            if os.path.exists(args.request):
+                with open(args.request, encoding="utf-8") as f:
+                    raw = json.load(f)
+            else:
+                raw = json.loads(args.request)
+            if not isinstance(raw, Mapping):
+                raise ValueError("deploy request must be a JSON object")
+            validate_wire_shape(raw)
+            request = DeployRequest.from_dict(raw)
+            fetcher = default_github_json_fetcher(
+                token=args.token,
+                token_env=args.token_env,
+            )
+            verify_production_evidence(request, fetch_json=fetcher)
+            print(f"Evidence verified successfully for request {request.request_id}")
+            return 0
+
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
