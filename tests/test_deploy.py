@@ -329,3 +329,293 @@ def test_build_deploy_request_constructs_valid_request() -> None:
         == "https://github.com/wangzitian0/finance_report/actions/runs/1"
     )
     assert req.request_id.startswith("req-")
+
+
+def sample_policy() -> ProductionEvidencePolicy:
+    return ProductionEvidencePolicy(
+        service="finance_report/app",
+        source=RunEvidenceExpectation(
+            workflow_path=".github/workflows/deploy.yml",
+            event="push",
+            display_title_template="Release Images {version_ref}",
+            require_head_sha=True,
+        ),
+        staging=RunEvidenceExpectation(
+            workflow_path=".github/workflows/deploy.yml",
+            event="workflow_dispatch",
+            display_title_template="Deploy Staging {version_ref}",
+            require_head_sha=False,
+        ),
+        review_base_ref="main",
+    )
+
+
+def test_canonical_json_produces_deterministic_sorted_output() -> None:
+    from infra2_sdk.deploy import canonical_json
+
+    req = request()
+    json_str = canonical_json(req)
+    assert json_str.endswith("\n")
+    assert json.loads(json_str) == req.to_dict()
+
+
+def prod_request(**overrides) -> DeployRequest:
+    return request(
+        deploy_type=DeployType.PRODUCTION,
+        evidence=DeployEvidence(
+            source_run_url="https://github.com/wangzitian0/finance_report/actions/runs/100",
+            source_run_id="100",
+            staging_run_url="https://github.com/wangzitian0/finance_report/actions/runs/101",
+            reviewed_change_url="https://github.com/wangzitian0/finance_report/pull/10",
+        ),
+        **overrides,
+    )
+
+
+def test_fetch_production_evidence_policy_success() -> None:
+    import base64
+
+    from infra2_sdk.deploy import fetch_production_evidence_policy
+
+    policy = sample_policy()
+    encoded = base64.b64encode(json.dumps(policy.to_dict()).encode("utf-8")).decode("utf-8")
+    req = prod_request()
+
+    def fake_fetch(path: str) -> dict:
+        return {"content": encoded}
+
+    fetched = fetch_production_evidence_policy(req, fetch_json=fake_fetch)
+    assert fetched.service == "finance_report/app"
+    assert fetched.review_base_ref == "main"
+
+
+def test_fetch_production_evidence_policy_missing_contract_raises() -> None:
+    from infra2_sdk.deploy import fetch_production_evidence_policy
+
+    req = prod_request()
+
+    def fake_fetch(path: str) -> dict:
+        raise ValueError("HTTP 404")
+
+    with pytest.raises(ValueError, match="has no Production evidence contract"):
+        fetch_production_evidence_policy(req, fetch_json=fake_fetch)
+
+
+def test_fetch_production_evidence_policy_service_mismatch_raises() -> None:
+    import base64
+
+    from infra2_sdk.deploy import fetch_production_evidence_policy
+
+    policy = sample_policy()
+    raw = policy.to_dict()
+    raw["service"] = "other/service"
+    encoded = base64.b64encode(json.dumps(raw).encode("utf-8")).decode("utf-8")
+    req = prod_request()
+
+    with pytest.raises(
+        ValueError, match="declares service 'other/service', not 'finance_report/app'"
+    ):
+        fetch_production_evidence_policy(req, fetch_json=lambda p: {"content": encoded})
+
+
+def test_verify_production_evidence_success() -> None:
+    from infra2_sdk.deploy import verify_production_evidence
+
+    req = request(
+        deploy_type=DeployType.PRODUCTION,
+        evidence=DeployEvidence(
+            source_run_url="https://github.com/wangzitian0/finance_report/actions/runs/100",
+            source_run_id="100",
+            staging_run_url="https://github.com/wangzitian0/finance_report/actions/runs/101",
+            reviewed_change_url="https://github.com/wangzitian0/finance_report/pull/10",
+        ),
+    )
+    source_run = {
+        "repository": {"full_name": "wangzitian0/finance_report"},
+        "html_url": "https://github.com/wangzitian0/finance_report/actions/runs/100",
+        "status": "completed",
+        "conclusion": "success",
+        "head_sha": SHA,
+        "path": ".github/workflows/deploy.yml",
+        "event": "push",
+        "display_title": "Release Images v1.2.3",
+    }
+    staging_run = {
+        "repository": {"full_name": "wangzitian0/finance_report"},
+        "html_url": "https://github.com/wangzitian0/finance_report/actions/runs/101",
+        "status": "completed",
+        "conclusion": "success",
+        "head_sha": "c" * 40,
+        "path": ".github/workflows/deploy.yml",
+        "event": "workflow_dispatch",
+        "display_title": "Deploy Staging v1.2.3",
+    }
+    pull = {
+        "base": {"repo": {"full_name": "wangzitian0/finance_report"}, "ref": "main"},
+        "html_url": "https://github.com/wangzitian0/finance_report/pull/10",
+        "state": "closed",
+        "merged_at": "2026-10-05T00:00:00Z",
+        "merge_commit_sha": SHA,
+        "user": {"login": "author"},
+    }
+    reviews = [{"user": {"login": "reviewer"}, "state": "APPROVED"}]
+
+    responses = {
+        "/repos/wangzitian0/finance_report/actions/runs/100": source_run,
+        "/repos/wangzitian0/finance_report/actions/runs/101": staging_run,
+        "/repos/wangzitian0/finance_report/pulls/10": pull,
+        "/repos/wangzitian0/finance_report/pulls/10/reviews": reviews,
+    }
+
+    verify_production_evidence(req, policy=sample_policy(), fetch_json=responses.__getitem__)
+
+
+def test_verify_production_evidence_rejected_when_changes_requested() -> None:
+    from infra2_sdk.deploy import verify_production_evidence
+
+    req = request(
+        deploy_type=DeployType.PRODUCTION,
+        evidence=DeployEvidence(
+            source_run_url="https://github.com/wangzitian0/finance_report/actions/runs/100",
+            source_run_id="100",
+            staging_run_url="https://github.com/wangzitian0/finance_report/actions/runs/101",
+            reviewed_change_url="https://github.com/wangzitian0/finance_report/pull/10",
+        ),
+    )
+    responses = {
+        "/repos/wangzitian0/finance_report/actions/runs/100": {
+            "repository": {"full_name": "wangzitian0/finance_report"},
+            "html_url": "https://github.com/wangzitian0/finance_report/actions/runs/100",
+            "status": "completed",
+            "conclusion": "success",
+            "head_sha": SHA,
+            "path": ".github/workflows/deploy.yml",
+            "event": "push",
+            "display_title": "Release Images v1.2.3",
+        },
+        "/repos/wangzitian0/finance_report/actions/runs/101": {
+            "repository": {"full_name": "wangzitian0/finance_report"},
+            "html_url": "https://github.com/wangzitian0/finance_report/actions/runs/101",
+            "status": "completed",
+            "conclusion": "success",
+            "head_sha": "c" * 40,
+            "path": ".github/workflows/deploy.yml",
+            "event": "workflow_dispatch",
+            "display_title": "Deploy Staging v1.2.3",
+        },
+        "/repos/wangzitian0/finance_report/pulls/10": {
+            "base": {"repo": {"full_name": "wangzitian0/finance_report"}, "ref": "main"},
+            "html_url": "https://github.com/wangzitian0/finance_report/pull/10",
+            "state": "closed",
+            "merged_at": "2026-10-05T00:00:00Z",
+            "merge_commit_sha": SHA,
+            "user": {"login": "author"},
+        },
+        "/repos/wangzitian0/finance_report/pulls/10/reviews": [
+            {"user": {"login": "reviewer"}, "state": "CHANGES_REQUESTED"}
+        ],
+    }
+
+    with pytest.raises(ValueError, match="pending CHANGES_REQUESTED"):
+        verify_production_evidence(req, policy=sample_policy(), fetch_json=responses.__getitem__)
+
+
+def test_derive_release_evidence_staging_and_prod() -> None:
+    from infra2_sdk.deploy import derive_release_evidence
+
+    responses = {
+        "/repos/wangzitian0/finance_report/actions/runs?event=push&branch=v1.2.3": {
+            "workflow_runs": [
+                {
+                    "id": 100,
+                    "html_url": "https://github.com/wangzitian0/finance_report/actions/runs/100",
+                    "head_sha": SHA,
+                    "conclusion": "success",
+                    "path": ".github/workflows/deploy.yml",
+                    "display_title": "Release Images v1.2.3",
+                }
+            ]
+        },
+        "/repos/wangzitian0/finance_report/actions/runs?event=workflow_dispatch": {
+            "workflow_runs": [
+                {
+                    "id": 101,
+                    "conclusion": "success",
+                    "path": ".github/workflows/deploy.yml",
+                    "display_title": "Deploy Staging v1.2.3",
+                }
+            ]
+        },
+        f"/repos/wangzitian0/finance_report/commits/{SHA}/pulls": [
+            {
+                "number": 10,
+                "merged_at": "2026-10-05T00:00:00Z",
+                "merge_commit_sha": SHA,
+                "base": {"ref": "main"},
+            }
+        ],
+    }
+
+    ev_staging = derive_release_evidence(
+        repository="wangzitian0/finance_report",
+        version_ref="v1.2.3",
+        deploy_type=DeployType.STAGING,
+        tag_sha=SHA,
+        policy=sample_policy(),
+        fetch_json=responses.__getitem__,
+    )
+    assert ev_staging.source_run_id == "100"
+    assert (
+        ev_staging.source_run_url
+        == "https://github.com/wangzitian0/finance_report/actions/runs/100"
+    )
+    assert ev_staging.staging_run_url == ""
+    assert ev_staging.reviewed_change_url == ""
+
+    ev_prod = derive_release_evidence(
+        repository="wangzitian0/finance_report",
+        version_ref="v1.2.3",
+        deploy_type=DeployType.PRODUCTION,
+        tag_sha=SHA,
+        policy=sample_policy(),
+        fetch_json=responses.__getitem__,
+    )
+    assert ev_prod.source_run_id == "100"
+    assert (
+        ev_prod.staging_run_url
+        == "https://github.com/wangzitian0/finance_report/actions/runs/101"
+    )
+    assert (
+        ev_prod.reviewed_change_url
+        == "https://github.com/wangzitian0/finance_report/pull/10"
+    )
+
+
+def test_deploy_cli_build_request(tmp_path) -> None:
+    from infra2_sdk.deploy import main as deploy_main
+
+    out_file = tmp_path / "request.json"
+    rc = deploy_main(
+        [
+            "build-request",
+            "--service",
+            "finance_report/app",
+            "--source-repo",
+            "wangzitian0/finance_report",
+            "--source-sha",
+            SHA,
+            "--version-ref",
+            "v1.2.3",
+            "--source-run-url",
+            "https://github.com/wangzitian0/finance_report/actions/runs/100",
+            "--source-run-id",
+            "100",
+            "--output",
+            str(out_file),
+        ]
+    )
+    assert rc == 0
+    loaded = json.loads(out_file.read_text(encoding="utf-8"))
+    assert loaded["service"] == "finance_report/app"
+    assert loaded["evidence"]["source_run_id"] == "100"
+

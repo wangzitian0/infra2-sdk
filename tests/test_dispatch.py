@@ -346,3 +346,45 @@ def test_github_api_client_fetch_logs_rejects_a_non_zip_body() -> None:
     _, fetch_logs = _client_for(httpx.Response(200, content=b"not-a-zip"))
     with pytest.raises(RuntimeError, match="not a zip archive"):
         fetch_logs(101)
+
+
+def test_dispatch_main_cli_requires_token(monkeypatch) -> None:
+    from infra2_sdk.dispatch import main
+
+    monkeypatch.delenv("INFRA2_PAT", raising=False)
+    rc = main(["--request", "{}"])
+    assert rc == 1
+
+
+def test_dispatch_main_cli_success(monkeypatch, tmp_path, capsys) -> None:
+    import json
+
+    from infra2_sdk.dispatch import ReceiverRun, main
+
+    monkeypatch.setenv("INFRA2_PAT", "fake-token")
+    req = _request()
+    req_file = tmp_path / "req.json"
+    req_file.write_text(json.dumps(req.to_dict()), encoding="utf-8")
+
+    fake_run = ReceiverRun(
+        run_id=999,
+        url="https://github.com/wangzitian0/infra2/actions/runs/999",
+    )
+    monkeypatch.setattr(
+        "infra2_sdk.dispatch.github_api_client",
+        lambda **kwargs: (lambda m, p, b: None, lambda r: b""),
+    )
+    monkeypatch.setattr(
+        "infra2_sdk.dispatch.dispatch_and_wait",
+        lambda *args, **kwargs: fake_run,
+    )
+
+    rc = main(["--request", str(req_file)])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert '"receiver_run_id": 999' in captured.out
+    assert (
+        '"receiver_run_url": "https://github.com/wangzitian0/infra2/actions/runs/999"'
+        in captured.out
+    )
+

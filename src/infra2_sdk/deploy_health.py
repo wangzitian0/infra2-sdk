@@ -18,9 +18,11 @@ dependency on it.
 
 from __future__ import annotations
 
+import argparse
 import json
+import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -161,3 +163,111 @@ def _version_prefix_matches(actual: str, expected: str) -> bool:
     if not actual:
         return False
     return actual.startswith(expected) or expected.startswith(actual)
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="python -m infra2_sdk.deploy_health",
+        description="Poll a deployed HTTP endpoint until healthy.",
+    )
+    parser.add_argument("url", help="URL of the health check endpoint")
+    parser.add_argument(
+        "--expected-version",
+        default="",
+        help="Expected version string or prefix (e.g. git commit SHA or release tag)",
+    )
+    parser.add_argument(
+        "--max-attempts",
+        type=int,
+        default=24,
+        help="Maximum polling attempts before timing out (default: 24)",
+    )
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=10.0,
+        help="Seconds between polling attempts (default: 10.0)",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=10.0,
+        help="HTTP request timeout in seconds (default: 10.0)",
+    )
+    parser.add_argument(
+        "--require-status",
+        default=None,
+        help="Expected string value of the JSON 'status' field (e.g. 'ok' or 'healthy')",
+    )
+    parser.add_argument(
+        "--version-json-keys",
+        default="git_sha,version",
+        help="Comma-separated JSON keys containing release version (default: 'git_sha,version')",
+    )
+    parser.add_argument(
+        "--max-version-mismatch-attempts",
+        type=int,
+        default=None,
+        help="Consecutive mismatch attempts before failing early (default: max_attempts)",
+    )
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entrypoint to poll a health endpoint until healthy."""
+    parser = _parser()
+    args = parser.parse_args(argv)
+
+    if args.max_attempts <= 0 or args.interval <= 0:
+        print("error: max-attempts and interval must be positive", file=sys.stderr)
+        return 1
+
+    try:
+        http_get = default_http_get(timeout=args.timeout)
+        attempts = 0
+
+        def probing_http_get(url: str) -> tuple[int, str]:
+            nonlocal attempts
+            attempts += 1
+            print(
+                f"[WAITING] Health check attempt {attempts}/{args.max_attempts}...",
+                file=sys.stderr,
+            )
+            status_code, body = http_get(url)
+            if status_code == 0:
+                print(
+                    f"[WARNING] Connection failed (attempt {attempts}/{args.max_attempts})",
+                    file=sys.stderr,
+                )
+            elif status_code != 200:
+                print(
+                    f"[WARNING] HTTP {status_code} (attempt {attempts}/{args.max_attempts})",
+                    file=sys.stderr,
+                )
+            return status_code, body
+
+        keys = tuple(k.strip() for k in args.version_json_keys.split(",") if k.strip())
+        result = poll_until_healthy(
+            args.url,
+            http_get=probing_http_get,
+            expected_version=args.expected_version,
+            version_json_keys=keys,
+            require_status=args.require_status,
+            max_attempts=args.max_attempts,
+            max_version_mismatch_attempts=args.max_version_mismatch_attempts,
+            interval_seconds=args.interval,
+        )
+        print(
+            f"[OK] Health check passed at {args.url} "
+            f"(HTTP 200, attempt {result.attempts}/{args.max_attempts})"
+        )
+        return 0
+
+    except Exception as exc:
+        print(f"[FAIL] Health check failed: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
