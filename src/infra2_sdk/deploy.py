@@ -465,9 +465,7 @@ def _github_evidence_number(
         or parsed.query
         or parsed.fragment
     ):
-        raise ValueError(
-            f"evidence.{field} must be a canonical github.com {resource} URL"
-        )
+        raise ValueError(f"evidence.{field} must be a canonical github.com {resource} URL")
     return number
 
 
@@ -537,21 +535,15 @@ def _verify_reviewed_pull(
         not isinstance(remote_repository, Mapping)
         or remote_repository.get("full_name") != repository
     ):
-        raise ValueError(
-            "reviewed pull request repository does not match source_repository"
-        )
+        raise ValueError("reviewed pull request repository does not match source_repository")
     if pull.get("html_url") != url:
-        raise ValueError(
-            "reviewed pull request html_url does not match submitted evidence"
-        )
+        raise ValueError("reviewed pull request html_url does not match submitted evidence")
     if pull.get("state") != "closed" or not pull.get("merged_at"):
         raise ValueError("reviewed pull request must be merged")
     if not isinstance(base, Mapping) or base.get("ref") != base_ref:
         raise ValueError("reviewed pull request base branch is not approved")
     if pull.get("merge_commit_sha") != sha:
-        raise ValueError(
-            "reviewed pull request merge_commit_sha does not match source_sha"
-        )
+        raise ValueError("reviewed pull request merge_commit_sha does not match source_sha")
 
     if reviews is not None:
         user = pull.get("user")
@@ -580,10 +572,7 @@ def fetch_production_evidence_policy(
     fetch_json: Callable[[str], Any] | None = None,
 ) -> ProductionEvidencePolicy:
     """Fetch and validate the production evidence policy for a request."""
-    where = (
-        f"{request.source_repository}:{PRODUCTION_EVIDENCE_POLICY_PATH}"
-        f"@{request.source_sha}"
-    )
+    where = f"{request.source_repository}:{PRODUCTION_EVIDENCE_POLICY_PATH}@{request.source_sha}"
     fetch = fetch_json or default_github_json_fetcher()
     try:
         payload = fetch(
@@ -613,9 +602,7 @@ def fetch_production_evidence_policy(
     except ValueError as exc:
         raise ValueError(f"{where} is not a valid evidence contract: {exc}") from exc
     if policy.service != request.service:
-        raise ValueError(
-            f"{where} declares service {policy.service!r}, not {request.service!r}"
-        )
+        raise ValueError(f"{where} declares service {policy.service!r}, not {request.service!r}")
     return policy
 
 
@@ -650,12 +637,8 @@ def verify_production_evidence(
     )
     effective_policy = policy or fetch_production_evidence_policy(request, fetch_json=fetch)
 
-    source_run = fetch(
-        f"/repos/{request.source_repository}/actions/runs/{source_run_id}"
-    )
-    staging_run = fetch(
-        f"/repos/{request.source_repository}/actions/runs/{staging_run_id}"
-    )
+    source_run = fetch(f"/repos/{request.source_repository}/actions/runs/{source_run_id}")
+    staging_run = fetch(f"/repos/{request.source_repository}/actions/runs/{staging_run_id}")
     reviewed_pull = fetch(f"/repos/{request.source_repository}/pulls/{pull_number}")
     reviews = fetch(f"/repos/{request.source_repository}/pulls/{pull_number}/reviews")
     if not isinstance(reviews, Sequence) or isinstance(reviews, (str, bytes, Mapping)):
@@ -730,9 +713,7 @@ def derive_release_evidence(
     if not derived_source_url or not derived_source_id:
         runs_payload = fetch(f"/repos/{repository}/actions/runs?event=push&branch={version_ref}")
         workflow_runs = (
-            runs_payload.get("workflow_runs", [])
-            if isinstance(runs_payload, Mapping)
-            else []
+            runs_payload.get("workflow_runs", []) if isinstance(runs_payload, Mapping) else []
         )
         candidates = []
         for run in workflow_runs:
@@ -786,18 +767,12 @@ def derive_release_evidence(
                     continue
                 candidates.append(p)
             if not candidates:
-                raise ValueError(
-                    f"could not derive reviewed PR for {repository} commit {tag_sha}"
-                )
+                raise ValueError(f"could not derive reviewed PR for {repository} commit {tag_sha}")
             chosen_pr = candidates[0]
-            derived_reviewed_url = (
-                f"https://github.com/{repository}/pull/{chosen_pr.get('number')}"
-            )
+            derived_reviewed_url = f"https://github.com/{repository}/pull/{chosen_pr.get('number')}"
 
         if not derived_staging_url:
-            staging_payload = fetch(
-                f"/repos/{repository}/actions/runs?event=workflow_dispatch"
-            )
+            staging_payload = fetch(f"/repos/{repository}/actions/runs?event=workflow_dispatch")
             staging_runs = (
                 staging_payload.get("workflow_runs", [])
                 if isinstance(staging_payload, Mapping)
@@ -812,9 +787,7 @@ def derive_release_evidence(
                 if effective_policy:
                     if run.get("path") != effective_policy.staging.workflow_path:
                         continue
-                    expected_title = effective_policy.staging.expected_display_title(
-                        version_ref
-                    )
+                    expected_title = effective_policy.staging.expected_display_title(version_ref)
                     actual_title = run.get("display_title") or run.get("name") or ""
                     if actual_title != expected_title:
                         continue
@@ -964,4 +937,3 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

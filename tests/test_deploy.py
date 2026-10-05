@@ -582,13 +582,9 @@ def test_derive_release_evidence_staging_and_prod() -> None:
     )
     assert ev_prod.source_run_id == "100"
     assert (
-        ev_prod.staging_run_url
-        == "https://github.com/wangzitian0/finance_report/actions/runs/101"
+        ev_prod.staging_run_url == "https://github.com/wangzitian0/finance_report/actions/runs/101"
     )
-    assert (
-        ev_prod.reviewed_change_url
-        == "https://github.com/wangzitian0/finance_report/pull/10"
-    )
+    assert ev_prod.reviewed_change_url == "https://github.com/wangzitian0/finance_report/pull/10"
 
 
 def test_deploy_cli_build_request(tmp_path) -> None:
@@ -618,4 +614,3 @@ def test_deploy_cli_build_request(tmp_path) -> None:
     loaded = json.loads(out_file.read_text(encoding="utf-8"))
     assert loaded["service"] == "finance_report/app"
     assert loaded["evidence"]["source_run_id"] == "100"
-

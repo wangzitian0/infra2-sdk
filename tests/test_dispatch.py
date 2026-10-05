@@ -387,4 +387,3 @@ def test_dispatch_main_cli_success(monkeypatch, tmp_path, capsys) -> None:
         '"receiver_run_url": "https://github.com/wangzitian0/infra2/actions/runs/999"'
         in captured.out
     )
-

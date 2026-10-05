@@ -215,4 +215,3 @@ def test_deploy_health_main_cli_failure(monkeypatch, capsys) -> None:
     assert rc == 1
     captured = capsys.readouterr()
     assert "[FAIL] Health check failed" in captured.err
-
