@@ -98,6 +98,3 @@ def test_infra2_sdk_getattr_images_and_unknown() -> None:
     assert infra2_sdk.images is not None
     with pytest.raises(AttributeError, match="has no attribute 'nonexistent_symbol'"):
         _ = infra2_sdk.nonexistent_symbol
-
-
-

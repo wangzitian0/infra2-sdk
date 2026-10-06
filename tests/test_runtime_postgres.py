@@ -171,4 +171,3 @@ def test_redact_postgres_error_public_contract() -> None:
     assert "<redacted>" in redacted
     assert "<redacted-postgres-dsn>" in redacted
     assert _redact_error(error, settings) == redacted
-
