@@ -203,3 +203,14 @@ def assert_required_dependencies(
 
 def _elapsed(started: float) -> float:
     return (time.perf_counter() - started) * 1000
+
+
+__all__ = [
+    "DependencyCheck",
+    "DependencyStatus",
+    "DependencyUnavailableError",
+    "JSON_SCHEMA_DIALECT",
+    "ProbeResult",
+    "assert_required_dependencies",
+    "run_probes",
+]

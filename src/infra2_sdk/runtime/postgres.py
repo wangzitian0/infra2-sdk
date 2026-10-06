@@ -114,7 +114,8 @@ def _elapsed(started: float) -> float:
     return (time.perf_counter() - started) * 1000
 
 
-def _redact_error(detail: str, settings: PostgresSettings) -> str:
+def redact_postgres_error(detail: str, settings: PostgresSettings) -> str:
+    """Redact DSN and password from PostgreSQL error strings."""
     redacted = detail
     for dsn in sorted({settings.dsn, settings.psycopg_dsn}, key=len, reverse=True):
         if dsn:
@@ -127,3 +128,15 @@ def _redact_error(detail: str, settings: PostgresSettings) -> str:
         redacted = redacted.replace(password, "<redacted>")
         redacted = redacted.replace(unquote(password), "<redacted>")
     return redacted
+
+
+_redact_error = redact_postgres_error
+
+__all__ = [
+    "PostgresCheck",
+    "PostgresSettings",
+    "normalize_postgres_dsn",
+    "probe_postgres",
+    "redact_postgres_error",
+    "_redact_error",
+]
