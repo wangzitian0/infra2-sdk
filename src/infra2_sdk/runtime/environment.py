@@ -9,7 +9,21 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from infra2_sdk.runtime.environ import RuntimeEnvKey, resolve_runtime_env
+from infra2_sdk.runtime.environ import (
+    RUNTIME_ENV_CONTRACT_VERSION,
+    RUNTIME_ENV_SPECS,
+    EnvironmentConflictError,
+    ResolvedEnvValue,
+    RuntimeEnvKey,
+    RuntimeEnvSpec,
+    env_bool,
+    env_float,
+    env_int,
+    resolve_env,
+    resolve_runtime_env,
+    runtime_env_contract,
+    runtime_env_spec,
+)
 
 
 class EnvironmentTier(StrEnum):
@@ -227,3 +241,32 @@ def to_deploy_type(
             return DeployType.PREVIEW_TAG
         return DeployType.PREVIEW_BRANCH
     raise ValueError(f"cannot map non-deployable tier {tier} to DeployType")
+
+
+__all__ = [
+    "APP_OWNED_TIERS",
+    "CANARY_SLOT",
+    "EnvironmentConflictError",
+    "EnvironmentTier",
+    "PLATFORM_OWNED_TIERS",
+    "RUNTIME_ENV_CONTRACT_VERSION",
+    "RUNTIME_ENV_SPECS",
+    "ResolvedEnvValue",
+    "RuntimeEnvironment",
+    "RuntimeEnvKey",
+    "RuntimeEnvSpec",
+    "UnknownEnvironmentPolicy",
+    "env_bool",
+    "env_float",
+    "env_int",
+    "environment_from_env",
+    "normalize_deployment_environment",
+    "resolve_env",
+    "resolve_environment_tier",
+    "resolve_runtime_env",
+    "runtime_env_contract",
+    "runtime_env_spec",
+    "strict_environment_from_env",
+    "to_deploy_type",
+    "to_environment_tier",
+]

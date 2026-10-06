@@ -12,10 +12,14 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, fields
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
+
+if TYPE_CHECKING:
+    from infra2_sdk.deploy_health import HealthCheckResult, poll_until_healthy
+    from infra2_sdk.dispatch import ReceiverRun, dispatch_and_wait
 
 from infra2_sdk._wire import (
     _string,
@@ -934,6 +938,53 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     return 0
 
+
+def __getattr__(name: str) -> Any:
+    if name in ("dispatch_and_wait", "ReceiverRun"):
+        from infra2_sdk.dispatch import ReceiverRun, dispatch_and_wait
+
+        mapping = {"dispatch_and_wait": dispatch_and_wait, "ReceiverRun": ReceiverRun}
+        return mapping[name]
+    if name in ("poll_until_healthy", "HealthCheckResult"):
+        from infra2_sdk.deploy_health import HealthCheckResult, poll_until_healthy
+
+        mapping = {
+            "poll_until_healthy": poll_until_healthy,
+            "HealthCheckResult": HealthCheckResult,
+        }
+        return mapping[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(list(globals().keys()) + __all__))
+
+
+__all__ = [
+    "CONTRACT_VERSION",
+    "DeployEvidence",
+    "DeployOperation",
+    "DeployRequest",
+    "DeployState",
+    "DeployStatus",
+    "DeployType",
+    "EVIDENCE_POLICY_CONTRACT_VERSION",
+    "HealthCheckResult",
+    "PRODUCTION_EVIDENCE_POLICY_PATH",
+    "ProductionEvidencePolicy",
+    "ReceiverRun",
+    "RunEvidenceExpectation",
+    "build_deploy_request",
+    "canonical_json",
+    "default_github_json_fetcher",
+    "derive_release_evidence",
+    "dispatch_and_wait",
+    "fetch_production_evidence_policy",
+    "poll_until_healthy",
+    "validate_deploy_request",
+    "validate_wire_shape",
+    "verify_production_evidence",
+]
 
 if __name__ == "__main__":
     raise SystemExit(main())

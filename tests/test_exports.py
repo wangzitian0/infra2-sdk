@@ -28,7 +28,6 @@ def test_infra2_sdk_submodules_accessible_from_root() -> None:
         "deploy",
         "deploy_health",
         "dispatch",
-        "images",
         "manifests",
         "refs",
         "release",
@@ -93,8 +92,26 @@ def test_import_isolation_without_optional_dependencies(monkeypatch: pytest.Monk
         create_s3_client(settings)
 
 
-def test_infra2_sdk_getattr_images_and_unknown() -> None:
-    """Verify PEP 562 lazy loading of images and error on unknown attribute."""
-    assert infra2_sdk.images is not None
+def test_infra2_sdk_unknown_attribute_raises() -> None:
+    """Verify error on unknown attribute and removed symbols."""
     with pytest.raises(AttributeError, match="has no attribute 'nonexistent_symbol'"):
         _ = infra2_sdk.nonexistent_symbol
+    with pytest.raises(AttributeError, match="has no attribute 'images'"):
+        _ = infra2_sdk.images
+
+
+def test_consolidated_secondary_modules() -> None:
+    """Verify that secondary modules provide their consolidated capabilities."""
+    from infra2_sdk.deploy import dispatch_and_wait, poll_until_healthy
+    from infra2_sdk.refs import ReleaseIdentity, resolve_release_identity
+    from infra2_sdk.runtime.environment import RuntimeEnvKey, runtime_env_contract
+    from infra2_sdk.runtime.health import DependencyManifest, check_health
+
+    assert callable(dispatch_and_wait)
+    assert callable(poll_until_healthy)
+    assert ReleaseIdentity is not None
+    assert callable(resolve_release_identity)
+    assert RuntimeEnvKey.ENVIRONMENT == "ENVIRONMENT"
+    assert callable(runtime_env_contract)
+    assert DependencyManifest is not None
+    assert callable(check_health)

@@ -5,6 +5,22 @@ changes are minor releases, removing or changing a public symbol is a major rele
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.0.0 - 2026-10-06
+
+### Removed
+
+- Eradicate legacy `infra2_sdk.images` module and `data/platform_images.yaml` ([#66](https://github.com/wangzitian0/infra2-sdk/issues/66)).
+- Eradicate legacy `RuntimeIdentity.to_otel_resource_attributes()` method ([#66](https://github.com/wangzitian0/infra2-sdk/issues/66)).
+
+### Changed
+
+- Consolidate secondary modules into canonical primary modules with backwards-compatible shims ([#66](https://github.com/wangzitian0/infra2-sdk/issues/66)):
+  - `infra2_sdk.deploy`: Consolidates `dispatch` and `deploy_health`.
+  - `infra2_sdk.refs`: Consolidates `release`.
+  - `infra2_sdk.runtime.environment`: Consolidates `runtime.environ`.
+  - `infra2_sdk.runtime.health`: Consolidates `runtime.dependencies` and `runtime.probes`.
+- Update module table and package version to 3.0.0.
+
 ## 2.7.0 - 2026-10-06
 
 ### Added
