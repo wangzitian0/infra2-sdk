@@ -25,7 +25,7 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v2.7.0"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.0.0"
 ```
 
 ## Modules
@@ -45,7 +45,6 @@ python -m pip install \
 | `infra2_sdk.routing` | Canonical domain and routing SSOT: `AppRoutePreference`, `RouteEndpoint`, `DokployDomainSpec`, `resolve_app_hostname`, `resolve_dokploy_domains`, `resolve_service_url` |
 | `infra2_sdk.transport` | Minimal injectable HTTP transport (`HttpTransport`, `HttpResponse`, `urllib_transport`) shared by the open-protocol adapters |
 | `infra2_sdk.rules.compose` | Pure compose-file rules (memory ceilings, bare `:latest` image refs); `python -m infra2_sdk.rules` is its CLI |
-| `infra2_sdk.images` | **Deprecated since 2.4.0, removed in 3.0.0.** A platform image catalog nothing consumes and that is not kept in sync with infra2's compose pins; importing it warns |
 | `infra2_sdk.capacity` | Capacity limits, readings, and levels; collectors for Cloudflare analytics and the 1Password rate-limit command |
 | `infra2_sdk.runtime.environment` | Canonical six-tier environment vocabulary and aliases |
 | `infra2_sdk.runtime.environ` | Versioned canonical env registry and conflict-safe resolution |
@@ -66,10 +65,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v2.7.0'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.0.0'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v2.7.0'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.0.0'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -172,7 +171,7 @@ Install the published wheel in a fresh Python 3.11+ environment:
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install \
-  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v2.7.0/infra2_sdk-2.7.0-py3-none-any.whl'
+  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.0.0/infra2_sdk-3.0.0-py3-none-any.whl'
 ```
 
 For a local connectivity exercise, start this server in another terminal:
@@ -283,9 +282,15 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   - `PipelineEnvironment` and `to_pipeline_environment` (all delivery results and runtime functions now canonicalize to `EnvironmentTier`);
   - Legacy `configuration_fingerprint` aliases across `runtime` modules (use `manifest_config_fingerprint` for manifest contracts and `runtime_identity_fingerprint` for runtime identity).
 - Since 2.4.0 the package ships a `py.typed` marker, so type checkers use its annotations.
-- Deprecated in 2.4.0, removed in 3.0.0: the `infra2_sdk.images` module and
-  `RuntimeIdentity.to_otel_resource_attributes()` (both now emit a `DeprecationWarning`).
-  Former private names stay as plain aliases until consumers have moved to the public ones:
+- In v3.0.0, legacy compatibility symbols scheduled for removal have been eradicated:
+  - The `infra2_sdk.images` module and `data/platform_images.yaml`;
+  - `RuntimeIdentity.to_otel_resource_attributes()`.
+- Secondary modules consolidated in 3.0.0 with backwards-compatible shims:
+  - `deploy`: consolidated dispatch and deploy health polling (shims: `dispatch`, `deploy_health`);
+  - `refs`: consolidated release identity resolution (shim: `release`);
+  - `runtime.environment`: unified environment vocabulary and variables (shim: `runtime.environ`);
+  - `runtime.health`: unified dependency declarations, probes, and health check runner (shims: `runtime.dependencies`, `runtime.probes`).
+- Former private names stay as plain aliases until consumers have moved to the public ones:
   `runtime.otel._signal_endpoint` is `signal_endpoint`, `refs._ls_remote_rows` is
   `ls_remote_rows`, `refs._redact_repo` is `redact_repo`. The private module
   `infra2_sdk._transport` is gone; import `infra2_sdk.transport`.

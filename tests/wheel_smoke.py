@@ -8,7 +8,6 @@ import json
 import os
 import subprocess
 import sys
-import warnings
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
@@ -33,21 +32,20 @@ def smoke_core() -> None:
 
 
 def smoke_package_data() -> None:
-    """The wheel ships py.typed and the data files; the deprecated catalog is clean."""
+    """The wheel ships py.typed and the data files; the eradicated catalog is absent."""
 
     from importlib.resources import files
 
     package = files("infra2_sdk")
     assert package.joinpath("py.typed").is_file(), "py.typed must ship in the wheel"
     assert package.joinpath("data/stages.yaml").is_file()
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        images = importlib.import_module("infra2_sdk.images")
-        catalog = images.load_platform_images()
-    assert any(issubclass(w.category, DeprecationWarning) for w in caught), (
-        "infra2_sdk.images must warn that it is deprecated"
-    )
-    assert sorted(catalog) == ["postgres", "redis", "vault_agent"], sorted(catalog)
+    assert not package.joinpath("data/platform_images.yaml").is_file()
+    try:
+        importlib.import_module("infra2_sdk.images")
+    except ModuleNotFoundError:
+        pass
+    else:
+        raise AssertionError("infra2_sdk.images was removed in 3.0.0 and must not be importable")
 
 
 def smoke_health() -> None:

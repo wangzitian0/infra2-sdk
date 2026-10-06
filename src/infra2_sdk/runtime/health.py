@@ -22,12 +22,18 @@ from collections.abc import Iterable
 from enum import StrEnum
 from typing import Any
 
-from infra2_sdk.runtime.dependencies import DependencyManifest
+from infra2_sdk.runtime.dependencies import (
+    Dependency,
+    DependencyKind,
+    DependencyManifest,
+)
 from infra2_sdk.runtime.environment import EnvironmentTier
 from infra2_sdk.runtime.probes import (
     DependencyCheck,
     DependencyStatus,
+    DependencyUnavailableError,
     ProbeResult,
+    assert_required_dependencies,
     run_probes,
 )
 
@@ -123,3 +129,21 @@ async def check_health(
         required_names = frozenset(check.name for check in values)
     results = await run_probes(values, timeout_seconds=timeout_seconds)
     return health_response(results, required=required_names)
+
+
+__all__ = [
+    "HTTP_OK",
+    "HTTP_SERVICE_UNAVAILABLE",
+    "Dependency",
+    "DependencyCheck",
+    "DependencyKind",
+    "DependencyManifest",
+    "DependencyStatus",
+    "DependencyUnavailableError",
+    "HealthStatus",
+    "ProbeResult",
+    "assert_required_dependencies",
+    "check_health",
+    "health_response",
+    "run_probes",
+]

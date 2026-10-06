@@ -31,15 +31,10 @@ def test_runtime_identity_round_trip_and_otel_attributes() -> None:
     original = identity()
     original.validate_protected()
     assert RuntimeIdentity.from_dict(original.to_dict()) == original
-    with pytest.warns(DeprecationWarning, match="removed in 3.0.0") as caught:
-        attributes = original.to_otel_resource_attributes()
-    assert caught[0].filename == __file__
+    assert not hasattr(original, "to_otel_resource_attributes")
+    attributes = original.to_standard_otel_resource_attributes()
     assert attributes["service.name"] == "api"
     assert attributes["container.image.id"] == DIGEST
-    assert attributes["infra2.sbom.uri"].startswith("oci://")
-    assert {key: value for key, value in attributes.items() if not key.startswith("infra2.")} == (
-        original.to_standard_otel_resource_attributes()
-    )
     assert identity(environment="staging").environment is EnvironmentTier.STAGING
     assert original.json_schema()["properties"]["image_digest"]["pattern"].startswith("^")
 

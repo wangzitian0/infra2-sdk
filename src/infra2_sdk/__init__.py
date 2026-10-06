@@ -1,7 +1,6 @@
 """Stable contracts shared by infra2 and application repositories."""
 
 from importlib.metadata import PackageNotFoundError, version
-from typing import Any
 
 try:
     __version__ = version("infra2-sdk")
@@ -123,15 +122,6 @@ from infra2_sdk.transport import (
     urllib_transport,
 )
 
-
-def __getattr__(name: str) -> Any:
-    if name == "images":
-        import importlib
-
-        return importlib.import_module("infra2_sdk.images")
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
 __all__ = [
     # Top-level version
     "__version__",
@@ -142,7 +132,6 @@ __all__ = [
     "deploy",
     "deploy_health",
     "dispatch",
-    "images",
     "manifests",
     "refs",
     "release",
