@@ -5,6 +5,13 @@ changes are minor releases, removing or changing a public symbol is a major rele
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 2.6.0 - 2026-10-06
+
+### Changed
+
+- Deprecate `routing.LEGACY_CANARY_PR` (PR 999) mapping as infra2 and consumers have migrated to canonical `CANARY_SLOT` (`canary-preview`).
+- Standardize runtime schema manifests and routing resolution on canonical identifiers.
+
 ## 2.5.0 - 2026-10-05
 
 ### Added
