@@ -1,12 +1,25 @@
 import asyncio
 import json
+import time
+from contextvars import ContextVar
 
 import pytest
 
-from infra2_sdk.runtime import HealthStatus, check_health, health_response
-from infra2_sdk.runtime.dependencies import Dependency, DependencyKind, DependencyManifest
 from infra2_sdk.runtime.environment import EnvironmentTier
-from infra2_sdk.runtime.probes import DependencyStatus, ProbeResult
+from infra2_sdk.runtime.health import (
+    Dependency,
+    DependencyKind,
+    DependencyManifest,
+    DependencyStatus,
+    DependencyUnavailableError,
+    HealthStatus,
+    ProbeResult,
+    _run_sync_probe,
+    assert_required_dependencies,
+    check_health,
+    health_response,
+    run_probes,
+)
 
 
 class Check:
@@ -199,3 +212,215 @@ def test_health_response_summarizes_finished_probe_results_synchronously() -> No
 def test_an_absent_result_without_detail_still_explains_itself() -> None:
     _, body = health_response([ProbeResult("database", DependencyStatus.ABSENT)], required=set())
     assert body["reasons"] == ["database: absent"]
+
+
+# --- Dependency & DependencyManifest tests ---
+
+
+def _sample_dependency(name: str = "database") -> Dependency:
+    return Dependency(
+        name=name,
+        kind=DependencyKind.CODE_DOMINANT,
+        required_in=frozenset({EnvironmentTier.STAGING, EnvironmentTier.PRODUCTION}),
+        env_vars=frozenset({"DATABASE_URL"}),
+        summary="Postgres",
+        local_backend="postgres",
+        deployed_backend="postgres",
+    )
+
+
+def test_dependency_manifest_round_trip_and_tier_lookup() -> None:
+    original = DependencyManifest((_sample_dependency(),))
+    restored = DependencyManifest.from_dict(original.to_dict())
+    assert restored.to_dict() == original.to_dict()
+    assert restored.names() == frozenset({"database"})
+    assert restored.get("database").summary == "Postgres"
+    assert restored.required_for("staging") == frozenset({"database"})
+    assert restored.required_for("preview") == frozenset()
+    assert len(restored) == 1
+    schema = DependencyManifest.json_schema()
+    assert schema["$schema"].endswith("2020-12/schema")
+    assert schema["properties"]["contract_version"] == {"const": 1}
+    normalized = Dependency(
+        "cache",
+        "code_dominant",
+        frozenset({"staging"}),
+        frozenset({"REDIS_URL"}),
+    )
+    assert normalized.kind is DependencyKind.CODE_DOMINANT
+    assert normalized.required_in == frozenset({EnvironmentTier.STAGING})
+
+
+@pytest.mark.parametrize(
+    "changes,message",
+    [
+        ({"name": "bad/name"}, "identifier"),
+        ({"required_in": frozenset()}, "at least one"),
+        ({"env_vars": frozenset()}, "environment variables"),
+        ({"env_vars": frozenset({"lower"})}, "uppercase"),
+    ],
+)
+def test_dependency_validation(changes, message) -> None:
+    values = _sample_dependency().__dict__ | changes
+    with pytest.raises(ValueError, match=message):
+        Dependency(**values)
+
+
+def test_manifest_rejects_duplicates_and_bad_wire_values() -> None:
+    with pytest.raises(ValueError, match="duplicate"):
+        DependencyManifest((_sample_dependency(), _sample_dependency()))
+    with pytest.raises(ValueError, match="array"):
+        DependencyManifest.from_dict({"contract_version": 1, "dependencies": "bad"})
+    with pytest.raises(ValueError, match="object"):
+        DependencyManifest.from_dict({"contract_version": 1, "dependencies": ["bad"]})
+    with pytest.raises(ValueError, match="required_in"):
+        Dependency.from_dict({"name": "db", "kind": "code_dominant"})
+    raw = _sample_dependency().to_dict()
+    raw["env_vars"] = [1]
+    with pytest.raises(ValueError, match="contain strings"):
+        Dependency.from_dict(raw)
+    with pytest.raises(ValueError, match="unsupported"):
+        DependencyManifest((), contract_version=2)
+    with pytest.raises(ValueError, match="integer"):
+        DependencyManifest((), contract_version=True)
+    with pytest.raises(ValueError, match="integer"):
+        DependencyManifest.from_dict({"contract_version": True, "dependencies": []})
+
+
+# --- Probes & Runner tests ---
+
+
+class _ProbeCheck:
+    def __init__(self, name, result=None, error=None) -> None:
+        self.name = name
+        self.result = result
+        self.error = error
+
+    def probe(self):
+        if self.error:
+            raise self.error
+        return self.result
+
+
+class _SlowCheck:
+    name = "slow"
+
+    async def probe(self):
+        await asyncio.sleep(0.05)
+        return ProbeResult(self.name, DependencyStatus.PRESENT)
+
+
+class _SlowSyncCheck:
+    name = "slow-sync"
+
+    def probe(self):
+        time.sleep(0.25)
+        return ProbeResult(self.name, DependencyStatus.PRESENT)
+
+
+class _WrappedAsyncCheck:
+    name = "wrapped"
+
+    def probe(self):
+        async def inner():
+            return ProbeResult(self.name, DependencyStatus.PRESENT)
+
+        return inner()
+
+
+def _single_dependency_manifest() -> DependencyManifest:
+    return DependencyManifest(
+        (
+            Dependency(
+                "database",
+                DependencyKind.CODE_DOMINANT,
+                frozenset({EnvironmentTier.STAGING}),
+                frozenset({"DATABASE_URL"}),
+            ),
+        )
+    )
+
+
+async def test_runner_supports_sync_async_errors_and_timeouts() -> None:
+    present = ProbeResult("database", DependencyStatus.PRESENT, "ok", 1)
+    results = await run_probes(
+        (
+            _ProbeCheck("database", present),
+            _ProbeCheck("broken", error=OSError("down")),
+            _SlowCheck(),
+            _WrappedAsyncCheck(),
+        ),
+        timeout_seconds=0.01,
+    )
+    assert results[0] is present
+    assert "OSError: down" in results[1].detail
+    assert results[2].status is DependencyStatus.ABSENT
+    assert "timed out" in results[2].detail
+    assert results[3].present
+
+
+def test_sync_probe_timeout_does_not_delay_cli_event_loop_shutdown() -> None:
+    started = time.perf_counter()
+    results = asyncio.run(run_probes((_SlowSyncCheck(),), timeout_seconds=0.01))
+    elapsed = time.perf_counter() - started
+    assert results[0].status is DependencyStatus.ABSENT
+    assert "timed out" in results[0].detail
+    assert elapsed < 0.1
+
+
+async def test_sync_probe_preserves_caller_context() -> None:
+    coordinate = ContextVar("coordinate", default="missing")
+    coordinate.set("staging")
+
+    class ContextCheck:
+        name = "context"
+
+        def probe(self):
+            return ProbeResult(self.name, DependencyStatus.PRESENT, coordinate.get())
+
+    result = await run_probes((ContextCheck(),))
+    assert result[0].detail == "staging"
+
+
+def test_probe_wire_round_trip_and_required_gate() -> None:
+    result = ProbeResult("database", DependencyStatus.PRESENT, "ok", 1.5)
+    assert ProbeResult("database", "present").present
+    assert ProbeResult.from_dict(result.to_dict()) == result
+    assert result.json_schema()["properties"]["status"]["enum"] == ["present", "absent"]
+    assert_required_dependencies(_single_dependency_manifest(), "staging", (result,))
+    with pytest.raises(DependencyUnavailableError) as exc:
+        assert_required_dependencies(_single_dependency_manifest(), "staging", ())
+    assert exc.value.missing == ("database",)
+
+
+def test_probe_validation_rejects_ambiguous_results() -> None:
+    with pytest.raises(ValueError, match="name"):
+        ProbeResult("", DependencyStatus.PRESENT)
+    with pytest.raises(ValueError, match="non-negative"):
+        ProbeResult("db", DependencyStatus.PRESENT, duration_ms=-1)
+    with pytest.raises(ValueError, match="numeric"):
+        ProbeResult.from_dict({"name": "db", "status": "present", "duration_ms": "bad"})
+    duplicate = ProbeResult("database", DependencyStatus.PRESENT)
+    with pytest.raises(ValueError, match="duplicate"):
+        assert_required_dependencies(
+            _single_dependency_manifest(), "staging", (duplicate, duplicate)
+        )
+
+
+async def test_runner_rejects_bad_input() -> None:
+    with pytest.raises(ValueError, match="positive"):
+        await run_probes((), timeout_seconds=0)
+    with pytest.raises(ValueError, match="duplicate"):
+        await run_probes((_ProbeCheck("x"), _ProbeCheck("x")))
+    result = await run_probes((_ProbeCheck("x", ProbeResult("other", DependencyStatus.PRESENT)),))
+    assert result[0].status is DependencyStatus.ABSENT
+    assert "does not match" in result[0].detail
+
+
+async def test_sync_probe_propagates_system_exit() -> None:
+    def exit_probe():
+        raise SystemExit(42)
+
+    with pytest.raises(SystemExit) as exc_info:
+        await _run_sync_probe(exit_probe, name="exit")
+    assert exc_info.value.code == 42

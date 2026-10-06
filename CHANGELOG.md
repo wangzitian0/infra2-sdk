@@ -11,14 +11,16 @@ backfill from the merged pull requests.
 
 - Eradicate legacy `infra2_sdk.images` module and `data/platform_images.yaml` ([#66](https://github.com/wangzitian0/infra2-sdk/issues/66)).
 - Eradicate legacy `RuntimeIdentity.to_otel_resource_attributes()` method ([#66](https://github.com/wangzitian0/infra2-sdk/issues/66)).
+- Prune obsolete tests and consolidate legacy test suites into canonical domain suites ([#68](https://github.com/wangzitian0/infra2-sdk/issues/68)).
 
 ### Changed
 
-- Consolidate secondary modules into canonical primary modules with backwards-compatible shims ([#66](https://github.com/wangzitian0/infra2-sdk/issues/66)):
-  - `infra2_sdk.deploy`: Consolidates `dispatch` and `deploy_health`.
-  - `infra2_sdk.refs`: Consolidates `release`.
-  - `infra2_sdk.runtime.environment`: Consolidates `runtime.environ`.
-  - `infra2_sdk.runtime.health`: Consolidates `runtime.dependencies` and `runtime.probes`.
+- Consolidate secondary modules into canonical primary modules with backwards-compatible shims ([#66](https://github.com/wangzitian0/infra2-sdk/issues/66), [#68](https://github.com/wangzitian0/infra2-sdk/issues/68)):
+  - `infra2_sdk.deploy`: Directly implements dispatch and deploy health polling (shims: `dispatch`, `deploy_health`).
+  - `infra2_sdk.refs`: Directly implements release identity resolution (shim: `release`).
+  - `infra2_sdk.runtime.environment`: Directly implements environment vocabulary and variables (shim: `runtime.environ`).
+  - `infra2_sdk.runtime.health`: Directly implements dependency declarations, probes, and health check runner (shims: `runtime.dependencies`, `runtime.probes`).
+- Streamline documentation, removing ancient v0.2 and v2.0 eradication historical notes ([#68](https://github.com/wangzitian0/infra2-sdk/issues/68)).
 - Update module table and package version to 3.0.0.
 
 ## 2.7.0 - 2026-10-06

@@ -32,31 +32,31 @@ python -m pip install \
 
 | Module | Ownership |
 |---|---|
-| `infra2_sdk.delivery` | Environment/stage evidence and failure taxonomy |
+| `infra2_sdk.capacity` | Capacity limits, readings, and levels; collectors for Cloudflare analytics and 1Password rate limits |
 | `infra2_sdk.ci` | Delivery-stage vocabulary and CI gate inventory validation |
-| `infra2_sdk.deploy` | Versioned deploy request/status wire contract, and the per-app `ProductionEvidencePolicy` contract each app checks into its own repo at `PRODUCTION_EVIDENCE_POLICY_PATH` |
-| `infra2_sdk.dispatch` | Dispatch a `DeployRequest` to infra2's receiver workflow and correlate/verify the resulting run (watermark, ambiguity guard, log-content check) |
-| `infra2_sdk.deploy_health` | Poll a deployed app URL until the new version is live (HTTP-200 + optional status/version checks) |
-| `infra2_sdk.snapshot` | Versioned anonymized-snapshot manifest, residual-proof shape, and artifact digest verification |
-| `infra2_sdk.refs` | Git ref classification and resolution (`classify_ref`, `resolve_to_sha`, `resolve_image_ref`, `resolve_pr`), plus the public `ls_remote_rows` (`git ls-remote` rows through an injectable runner) and `redact_repo` (strip URL credentials) |
-| `infra2_sdk.release` | Tag → commit + image digest (`ReleaseIdentity`; digest passthrough, Bearer-challenge auth for any registry) and runtime identity verification against the release, never against a store |
-| `infra2_sdk.secrets` | Secret-store adapters (`VaultKvBackend` with `write_mode="patch"|"update"` / `replace` (prune a store document), `vault_token_status`, `OnePasswordBackend`, `EnvBackend`), the manifest-driven `SecretsResolver` (sync human values, generate runtime values, mirror, compose, reconcile), and the Vault Agent template/policy renderers |
-| `infra2_sdk.manifests` | The one `--write` / `--check` / `--validate-env` driver an application repository wraps around its settings models (side-table overrides, freshness, offline gate, boot-time validation) |
-| `infra2_sdk.routing` | Canonical domain and routing SSOT: `AppRoutePreference`, `RouteEndpoint`, `DokployDomainSpec`, `resolve_app_hostname`, `resolve_dokploy_domains`, `resolve_service_url` |
-| `infra2_sdk.transport` | Minimal injectable HTTP transport (`HttpTransport`, `HttpResponse`, `urllib_transport`) shared by the open-protocol adapters |
-| `infra2_sdk.rules.compose` | Pure compose-file rules (memory ceilings, bare `:latest` image refs); `python -m infra2_sdk.rules` is its CLI |
-| `infra2_sdk.capacity` | Capacity limits, readings, and levels; collectors for Cloudflare analytics and the 1Password rate-limit command |
-| `infra2_sdk.runtime.environment` | Canonical six-tier environment vocabulary and aliases |
-| `infra2_sdk.runtime.environ` | Versioned canonical env registry and conflict-safe resolution |
+| `infra2_sdk.delivery` | Environment/stage evidence and failure taxonomy |
+| `infra2_sdk.deploy` | Deploy lifecycle wire contracts, dispatch client, health poller, and production evidence policies |
+| `infra2_sdk.deploy_health` | Compatibility shim re-exporting health check polling from `infra2_sdk.deploy` |
+| `infra2_sdk.dispatch` | Compatibility shim re-exporting dispatch operations from `infra2_sdk.deploy` |
+| `infra2_sdk.manifests` | Settings manifest driver (`--write`, `--check`, `--validate-env`) wrapping application configuration models |
+| `infra2_sdk.refs` | Git ref resolution, PR and release identity (`ReleaseIdentity`), remote ref queries, and credential redaction |
+| `infra2_sdk.release` | Compatibility shim re-exporting release identity resolution from `infra2_sdk.refs` |
+| `infra2_sdk.routing` | Canonical domain and routing SSOT: `AppRoutePreference`, Dokploy domain specs, and service URL resolution |
+| `infra2_sdk.rules.compose` | Pure compose-file rules (memory ceilings, bare `:latest` image refs); CLI at `python -m infra2_sdk.rules` |
 | `infra2_sdk.runtime.config_schema` | JSON Schema 2020-12 and environment injection manifests |
-| `infra2_sdk.runtime.dependencies` | Dependency declaration and per-tier requirements |
-| `infra2_sdk.runtime.probes` | Sync/async probe contract, runner, and required-dependency gate |
-| `infra2_sdk.runtime.health` | Framework-agnostic readiness: `check_health` runs the probes and returns `(status_code, body)` with the `healthy`/`degraded`/`unhealthy` body; required dependency failure is 503 with reasons |
-| `infra2_sdk.runtime.s3` | Standard boto3 S3 client, probe, and safe primitives |
-| `infra2_sdk.runtime.postgres` | PostgreSQL DSN normalization and psycopg probe |
+| `infra2_sdk.runtime.dependencies` | Compatibility shim re-exporting dependency contracts from `infra2_sdk.runtime.health` |
+| `infra2_sdk.runtime.environ` | Compatibility shim re-exporting environment registry from `infra2_sdk.runtime.environment` |
+| `infra2_sdk.runtime.environment` | Canonical six-tier environment vocabulary, variable resolution, and contract definitions |
+| `infra2_sdk.runtime.health` | Framework-agnostic readiness checks (`check_health`), probe runners, and dependency declarations |
 | `infra2_sdk.runtime.http` | Standard httpx clients and HTTP retry semantics |
-| `infra2_sdk.runtime.otel` | Explicit OTLP trace/metric/log provider bootstrap, env-configured sampler, W3C trace-context `extract_trace_context` / `inject_trace_context`, and the public `signal_endpoint` |
 | `infra2_sdk.runtime.identity` | OCI/config/release identity, `canonical_sha256`, and OTel resource coordinates |
+| `infra2_sdk.runtime.otel` | Explicit OTLP provider bootstrap, env-configured samplers, and W3C trace-context propagation |
+| `infra2_sdk.runtime.postgres` | PostgreSQL DSN normalization and psycopg reachability probe |
+| `infra2_sdk.runtime.probes` | Compatibility shim re-exporting probe contracts and runners from `infra2_sdk.runtime.health` |
+| `infra2_sdk.runtime.s3` | Standard boto3 S3 client, probe, and safe bucket/object primitives |
+| `infra2_sdk.secrets` | Secret-store adapters (Vault KV, 1Password, Env), manifest-driven `SecretsResolver`, and Vault template renderers |
+| `infra2_sdk.snapshot` | Versioned anonymized-snapshot manifest, residual-proof shape, and artifact digest verification |
+| `infra2_sdk.transport` | Minimal injectable HTTP transport (`HttpTransport`, `HttpResponse`, `urllib_transport`) shared by adapters |
 
 ## Runtime extras
 
@@ -273,23 +273,15 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   values before side effects.
 - Repository submodules are development workspace pointers, not package dependencies.
 - Importing any runtime module performs no network I/O and mutates no global provider state.
-- v0.2 ownership constants and `vault=True` manifest metadata remain compatibility-only; new
-  consumers use tier semantics and explicit `injected=True` metadata.
-- In v2.0.0, legacy compatibility symbols scheduled for removal have been eradicated:
-  - `PipelineStage.ROUTE_CANARY` and associated timeouts;
-  - `DisagreementKind.HEARTBEAT_PUBLIC_ROUTE` and `DisagreementKind.FALLBACK_PUBLIC_ROUTE`;
-  - `FailureDomain.DOKPLOY_WORKER_OR_DEPLOYMENT_RECORD` and `FailureDomain.DOKPLOY_COMPOSE_SOURCE_TYPE`;
-  - `PipelineEnvironment` and `to_pipeline_environment` (all delivery results and runtime functions now canonicalize to `EnvironmentTier`);
-  - Legacy `configuration_fingerprint` aliases across `runtime` modules (use `manifest_config_fingerprint` for manifest contracts and `runtime_identity_fingerprint` for runtime identity).
 - Since 2.4.0 the package ships a `py.typed` marker, so type checkers use its annotations.
 - In v3.0.0, legacy compatibility symbols scheduled for removal have been eradicated:
   - The `infra2_sdk.images` module and `data/platform_images.yaml`;
   - `RuntimeIdentity.to_otel_resource_attributes()`.
-- Secondary modules consolidated in 3.0.0 with backwards-compatible shims:
-  - `deploy`: consolidated dispatch and deploy health polling (shims: `dispatch`, `deploy_health`);
-  - `refs`: consolidated release identity resolution (shim: `release`);
-  - `runtime.environment`: unified environment vocabulary and variables (shim: `runtime.environ`);
-  - `runtime.health`: unified dependency declarations, probes, and health check runner (shims: `runtime.dependencies`, `runtime.probes`).
+- Primary domain modules own canonical implementations in 3.0.0 with backwards-compatible shims:
+  - `deploy`: canonical dispatch and deploy health polling (shims: `dispatch`, `deploy_health`);
+  - `refs`: canonical release identity resolution (shim: `release`);
+  - `runtime.environment`: canonical environment vocabulary and variables (shim: `runtime.environ`);
+  - `runtime.health`: canonical dependency declarations, probes, and health check runner (shims: `runtime.dependencies`, `runtime.probes`).
 - Former private names stay as plain aliases until consumers have moved to the public ones:
   `runtime.otel._signal_endpoint` is `signal_endpoint`, `refs._ls_remote_rows` is
   `ls_remote_rows`, `refs._redact_repo` is `redact_repo`. The private module

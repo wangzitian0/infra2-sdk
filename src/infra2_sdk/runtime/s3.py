@@ -11,8 +11,8 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from infra2_sdk.runtime._optional import require
-from infra2_sdk.runtime.environ import RuntimeEnvKey, env_float, resolve_runtime_env
-from infra2_sdk.runtime.probes import DependencyStatus, ProbeResult
+from infra2_sdk.runtime.environment import RuntimeEnvKey, env_float, resolve_runtime_env
+from infra2_sdk.runtime.health import DependencyStatus, ProbeResult
 
 _BUCKET_RE = re.compile(r"\A[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]\Z")
 _NOT_FOUND_CODES = frozenset({"404", "NoSuchBucket", "NoSuchKey", "NotFound"})

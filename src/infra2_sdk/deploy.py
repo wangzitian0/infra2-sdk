@@ -9,17 +9,16 @@ import json
 import os
 import re
 import sys
+import time
+import zipfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, fields
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from io import BytesIO
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
-
-if TYPE_CHECKING:
-    from infra2_sdk.deploy_health import HealthCheckResult, poll_until_healthy
-    from infra2_sdk.dispatch import ReceiverRun, dispatch_and_wait
 
 from infra2_sdk._wire import (
     _string,
@@ -939,25 +938,476 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-def __getattr__(name: str) -> Any:
-    if name in ("dispatch_and_wait", "ReceiverRun"):
-        from infra2_sdk.dispatch import ReceiverRun, dispatch_and_wait
+# --- Deploy Dispatch ---------------------------------------------------------
 
-        mapping = {"dispatch_and_wait": dispatch_and_wait, "ReceiverRun": ReceiverRun}
-        return mapping[name]
-    if name in ("poll_until_healthy", "HealthCheckResult"):
-        from infra2_sdk.deploy_health import HealthCheckResult, poll_until_healthy
+INFRA_REPOSITORY = "wangzitian0/infra2"
+RECEIVER_WORKFLOW_FILE = "app-deploy-request.yml"
+RECEIVER_EVENT_TYPE = "app-deploy-request"
+_RUNS_PATH = (
+    f"/repos/{INFRA_REPOSITORY}/actions/workflows/{RECEIVER_WORKFLOW_FILE}/runs"
+    "?event=repository_dispatch&per_page=30"
+)
 
-        mapping = {
-            "poll_until_healthy": poll_until_healthy,
-            "HealthCheckResult": HealthCheckResult,
-        }
-        return mapping[name]
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+Api = Callable[[str, str, object], object]
+LogFetcher = Callable[[int], bytes]
 
 
-def __dir__() -> list[str]:
-    return sorted(set(list(globals().keys()) + __all__))
+@dataclass(frozen=True)
+class ReceiverRun:
+    run_id: int
+    url: str
+
+
+def dispatch_and_wait(
+    request: DeployRequest,
+    *,
+    api: Api,
+    fetch_logs: LogFetcher,
+    sleep: Callable[[float], None] = time.sleep,
+    poll_interval: float = 5.0,
+    max_attempts: int = 300,
+) -> ReceiverRun:
+    """Dispatch ``request`` to infra2 and return the correlated, verified receiver run."""
+    canonical = request.to_dict()
+    baseline = _workflow_runs(api("GET", _RUNS_PATH, None))
+    watermark = max((_run_id(run) for run in baseline), default=0)
+
+    api(
+        "POST",
+        f"/repos/{INFRA_REPOSITORY}/dispatches",
+        {"event_type": RECEIVER_EVENT_TYPE, "client_payload": canonical},
+    )
+
+    seen: list[str] = []
+    for attempt in range(max_attempts):
+        runs = _workflow_runs(api("GET", _RUNS_PATH, None))
+        fresh = [run for run in runs if _run_id(run) > watermark]
+        seen = [f"{_run_id(run)} {run.get('display_title') or '(untitled)'}" for run in fresh]
+        candidates = [
+            run for run in fresh if request.request_id in str(run.get("display_title", ""))
+        ]
+        if len(candidates) > 1:
+            ids = sorted(_run_id(run) for run in candidates)
+            raise RuntimeError(
+                f"receiver run correlation is ambiguous for request_id "
+                f"{request.request_id!r} after watermark {watermark}: {ids}"
+            )
+        if not candidates:
+            if attempt + 1 < max_attempts:
+                sleep(poll_interval)
+            continue
+
+        run = candidates[0]
+        if run.get("status") != "completed":
+            if attempt + 1 < max_attempts:
+                sleep(poll_interval)
+            continue
+        run_id = _run_id(run)
+        if run.get("conclusion") != "success":
+            raise RuntimeError(f"infra2 receiver run {run_id} concluded {run.get('conclusion')!r}")
+        request_id = request.request_id.encode("utf-8")
+        if request_id not in fetch_logs(run_id):
+            raise RuntimeError(
+                f"infra2 receiver run {run_id} logs do not contain request_id "
+                f"{request.request_id!r}"
+            )
+        url = run.get("html_url")
+        if not isinstance(url, str) or not url.startswith(
+            f"https://github.com/{INFRA_REPOSITORY}/actions/runs/"
+        ):
+            raise RuntimeError(f"infra2 receiver run {run_id} has no canonical URL")
+        return ReceiverRun(run_id=run_id, url=url)
+
+    raise RuntimeError(
+        f"timed out waiting for an infra2 receiver run naming request_id "
+        f"{request.request_id!r} after watermark {watermark}; runs seen: {seen or 'none'}"
+    )
+
+
+def github_api_client(
+    *,
+    token: str,
+    user_agent: str,
+    timeout: float = 30.0,
+    transport: Any = None,
+) -> tuple[Api, LogFetcher]:
+    """Build the default httpx-backed (``api``, ``fetch_logs``) pair for ``dispatch_and_wait``."""
+    httpx = _require_httpx()
+    client = httpx.Client(
+        base_url="https://api.github.com",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "User-Agent": user_agent,
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        follow_redirects=True,
+        timeout=timeout,
+        transport=transport,
+    )
+
+    def api(method: str, path: str, body: object) -> object:
+        response = client.request(method, path, json=body if method == "POST" else None)
+        if response.status_code >= 400:
+            endpoint = path.split("?", 1)[0]
+            code = response.status_code
+            raise RuntimeError(f"GitHub API {method} {endpoint} failed with HTTP {code}")
+        if method == "POST":
+            if response.status_code != 204:
+                raise RuntimeError(f"GitHub dispatch expected HTTP 204, got {response.status_code}")
+            return None
+        try:
+            return response.json()
+        except ValueError:
+            raise RuntimeError("GitHub API response was not valid JSON") from None
+
+    def fetch_logs(run_id: int) -> bytes:
+        response = client.get(f"/repos/{INFRA_REPOSITORY}/actions/runs/{run_id}/logs")
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"GitHub receiver logs request failed with HTTP {response.status_code}"
+            )
+        try:
+            with zipfile.ZipFile(BytesIO(response.content)) as archive:
+                return b"\n".join(archive.read(name) for name in archive.namelist())
+        except zipfile.BadZipFile:
+            raise RuntimeError("GitHub receiver logs response was not a zip archive") from None
+
+    return api, fetch_logs
+
+
+def _require_httpx() -> Any:
+    from infra2_sdk.runtime._optional import require_httpx
+
+    return require_httpx()
+
+
+def _workflow_runs(payload: object) -> list[Mapping[str, object]]:
+    if not isinstance(payload, Mapping):
+        raise RuntimeError("GitHub workflow-runs response must be an object")
+    runs = payload.get("workflow_runs")
+    if not isinstance(runs, list) or not all(isinstance(run, Mapping) for run in runs):
+        raise RuntimeError("GitHub workflow-runs response must contain a run list")
+    return runs
+
+
+def _run_id(run: Mapping[str, object]) -> int:
+    run_id = run.get("id")
+    if isinstance(run_id, bool) or not isinstance(run_id, int) or run_id <= 0:
+        raise RuntimeError("GitHub workflow run id must be a positive integer")
+    return run_id
+
+
+def dispatch_main(
+    argv: Sequence[str] | None = None,
+    *,
+    api_client_factory: Any = None,
+    dispatch_fn: Any = None,
+) -> int:
+    """CLI entrypoint to dispatch a DeployRequest and wait for completion."""
+    parser = argparse.ArgumentParser(
+        prog="python -m infra2_sdk.dispatch",
+        description="Dispatch a DeployRequest to infra2 receiver and verify execution.",
+    )
+    parser.add_argument(
+        "--request",
+        "-r",
+        default="",
+        help="Path to request JSON file, inline JSON, or '-' for standard input",
+    )
+    parser.add_argument(
+        "--token-env",
+        default="INFRA2_PAT",
+        help="Environment variable containing GitHub token (default: INFRA2_PAT)",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=1800,
+        help="Timeout in seconds to wait for receiver run (default: 1800)",
+    )
+    parser.add_argument(
+        "--poll-interval",
+        type=int,
+        default=5,
+        help="Seconds between status checks (default: 5)",
+    )
+    parser.add_argument(
+        "--user-agent",
+        default="infra2-sdk-dispatch",
+        help="HTTP User-Agent header (default: infra2-sdk-dispatch)",
+    )
+    args = parser.parse_args(argv)
+
+    token = os.getenv(args.token_env, "")
+    if not token:
+        print(f"error: {args.token_env} environment variable is required", file=sys.stderr)
+        return 1
+    if args.timeout <= 0 or args.poll_interval <= 0:
+        print("error: timeout and poll interval must be positive", file=sys.stderr)
+        return 1
+
+    try:
+        raw_text = ""
+        if not args.request or args.request == "-":
+            raw_text = sys.stdin.read()
+        elif os.path.exists(args.request):
+            with open(args.request, encoding="utf-8") as f:
+                raw_text = f.read()
+        else:
+            raw_text = args.request
+
+        raw = json.loads(raw_text)
+        if not isinstance(raw, Mapping):
+            raise ValueError("deploy request must be a JSON object")
+
+        validate_wire_shape(raw)
+        request = DeployRequest.from_dict(raw)
+
+        client_builder = api_client_factory or github_api_client
+        api, fetch_logs = client_builder(
+            token=token,
+            user_agent=args.user_agent,
+            timeout=30.0,
+        )
+
+        max_attempts = max(1, (args.timeout + args.poll_interval - 1) // args.poll_interval)
+        runner = dispatch_fn or dispatch_and_wait
+        result = runner(
+            request,
+            api=api,
+            fetch_logs=fetch_logs,
+            poll_interval=float(args.poll_interval),
+            max_attempts=max_attempts,
+        )
+        print(json.dumps({"receiver_run_id": result.run_id, "receiver_run_url": result.url}))
+        return 0
+
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+
+# --- Deploy Health Polling ---------------------------------------------------
+
+HttpGet = Callable[[str], tuple[int, str]]
+
+
+@dataclass(frozen=True)
+class HealthCheckResult:
+    attempts: int
+    status_code: int
+    body: str
+
+
+def poll_until_healthy(
+    url: str,
+    *,
+    http_get: HttpGet,
+    expected_version: str = "",
+    version_json_keys: tuple[str, ...] = ("git_sha", "version"),
+    require_status: str | None = None,
+    max_attempts: int = 24,
+    max_version_mismatch_attempts: int | None = None,
+    interval_seconds: float = 10.0,
+    sleep: Callable[[float], None] = time.sleep,
+) -> HealthCheckResult:
+    """Poll ``url`` until healthy, or raise ``RuntimeError`` once exhausted."""
+    mismatch_budget = max_version_mismatch_attempts or max_attempts
+    mismatch_streak = 0
+    last_mismatch = ""
+    last_status = 0
+
+    for attempt in range(1, max_attempts + 1):
+        status_code, body = http_get(url)
+        last_status = status_code
+
+        if status_code != 200:
+            _maybe_sleep(sleep, interval_seconds, attempt, max_attempts)
+            continue
+
+        parsed = _parse_json_object(body)
+        if require_status is not None and (
+            parsed is None or parsed.get("status") != require_status
+        ):
+            _maybe_sleep(sleep, interval_seconds, attempt, max_attempts)
+            continue
+
+        if expected_version:
+            actual = _first_present(parsed, version_json_keys) if parsed else ""
+            if not _version_prefix_matches(actual, expected_version):
+                if actual == last_mismatch:
+                    mismatch_streak += 1
+                else:
+                    last_mismatch = actual
+                    mismatch_streak = 1
+                if mismatch_streak >= mismatch_budget:
+                    raise RuntimeError(
+                        f"{url}: still reporting version {actual!r} (expected "
+                        f"{expected_version!r} or a prefix match) after "
+                        f"{mismatch_streak} stable mismatches"
+                    )
+                _maybe_sleep(sleep, interval_seconds, attempt, max_attempts)
+                continue
+
+        return HealthCheckResult(attempts=attempt, status_code=status_code, body=body)
+
+    raise RuntimeError(
+        f"{url}: did not become healthy after {max_attempts} attempts "
+        f"(last status: HTTP {last_status})"
+    )
+
+
+def default_http_get(*, timeout: float = 10.0) -> HttpGet:
+    """httpx-backed ``http_get``: returns ``(status_code, body_text)``, or
+    ``(0, error-text)`` on any connection-level failure."""
+    httpx = _require_httpx()
+
+    def http_get(url: str) -> tuple[int, str]:
+        try:
+            response = httpx.get(url, timeout=timeout, follow_redirects=True)
+        except httpx.HTTPError as exc:
+            return 0, str(exc)
+        return response.status_code, response.text
+
+    return http_get
+
+
+def _maybe_sleep(
+    sleep: Callable[[float], None],
+    interval_seconds: float,
+    attempt: int,
+    max_attempts: int,
+) -> None:
+    if attempt < max_attempts:
+        sleep(interval_seconds)
+
+
+def _parse_json_object(body: str) -> dict[str, Any] | None:
+    try:
+        parsed = json.loads(body)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _first_present(parsed: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = parsed.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+def _version_prefix_matches(actual: str, expected: str) -> bool:
+    if not actual:
+        return False
+    return actual.startswith(expected) or expected.startswith(actual)
+
+
+def deploy_health_main(
+    argv: Sequence[str] | None = None,
+    *,
+    http_get_factory: Any = None,
+    poll_fn: Any = None,
+) -> int:
+    """CLI entrypoint to poll a health endpoint until healthy."""
+    parser = argparse.ArgumentParser(
+        prog="python -m infra2_sdk.deploy_health",
+        description="Poll a deployed HTTP endpoint until healthy.",
+    )
+    parser.add_argument("url", help="URL of the health check endpoint")
+    parser.add_argument(
+        "--expected-version",
+        default="",
+        help="Expected version string or prefix (e.g. git commit SHA or release tag)",
+    )
+    parser.add_argument(
+        "--max-attempts",
+        type=int,
+        default=24,
+        help="Maximum polling attempts before timing out (default: 24)",
+    )
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=10.0,
+        help="Seconds between polling attempts (default: 10.0)",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=10.0,
+        help="HTTP request timeout in seconds (default: 10.0)",
+    )
+    parser.add_argument(
+        "--require-status",
+        default=None,
+        help="Expected string value of the JSON 'status' field (e.g. 'ok' or 'healthy')",
+    )
+    parser.add_argument(
+        "--version-json-keys",
+        default="git_sha,version",
+        help="Comma-separated JSON keys containing release version (default: 'git_sha,version')",
+    )
+    parser.add_argument(
+        "--max-version-mismatch-attempts",
+        type=int,
+        default=None,
+        help="Consecutive mismatch attempts before failing early (default: max_attempts)",
+    )
+    args = parser.parse_args(argv)
+
+    if args.max_attempts <= 0 or args.interval <= 0:
+        print("error: max-attempts and interval must be positive", file=sys.stderr)
+        return 1
+
+    try:
+        getter_builder = http_get_factory or default_http_get
+        http_get = getter_builder(timeout=args.timeout)
+        attempts = 0
+
+        def probing_http_get(url: str) -> tuple[int, str]:
+            nonlocal attempts
+            attempts += 1
+            print(
+                f"[WAITING] Health check attempt {attempts}/{args.max_attempts}...",
+                file=sys.stderr,
+            )
+            status_code, body = http_get(url)
+            if status_code == 0:
+                print(
+                    f"[WARNING] Connection failed (attempt {attempts}/{args.max_attempts})",
+                    file=sys.stderr,
+                )
+            elif status_code != 200:
+                print(
+                    f"[WARNING] HTTP {status_code} (attempt {attempts}/{args.max_attempts})",
+                    file=sys.stderr,
+                )
+            return status_code, body
+
+        keys = tuple(k.strip() for k in args.version_json_keys.split(",") if k.strip())
+        runner = poll_fn or poll_until_healthy
+        result = runner(
+            args.url,
+            http_get=probing_http_get,
+            expected_version=args.expected_version,
+            version_json_keys=keys,
+            require_status=args.require_status,
+            max_attempts=args.max_attempts,
+            max_version_mismatch_attempts=args.max_version_mismatch_attempts,
+            interval_seconds=args.interval,
+        )
+        print(
+            f"[OK] Health check passed at {args.url} "
+            f"(HTTP 200, attempt {result.attempts}/{args.max_attempts})"
+        )
+        return 0
+
+    except Exception as exc:
+        print(f"[FAIL] Health check failed: {exc}", file=sys.stderr)
+        return 1
 
 
 __all__ = [
@@ -984,6 +1434,16 @@ __all__ = [
     "validate_deploy_request",
     "validate_wire_shape",
     "verify_production_evidence",
+    "Api",
+    "HttpGet",
+    "INFRA_REPOSITORY",
+    "LogFetcher",
+    "RECEIVER_EVENT_TYPE",
+    "RECEIVER_WORKFLOW_FILE",
+    "default_http_get",
+    "deploy_health_main",
+    "dispatch_main",
+    "github_api_client",
 ]
 
 if __name__ == "__main__":

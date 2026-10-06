@@ -16,12 +16,14 @@ from infra2_sdk.runtime._otel_env import (
     parse_otel_boolean,
     parse_traces_sampler,
 )
-from infra2_sdk.runtime.environ import RuntimeEnvKey, env_int, resolve_runtime_env
 from infra2_sdk.runtime.environment import (
     RuntimeEnvironment,
+    RuntimeEnvKey,
+    env_int,
     environment_from_env,
     normalize_deployment_environment,
     resolve_environment_tier,
+    resolve_runtime_env,
     strict_environment_from_env,
 )
 from infra2_sdk.runtime.identity import RuntimeIdentity

@@ -94,10 +94,14 @@ def test_import_isolation_without_optional_dependencies(monkeypatch: pytest.Monk
 
 def test_infra2_sdk_unknown_attribute_raises() -> None:
     """Verify error on unknown attribute and removed symbols."""
+    import importlib
+
     with pytest.raises(AttributeError, match="has no attribute 'nonexistent_symbol'"):
         _ = infra2_sdk.nonexistent_symbol
     with pytest.raises(AttributeError, match="has no attribute 'images'"):
         _ = infra2_sdk.images
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("infra2_sdk.images")
 
 
 def test_consolidated_secondary_modules() -> None:

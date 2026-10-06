@@ -11,8 +11,8 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from infra2_sdk.runtime._optional import require
-from infra2_sdk.runtime.environ import RuntimeEnvKey, env_int, resolve_runtime_env
-from infra2_sdk.runtime.probes import DependencyStatus, ProbeResult
+from infra2_sdk.runtime.environment import RuntimeEnvKey, env_int, resolve_runtime_env
+from infra2_sdk.runtime.health import DependencyStatus, ProbeResult
 
 _SQLALCHEMY_DRIVER_RE = re.compile(r"\Apostgresql\+[a-zA-Z0-9_]+://")
 
