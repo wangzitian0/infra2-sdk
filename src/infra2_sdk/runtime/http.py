@@ -14,14 +14,14 @@ if TYPE_CHECKING:
 
 from infra2_sdk import __version__
 from infra2_sdk.runtime._optional import require
-from infra2_sdk.runtime.environ import (
+from infra2_sdk.runtime.environment import (
     RuntimeEnvKey,
     env_bool,
     env_float,
     env_int,
     resolve_runtime_env,
 )
-from infra2_sdk.runtime.probes import DependencyStatus, ProbeResult
+from infra2_sdk.runtime.health import DependencyStatus, ProbeResult
 
 _IDEMPOTENT_METHODS = frozenset({"DELETE", "GET", "HEAD", "OPTIONS", "PUT", "TRACE"})
 _RETRYABLE_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})

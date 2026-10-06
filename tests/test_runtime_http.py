@@ -4,6 +4,7 @@ from email.utils import format_datetime
 import pytest
 
 from infra2_sdk import __version__
+from infra2_sdk.runtime.health import DependencyStatus
 from infra2_sdk.runtime.http import (
     HttpCheck,
     HttpClientSettings,
@@ -12,7 +13,6 @@ from infra2_sdk.runtime.http import (
     probe_http,
     retryable_request,
 )
-from infra2_sdk.runtime.probes import DependencyStatus
 
 
 class Response:

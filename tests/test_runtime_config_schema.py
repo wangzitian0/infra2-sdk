@@ -12,7 +12,7 @@ from infra2_sdk.runtime.config_schema import (
     settings_json_schema,
     validate_environment,
 )
-from infra2_sdk.runtime.environ import EnvironmentConflictError
+from infra2_sdk.runtime.environment import EnvironmentConflictError
 
 
 class Settings(BaseSettings):

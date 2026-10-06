@@ -1,12 +1,12 @@
 import pytest
 
+from infra2_sdk.runtime.health import DependencyStatus, run_probes
 from infra2_sdk.runtime.postgres import (
     PostgresCheck,
     PostgresSettings,
     normalize_postgres_dsn,
     probe_postgres,
 )
-from infra2_sdk.runtime.probes import DependencyStatus, run_probes
 
 
 class Connection:

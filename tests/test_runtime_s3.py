@@ -2,7 +2,7 @@ import io
 
 import pytest
 
-from infra2_sdk.runtime.probes import DependencyStatus
+from infra2_sdk.runtime.health import DependencyStatus
 from infra2_sdk.runtime.s3 import (
     S3Check,
     S3Settings,

@@ -118,8 +118,12 @@ class RuntimeIdentity:
     ) -> RuntimeIdentity:
         """Build identity from deploy_v2-derived results or equivalent standalone env."""
 
-        from infra2_sdk.runtime.environ import RuntimeEnvKey, resolve_runtime_env
-        from infra2_sdk.runtime.environment import environment_from_env, strict_environment_from_env
+        from infra2_sdk.runtime.environment import (
+            RuntimeEnvKey,
+            environment_from_env,
+            resolve_runtime_env,
+            strict_environment_from_env,
+        )
 
         runtime = strict_environment_from_env(environ) if strict else environment_from_env(environ)
         attributes, deployment_environment = load_resource_attributes(
