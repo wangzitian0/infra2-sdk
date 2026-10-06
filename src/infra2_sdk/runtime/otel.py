@@ -450,3 +450,12 @@ def _validate_endpoint(value: str) -> None:
         raise ValueError("OTLP endpoint must not contain credentials")
     if endpoint.fragment:
         raise ValueError("OTLP endpoint must not contain a fragment")
+
+
+__all__ = [
+    "OtelSettings",
+    "configure_telemetry",
+    "extract_trace_context",
+    "inject_trace_context",
+    "signal_endpoint",
+]

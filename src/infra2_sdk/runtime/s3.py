@@ -210,3 +210,15 @@ def redact_presigned_url(url: str | None) -> str | None:
 
 def _elapsed(started: float) -> float:
     return (time.perf_counter() - started) * 1000
+
+
+__all__ = [
+    "S3Check",
+    "S3Settings",
+    "create_s3_client",
+    "ensure_bucket",
+    "is_not_found",
+    "probe_s3",
+    "read_object_bytes",
+    "redact_presigned_url",
+]

@@ -156,3 +156,18 @@ def test_probe_postgres_closes_connection_on_execute_error() -> None:
     assert result.status is DependencyStatus.ABSENT
     assert "query execution error" in result.detail
     assert closed == [True], "postgres connection must be closed even when execute raises"
+
+
+def test_redact_postgres_error_public_contract() -> None:
+    from infra2_sdk.runtime.postgres import _redact_error, redact_postgres_error
+
+    settings = PostgresSettings("postgresql://user:top-secret@db.internal:5432/app")
+    error = (
+        "Could not connect to postgresql://user:top-secret@db.internal:5432/app "
+        "with password top-secret"
+    )
+    redacted = redact_postgres_error(error, settings)
+    assert "top-secret" not in redacted
+    assert "<redacted>" in redacted
+    assert "<redacted-postgres-dsn>" in redacted
+    assert _redact_error(error, settings) == redacted

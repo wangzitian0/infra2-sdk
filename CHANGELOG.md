@@ -5,6 +5,14 @@ changes are minor releases, removing or changing a public symbol is a major rele
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 2.7.0 - 2026-10-06
+
+### Added
+
+- Export canonical submodules and capability symbols in `infra2_sdk.__init__` and `infra2_sdk.runtime.__init__` (`__all__`), enabling natural Python introspection and autocompletion ([#64](https://github.com/wangzitian0/infra2-sdk/issues/64)).
+- Export public `redact_postgres_error(detail, settings)` in `infra2_sdk.runtime.postgres` with `_redact_error` retained as backwards-compatible alias ([#63](https://github.com/wangzitian0/infra2-sdk/issues/63)).
+- Add `tests/test_exports.py` guarding export completeness and import isolation without third-party extras.
+
 ## 2.6.0 - 2026-10-06
 
 ### Changed
