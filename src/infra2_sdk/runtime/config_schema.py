@@ -17,7 +17,7 @@ from enum import StrEnum
 from typing import Any, get_args
 
 from infra2_sdk._wire import _string, parse_contract_version, require_contract_version
-from infra2_sdk.runtime.environ import EnvironmentConflictError
+from infra2_sdk.runtime.environment import EnvironmentConflictError
 
 JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 ENVIRONMENT_MANIFEST_VERSION = 2

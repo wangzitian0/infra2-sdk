@@ -5,6 +5,12 @@ changes are minor releases, removing or changing a public symbol is a major rele
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.0.1 - 2026-10-06
+
+### Fixed
+
+- Eradicate residual internal imports of backwards-compatibility shims across runtime modules (`config_schema`, `http`, `identity`) and test suites, ensuring pure unidirectional SSOT dependency flow ([#71](https://github.com/wangzitian0/infra2-sdk/issues/71)).
+
 ## 3.0.0 - 2026-10-06
 
 ### Removed
