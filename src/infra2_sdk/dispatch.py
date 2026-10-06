@@ -1,340 +1,45 @@
-"""Dispatch a DeployRequest to infra2's receiver and correlate/verify the run.
+"""Backwards-compatible shim for deploy dispatch.
 
-Generalized off finance_report's own ``tools/app_deploy_transport.py`` (the only
-one of the two apps that had this — truealpha's own dispatch was hand-rolled
-inline bash with none of the three defenses below). This is infra2-receiver
-boundary logic, identical for every caller: any app dispatching a
-``DeployRequest`` needs to (1) know it correlated the RIGHT receiver run, not a
-stale or concurrent one, and (2) know that run actually processed ITS request,
-not just that *some* run with a plausible-looking outcome exists nearby in time.
-
-Three defenses, all load-bearing (the report_watermark_race regression this
-guards against: two overlapping dispatches, or a retry, landing runs close
-enough together that a naive "most recent run" or "run with a matching title"
-lookup can silently correlate to the wrong one):
-
-1. Watermark — snapshot the newest existing run id before dispatching; only
-   consider runs strictly newer than that. A run made by someone else's
-   concurrent dispatch (or unrelated repository activity) can never look like
-   "the one I just triggered."
-2. Request-id correlation, then an ambiguity guard on what survives it. The
-   receiver names the request in its run title, so a candidate set narrowed by
-   ``request_id`` is narrowed by the only key that actually discriminates. This
-   is NOT the title-match `first(...)` this module replaced: that matched on
-   service and version, which two retries of the same release share, so it
-   silently picked one. ``request_id`` is unique per dispatch. If more than one
-   run still matches, that is unresolvable and fails loudly.
-
-   Correlating on the watermark alone was itself the defect. truealpha could not
-   release for a day: four consecutive dispatches failed with
-
-       receiver run correlation is ambiguous after watermark ...: [id, id]
-
-   and the second id was **a different project's deploy** every time
-   (``finance_report/app staging``), because a window in time does not know
-   whose run it is holding. The deploys themselves all succeeded; only the
-   sender's ability to claim its own run failed, and since promotion to prod
-   requires a successful staging *sender* run, the lane was shut. One attempt
-   was fired into a measured gap — polled until infra2 had zero runs in flight —
-   and still collided, because a concurrent lane dispatched a minute later.
-3. Log-content verification — even a single, uniquely-correlated, successful run
-   is not proof it processed THIS request: fetch its logs and require the
-   request's own ``request_id`` to appear verbatim before trusting the
-   conclusion. Titles can be truncated or reformatted by the receiver; the logs
-   are the proof, and this defense is unchanged.
-
-Requires the ``http`` extra (``httpx``) — see ``infra2_sdk.runtime.http`` for the
-same optional-dependency convention.
+All capabilities have been consolidated into :mod:`infra2_sdk.deploy`.
 """
 
 from __future__ import annotations
 
-import argparse
-import json
-import os
 import sys
-import time
-import zipfile
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
-from io import BytesIO
-from typing import Any
+from collections.abc import Sequence
 
-from infra2_sdk.deploy import DeployRequest, validate_wire_shape
-
-INFRA_REPOSITORY = "wangzitian0/infra2"
-RECEIVER_WORKFLOW_FILE = "app-deploy-request.yml"
-RECEIVER_EVENT_TYPE = "app-deploy-request"
-_RUNS_PATH = (
-    f"/repos/{INFRA_REPOSITORY}/actions/workflows/{RECEIVER_WORKFLOW_FILE}/runs"
-    "?event=repository_dispatch&per_page=30"
+from infra2_sdk.deploy import (
+    INFRA_REPOSITORY,
+    RECEIVER_EVENT_TYPE,
+    RECEIVER_WORKFLOW_FILE,
+    Api,
+    LogFetcher,
+    ReceiverRun,
+    dispatch_and_wait,
+    dispatch_main,
+    github_api_client,
 )
 
-# (method, path, json-body-or-None) -> parsed JSON response (GET) or None (POST).
-# Raise on any non-2xx/non-204 response — dispatch_and_wait treats every Api call
-# as fail-closed; there is no soft-error return value to check.
-Api = Callable[[str, str, object], object]
-# run_id -> the run's full log archive, decoded to a single searchable bytes blob.
-LogFetcher = Callable[[int], bytes]
-
-
-@dataclass(frozen=True)
-class ReceiverRun:
-    run_id: int
-    url: str
-
-
-def dispatch_and_wait(
-    request: DeployRequest,
-    *,
-    api: Api,
-    fetch_logs: LogFetcher,
-    sleep: Callable[[float], None] = time.sleep,
-    poll_interval: float = 5.0,
-    max_attempts: int = 300,
-) -> ReceiverRun:
-    """Dispatch ``request`` to infra2 and return the correlated, verified receiver run.
-
-    Raises ``RuntimeError`` on: ambiguous correlation, a non-success conclusion,
-    a run whose logs don't contain ``request.request_id``, a run with no
-    canonical infra2 URL, or a timeout with no run ever appearing. The caller's
-    own request-building/validation (``infra2_sdk.deploy.validate_wire_shape``,
-    ``DeployRequest.from_dict``) must already be done — this function trusts
-    ``request`` is a fully-validated, ready-to-send payload.
-    """
-    canonical = request.to_dict()
-    baseline = _workflow_runs(api("GET", _RUNS_PATH, None))
-    watermark = max((_run_id(run) for run in baseline), default=0)
-
-    api(
-        "POST",
-        f"/repos/{INFRA_REPOSITORY}/dispatches",
-        {"event_type": RECEIVER_EVENT_TYPE, "client_payload": canonical},
-    )
-
-    seen: list[str] = []
-    for attempt in range(max_attempts):
-        runs = _workflow_runs(api("GET", _RUNS_PATH, None))
-        fresh = [run for run in runs if _run_id(run) > watermark]
-        # id AND title: GitHub omits display_title on a queued run, and a
-        # timeout message full of empty strings names nobody — which is the
-        # exact uselessness this reporting exists to end (review).
-        seen = [f"{_run_id(run)} {run.get('display_title') or '(untitled)'}" for run in fresh]
-        # Narrow by the key that discriminates. A concurrent dispatch — from this
-        # caller or from another project entirely — is newer than the watermark
-        # too, and no amount of waiting separates them by id.
-        candidates = [
-            run for run in fresh if request.request_id in str(run.get("display_title", ""))
-        ]
-        if len(candidates) > 1:
-            ids = sorted(_run_id(run) for run in candidates)
-            raise RuntimeError(
-                f"receiver run correlation is ambiguous for request_id "
-                f"{request.request_id!r} after watermark {watermark}: {ids}"
-            )
-        if not candidates:
-            # Deliberately keep waiting rather than failing on the other runs.
-            # A receiver run is titled once it starts, so "newer runs exist but
-            # none are mine" is the normal state while someone else deploys, and
-            # the timeout below reports what was actually there.
-            if attempt + 1 < max_attempts:
-                sleep(poll_interval)
-            continue
-
-        run = candidates[0]
-        if run.get("status") != "completed":
-            if attempt + 1 < max_attempts:
-                sleep(poll_interval)
-            continue
-        run_id = _run_id(run)
-        if run.get("conclusion") != "success":
-            raise RuntimeError(f"infra2 receiver run {run_id} concluded {run.get('conclusion')!r}")
-        request_id = request.request_id.encode("utf-8")
-        if request_id not in fetch_logs(run_id):
-            raise RuntimeError(
-                f"infra2 receiver run {run_id} logs do not contain request_id "
-                f"{request.request_id!r}"
-            )
-        url = run.get("html_url")
-        if not isinstance(url, str) or not url.startswith(
-            f"https://github.com/{INFRA_REPOSITORY}/actions/runs/"
-        ):
-            raise RuntimeError(f"infra2 receiver run {run_id} has no canonical URL")
-        return ReceiverRun(run_id=run_id, url=url)
-
-    raise RuntimeError(
-        f"timed out waiting for an infra2 receiver run naming request_id "
-        f"{request.request_id!r} after watermark {watermark}; runs seen: {seen or 'none'}"
-    )
-
-
-def github_api_client(
-    *,
-    token: str,
-    user_agent: str,
-    timeout: float = 30.0,
-    transport: Any = None,
-) -> tuple[Api, LogFetcher]:
-    """Build the default httpx-backed (``api``, ``fetch_logs``) pair for
-    ``dispatch_and_wait``. Returned callables own an httpx.Client for their
-    process lifetime — call from a single dispatch invocation, not held long-term.
-
-    ``transport`` is an httpx transport override (e.g. ``httpx.MockTransport``)
-    for tests; production callers omit it and get httpx's real network transport.
-    """
-    httpx = _require_httpx()
-    client = httpx.Client(
-        base_url="https://api.github.com",
-        headers={
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {token}",
-            "User-Agent": user_agent,
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-        follow_redirects=True,
-        timeout=timeout,
-        transport=transport,
-    )
-
-    def api(method: str, path: str, body: object) -> object:
-        response = client.request(method, path, json=body if method == "POST" else None)
-        if response.status_code >= 400:
-            raise RuntimeError(
-                f"GitHub API {method} {path.split('?', 1)[0]} failed with "
-                f"HTTP {response.status_code}"
-            )
-        if method == "POST":
-            if response.status_code != 204:
-                raise RuntimeError(f"GitHub dispatch expected HTTP 204, got {response.status_code}")
-            return None
-        try:
-            return response.json()
-        except ValueError:
-            raise RuntimeError("GitHub API response was not valid JSON") from None
-
-    def fetch_logs(run_id: int) -> bytes:
-        response = client.get(f"/repos/{INFRA_REPOSITORY}/actions/runs/{run_id}/logs")
-        if response.status_code >= 400:
-            raise RuntimeError(
-                f"GitHub receiver logs request failed with HTTP {response.status_code}"
-            )
-        try:
-            with zipfile.ZipFile(BytesIO(response.content)) as archive:
-                return b"\n".join(archive.read(name) for name in archive.namelist())
-        except zipfile.BadZipFile:
-            raise RuntimeError("GitHub receiver logs response was not a zip archive") from None
-
-    return api, fetch_logs
-
-
-def _require_httpx() -> Any:
-    from infra2_sdk.runtime._optional import require_httpx
-
-    return require_httpx()
-
-
-def _workflow_runs(payload: object) -> list[Mapping[str, object]]:
-    if not isinstance(payload, Mapping):
-        raise RuntimeError("GitHub workflow-runs response must be an object")
-    runs = payload.get("workflow_runs")
-    if not isinstance(runs, list) or not all(isinstance(run, Mapping) for run in runs):
-        raise RuntimeError("GitHub workflow-runs response must contain a run list")
-    return runs
-
-
-def _run_id(run: Mapping[str, object]) -> int:
-    run_id = run.get("id")
-    if isinstance(run_id, bool) or not isinstance(run_id, int) or run_id <= 0:
-        raise RuntimeError("GitHub workflow run id must be a positive integer")
-    return run_id
-
-
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="python -m infra2_sdk.dispatch",
-        description="Dispatch a DeployRequest to infra2 receiver and verify execution.",
-    )
-    parser.add_argument(
-        "--request",
-        "-r",
-        default="",
-        help="Path to request JSON file, inline JSON, or '-' for standard input",
-    )
-    parser.add_argument(
-        "--token-env",
-        default="INFRA2_PAT",
-        help="Environment variable containing GitHub token (default: INFRA2_PAT)",
-    )
-    parser.add_argument(
-        "--timeout",
-        type=int,
-        default=1800,
-        help="Timeout in seconds to wait for receiver run (default: 1800)",
-    )
-    parser.add_argument(
-        "--poll-interval",
-        type=int,
-        default=5,
-        help="Seconds between status checks (default: 5)",
-    )
-    parser.add_argument(
-        "--user-agent",
-        default="infra2-sdk-dispatch",
-        help="HTTP User-Agent header (default: infra2-sdk-dispatch)",
-    )
-    return parser
+__all__ = [
+    "INFRA_REPOSITORY",
+    "RECEIVER_EVENT_TYPE",
+    "RECEIVER_WORKFLOW_FILE",
+    "Api",
+    "LogFetcher",
+    "ReceiverRun",
+    "dispatch_and_wait",
+    "github_api_client",
+    "main",
+]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """CLI entrypoint to dispatch a DeployRequest and wait for completion."""
-    parser = _parser()
-    args = parser.parse_args(argv)
-
-    token = os.getenv(args.token_env, "")
-    if not token:
-        print(f"error: {args.token_env} environment variable is required", file=sys.stderr)
-        return 1
-    if args.timeout <= 0 or args.poll_interval <= 0:
-        print("error: timeout and poll interval must be positive", file=sys.stderr)
-        return 1
-
-    try:
-        raw_text = ""
-        if not args.request or args.request == "-":
-            raw_text = sys.stdin.read()
-        elif os.path.exists(args.request):
-            with open(args.request, encoding="utf-8") as f:
-                raw_text = f.read()
-        else:
-            raw_text = args.request
-
-        raw = json.loads(raw_text)
-        if not isinstance(raw, Mapping):
-            raise ValueError("deploy request must be a JSON object")
-
-        validate_wire_shape(raw)
-        request = DeployRequest.from_dict(raw)
-
-        api, fetch_logs = github_api_client(
-            token=token,
-            user_agent=args.user_agent,
-            timeout=30.0,
-        )
-
-        max_attempts = max(1, (args.timeout + args.poll_interval - 1) // args.poll_interval)
-        result = dispatch_and_wait(
-            request,
-            api=api,
-            fetch_logs=fetch_logs,
-            poll_interval=float(args.poll_interval),
-            max_attempts=max_attempts,
-        )
-        print(json.dumps({"receiver_run_id": result.run_id, "receiver_run_url": result.url}))
-        return 0
-
-    except Exception as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+    mod = sys.modules[__name__]
+    return dispatch_main(
+        argv,
+        api_client_factory=getattr(mod, "github_api_client", github_api_client),
+        dispatch_fn=getattr(mod, "dispatch_and_wait", dispatch_and_wait),
+    )
 
 
 if __name__ == "__main__":

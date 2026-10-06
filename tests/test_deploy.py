@@ -1,17 +1,30 @@
+import io
 import json
+import zipfile
 from dataclasses import replace
 
+import httpx
 import pytest
 
 from infra2_sdk.deploy import (
+    INFRA_REPOSITORY,
     DeployEvidence,
     DeployOperation,
     DeployRequest,
     DeployState,
     DeployStatus,
     DeployType,
+    HealthCheckResult,
     ProductionEvidencePolicy,
+    ReceiverRun,
     RunEvidenceExpectation,
+    _run_id,
+    _workflow_runs,
+    deploy_health_main,
+    dispatch_and_wait,
+    dispatch_main,
+    github_api_client,
+    poll_until_healthy,
     validate_wire_shape,
 )
 
@@ -614,3 +627,552 @@ def test_deploy_cli_build_request(tmp_path) -> None:
     loaded = json.loads(out_file.read_text(encoding="utf-8"))
     assert loaded["service"] == "finance_report/app"
     assert loaded["evidence"]["source_run_id"] == "100"
+
+
+# --- poll_until_healthy & deploy_health_main tests ---
+
+
+def _health_responses(*pairs: tuple[int, str]):
+    it = iter(pairs)
+
+    def http_get(url: str) -> tuple[int, str]:
+        return next(it)
+
+    return http_get
+
+
+def test_succeeds_immediately_on_a_plain_200() -> None:
+    result = poll_until_healthy(
+        "https://example.test/api/health",
+        http_get=_health_responses((200, '{"status": "healthy"}')),
+        sleep=lambda _: None,
+    )
+    assert result == HealthCheckResult(attempts=1, status_code=200, body='{"status": "healthy"}')
+
+
+def test_retries_through_connection_failures_then_succeeds() -> None:
+    sleeps: list[float] = []
+    result = poll_until_healthy(
+        "https://example.test/api/health",
+        http_get=_health_responses(
+            (0, "connection refused"), (0, "timeout"), (200, '{"status": "healthy"}')
+        ),
+        sleep=sleeps.append,
+        max_attempts=5,
+        interval_seconds=2.0,
+    )
+    assert result.attempts == 3
+    assert sleeps == [2.0, 2.0]
+
+
+def test_retries_through_non_200_status_then_succeeds() -> None:
+    result = poll_until_healthy(
+        "https://example.test/api/health",
+        http_get=_health_responses((404, "not found"), (200, '{"status": "healthy"}')),
+        sleep=lambda _: None,
+        max_attempts=5,
+    )
+    assert result.attempts == 2
+
+
+def test_raises_after_exhausting_max_attempts() -> None:
+    with pytest.raises(RuntimeError, match="did not become healthy after 2 attempts"):
+        poll_until_healthy(
+            "https://example.test/api/health",
+            http_get=_health_responses((0, "unreachable"), (503, "")),
+            sleep=lambda _: None,
+            max_attempts=2,
+        )
+
+
+def test_require_status_rejects_a_200_with_the_wrong_status_field() -> None:
+    with pytest.raises(RuntimeError, match="did not become healthy"):
+        poll_until_healthy(
+            "https://example.test/api/health",
+            http_get=_health_responses((200, '{"status": "degraded"}')),
+            require_status="healthy",
+            sleep=lambda _: None,
+            max_attempts=1,
+        )
+
+
+def test_require_status_accepts_a_different_apps_own_convention() -> None:
+    result = poll_until_healthy(
+        "https://example.test/api/health",
+        http_get=_health_responses((200, '{"status": "ok"}')),
+        require_status="ok",
+        sleep=lambda _: None,
+    )
+    assert result.status_code == 200
+
+
+def test_require_status_none_accepts_any_200_body() -> None:
+    result = poll_until_healthy(
+        "https://example.test/api/health",
+        http_get=_health_responses((200, "not even json")),
+        sleep=lambda _: None,
+    )
+    assert result.body == "not even json"
+
+
+def test_expected_version_matches_by_exact_git_sha() -> None:
+    body = json.dumps({"status": "healthy", "git_sha": "abc1234"})
+    result = poll_until_healthy(
+        "https://example.test/api/health",
+        http_get=_health_responses((200, body)),
+        expected_version="abc1234",
+        sleep=lambda _: None,
+    )
+    assert result.attempts == 1
+
+
+def test_expected_version_matches_by_short_sha_prefix_either_direction() -> None:
+    long_sha = json.dumps(
+        {"status": "healthy", "git_sha": "abc1234def5678901234567890123456789abcd"}
+    )
+    result = poll_until_healthy(
+        "https://example.test/api/health",
+        http_get=_health_responses((200, long_sha)),
+        expected_version="abc1234",
+        sleep=lambda _: None,
+    )
+    assert result.attempts == 1
+
+    short_sha = json.dumps({"status": "healthy", "git_sha": "abc1234"})
+    result2 = poll_until_healthy(
+        "https://example.test/api/health",
+        http_get=_health_responses((200, short_sha)),
+        expected_version="abc1234def5678901234567890123456789abcd",
+        sleep=lambda _: None,
+    )
+    assert result2.attempts == 1
+
+
+def test_expected_version_falls_back_to_the_version_key() -> None:
+    body = json.dumps({"status": "healthy", "version": "v1.2.3"})
+    result = poll_until_healthy(
+        "https://example.test/api/health",
+        http_get=_health_responses((200, body)),
+        expected_version="v1.2.3",
+        sleep=lambda _: None,
+    )
+    assert result.attempts == 1
+
+
+def test_version_mismatch_retries_then_succeeds_once_matching() -> None:
+    old = json.dumps({"status": "healthy", "git_sha": "old0000"})
+    new = json.dumps({"status": "healthy", "git_sha": "new1111"})
+    result = poll_until_healthy(
+        "https://example.test/api/health",
+        http_get=_health_responses((200, old), (200, new)),
+        expected_version="new1111",
+        sleep=lambda _: None,
+        max_attempts=5,
+    )
+    assert result.attempts == 2
+
+
+def test_version_mismatch_fails_early_once_the_same_wrong_sha_is_stable() -> None:
+    stuck = json.dumps({"status": "healthy", "git_sha": "old0000"})
+    with pytest.raises(RuntimeError, match="still reporting version 'old0000'"):
+        poll_until_healthy(
+            "https://example.test/api/health",
+            http_get=_health_responses((200, stuck), (200, stuck), (200, stuck)),
+            expected_version="new1111",
+            max_version_mismatch_attempts=2,
+            sleep=lambda _: None,
+            max_attempts=10,
+        )
+
+
+def test_version_mismatch_streak_resets_when_the_reported_version_changes() -> None:
+    a = json.dumps({"status": "healthy", "git_sha": "aaaa"})
+    b = json.dumps({"status": "healthy", "git_sha": "bbbb"})
+    target = json.dumps({"status": "healthy", "git_sha": "cccc"})
+    result = poll_until_healthy(
+        "https://example.test/api/health",
+        http_get=_health_responses((200, a), (200, b), (200, target)),
+        expected_version="cccc",
+        max_version_mismatch_attempts=2,
+        sleep=lambda _: None,
+        max_attempts=10,
+    )
+    assert result.attempts == 3
+
+
+def test_deploy_health_main_cli_success(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "infra2_sdk.deploy.default_http_get",
+        lambda timeout: lambda url: (200, json.dumps({"status": "ok", "version": "v1.0.0"})),
+    )
+    rc = deploy_health_main(
+        [
+            "https://example.test/health",
+            "--expected-version",
+            "v1.0.0",
+            "--require-status",
+            "ok",
+        ]
+    )
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "[OK] Health check passed" in captured.out
+
+
+def test_deploy_health_main_cli_failure(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "infra2_sdk.deploy.default_http_get",
+        lambda timeout: lambda url: (500, "error"),
+    )
+    rc = deploy_health_main(
+        ["https://example.test/health", "--max-attempts", "2", "--interval", "0.01"]
+    )
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "[FAIL] Health check failed" in captured.err
+
+
+# --- dispatch_and_wait & dispatch_main tests ---
+
+DISPATCH_TITLE = "Deploy finance_report/app staging v2.3.4 abc123 [finance-report-run-12345678]"
+
+
+def _dispatch_request() -> DeployRequest:
+    return DeployRequest(
+        request_id="finance-report-run-12345678",
+        operation=DeployOperation.DEPLOY,
+        service="finance_report/app",
+        deploy_type=DeployType.STAGING,
+        version_ref="v2.3.4",
+        source_repository="wangzitian0/finance_report",
+        source_sha=SHA,
+        evidence=DeployEvidence(
+            source_run_url="https://github.com/wangzitian0/finance_report/actions/runs/12345678",
+            source_run_id="12345678",
+        ),
+    )
+
+
+def test_dispatch_and_wait_correlates_the_watermarked_run_and_verifies_logs() -> None:
+    req = _dispatch_request()
+    calls: list[tuple[str, str, object]] = []
+    run_lists = iter(
+        [
+            {"workflow_runs": [{"id": 100}]},
+            {
+                "workflow_runs": [
+                    {
+                        "id": 101,
+                        "status": "in_progress",
+                        "conclusion": None,
+                        "display_title": DISPATCH_TITLE,
+                        "html_url": f"https://github.com/{INFRA_REPOSITORY}/actions/runs/101",
+                    },
+                    {"id": 100},
+                ]
+            },
+            {
+                "workflow_runs": [
+                    {
+                        "id": 101,
+                        "status": "completed",
+                        "conclusion": "success",
+                        "display_title": DISPATCH_TITLE,
+                        "html_url": f"https://github.com/{INFRA_REPOSITORY}/actions/runs/101",
+                    },
+                    {"id": 100},
+                ]
+            },
+        ]
+    )
+
+    def api(method: str, path: str, body: object = None) -> object:
+        calls.append((method, path, body))
+        if method == "GET":
+            return next(run_lists)
+        return None
+
+    result = dispatch_and_wait(
+        req,
+        api=api,
+        fetch_logs=lambda run_id: b'plan {"request_id": "finance-report-run-12345678"}',
+        sleep=lambda _: None,
+        max_attempts=3,
+    )
+
+    assert result.run_id == 101
+    assert result.url.endswith("/101")
+    dispatch = next(call for call in calls if call[0] == "POST")
+    assert dispatch[2] == {
+        "event_type": "app-deploy-request",
+        "client_payload": req.to_dict(),
+    }
+
+
+def test_a_concurrent_dispatch_from_another_project_no_longer_blocks_correlation() -> None:
+    req = _dispatch_request()
+    mine = {
+        "id": 32135890813,
+        "status": "completed",
+        "conclusion": "success",
+        "display_title": DISPATCH_TITLE,
+        "html_url": f"https://github.com/{INFRA_REPOSITORY}/actions/runs/32135890813",
+    }
+    theirs = {
+        "id": 32135934389,
+        "status": "in_progress",
+        "conclusion": None,
+        "display_title": (
+            "Deploy finance_report/app staging v0.1.46 89a64d1a [finance-report-run-999]"
+        ),
+        "html_url": f"https://github.com/{INFRA_REPOSITORY}/actions/runs/32135934389",
+    }
+    responses = iter([{"workflow_runs": [{"id": 32135043378}]}, {"workflow_runs": [theirs, mine]}])
+    run = dispatch_and_wait(
+        req,
+        api=lambda method, path, body=None: next(responses) if method == "GET" else None,
+        fetch_logs=lambda run_id: req.request_id.encode(),
+        sleep=lambda _: None,
+    )
+    assert run.run_id == 32135890813
+
+
+def test_two_runs_naming_the_same_request_id_are_still_ambiguous() -> None:
+    req = _dispatch_request()
+    twin = {
+        "id": 102,
+        "status": "completed",
+        "conclusion": "success",
+        "display_title": DISPATCH_TITLE,
+        "html_url": f"https://github.com/{INFRA_REPOSITORY}/actions/runs/102",
+    }
+    other = dict(twin, id=103)
+    responses = iter([{"workflow_runs": [{"id": 100}]}, {"workflow_runs": [twin, other]}])
+    with pytest.raises(RuntimeError, match="ambiguous for request_id"):
+        dispatch_and_wait(
+            req,
+            api=lambda method, path, body=None: next(responses) if method == "GET" else None,
+            fetch_logs=lambda run_id: b"",
+            sleep=lambda _: None,
+        )
+
+
+def test_the_timeout_names_the_runs_it_saw() -> None:
+    theirs = {
+        "id": 200,
+        "status": "completed",
+        "display_title": "Deploy finance_report/app staging",
+    }
+    untitled = {"id": 201, "status": "queued"}
+    responses = iter(
+        [
+            {"workflow_runs": [{"id": 100}]},
+            {"workflow_runs": [theirs, untitled, {"id": 100}]},
+            {"workflow_runs": [theirs, untitled, {"id": 100}]},
+        ]
+    )
+    with pytest.raises(RuntimeError) as caught:
+        dispatch_and_wait(
+            _dispatch_request(),
+            api=lambda method, path, body=None: next(responses) if method == "GET" else None,
+            fetch_logs=lambda run_id: b"",
+            sleep=lambda _: None,
+            max_attempts=2,
+        )
+    message = str(caught.value)
+    assert "finance_report" in message
+    assert "200 " in message
+    assert "201 (untitled)" in message
+
+
+def test_dispatch_and_wait_raises_when_logs_do_not_contain_the_request_id() -> None:
+    responses = iter(
+        [
+            {"workflow_runs": [{"id": 100}]},
+            {
+                "workflow_runs": [
+                    {
+                        "id": 101,
+                        "status": "completed",
+                        "conclusion": "success",
+                        "display_title": DISPATCH_TITLE,
+                        "html_url": f"https://github.com/{INFRA_REPOSITORY}/actions/runs/101",
+                    }
+                ]
+            },
+        ]
+    )
+    with pytest.raises(RuntimeError, match="request_id"):
+        dispatch_and_wait(
+            _dispatch_request(),
+            api=lambda method, path, body=None: next(responses) if method == "GET" else None,
+            fetch_logs=lambda run_id: b"another request",
+            sleep=lambda _: None,
+            max_attempts=1,
+        )
+
+
+def test_dispatch_and_wait_times_out_when_no_run_ever_appears() -> None:
+    responses = iter(
+        [
+            {"workflow_runs": [{"id": 100}]},
+            {"workflow_runs": [{"id": 100}]},
+            {"workflow_runs": [{"id": 100}]},
+        ]
+    )
+    sleeps: list[float] = []
+    with pytest.raises(RuntimeError, match="timed out"):
+        dispatch_and_wait(
+            _dispatch_request(),
+            api=lambda method, path, body=None: next(responses) if method == "GET" else None,
+            fetch_logs=lambda run_id: b"",
+            sleep=sleeps.append,
+            poll_interval=0.25,
+            max_attempts=2,
+        )
+    assert sleeps == [0.25]
+
+
+def _run_with_outcome(conclusion: str, url: object):
+    responses = iter(
+        [
+            {"workflow_runs": [{"id": 100}]},
+            {
+                "workflow_runs": [
+                    {
+                        "id": 101,
+                        "status": "completed",
+                        "conclusion": conclusion,
+                        "display_title": DISPATCH_TITLE,
+                        "html_url": url,
+                    }
+                ]
+            },
+        ]
+    )
+    req = _dispatch_request()
+    return dispatch_and_wait(
+        req,
+        api=lambda method, path, body=None: next(responses) if method == "GET" else None,
+        fetch_logs=lambda run_id: req.request_id.encode(),
+        sleep=lambda _: None,
+        max_attempts=1,
+    )
+
+
+def test_dispatch_and_wait_raises_on_a_non_success_conclusion() -> None:
+    with pytest.raises(RuntimeError, match="concluded 'failure'"):
+        _run_with_outcome("failure", f"https://github.com/{INFRA_REPOSITORY}/actions/runs/101")
+
+
+def test_dispatch_and_wait_raises_on_a_non_canonical_url() -> None:
+    with pytest.raises(RuntimeError, match="has no canonical URL"):
+        _run_with_outcome("success", "https://example.com/actions/runs/101")
+
+
+def test_workflow_runs_rejects_malformed_payloads() -> None:
+    for payload in ([], {}, {"workflow_runs": ["not-a-run"]}):
+        with pytest.raises(RuntimeError, match="workflow-runs response"):
+            _workflow_runs(payload)
+
+
+def test_run_id_rejects_non_positive_integers() -> None:
+    for run_id in (True, 0, "101"):
+        with pytest.raises(RuntimeError, match="positive integer"):
+            _run_id({"id": run_id})
+
+
+def _client_for(response: httpx.Response):
+    api, fetch_logs = github_api_client(
+        token="test-token",
+        user_agent="test-agent",
+        transport=httpx.MockTransport(lambda _request: response),
+    )
+    return api, fetch_logs
+
+
+def test_github_api_client_get_returns_parsed_json() -> None:
+    api, _ = _client_for(httpx.Response(200, json={"workflow_runs": []}))
+    assert api("GET", "/runs", None) == {"workflow_runs": []}
+
+
+def test_github_api_client_post_returns_none_on_204() -> None:
+    api, _ = _client_for(httpx.Response(204))
+    assert api("POST", "/dispatches", {}) is None
+
+
+def test_github_api_client_redacts_the_response_body_and_query_string_on_error() -> None:
+    api, _ = _client_for(httpx.Response(403, text="secret response body"))
+    with pytest.raises(RuntimeError, match="HTTP 403") as exc_info:
+        api("GET", "/runs?token=hidden", None)
+    assert "secret response body" not in str(exc_info.value)
+    assert "token=hidden" not in str(exc_info.value)
+
+
+def test_github_api_client_post_rejects_a_non_204_success() -> None:
+    api, _ = _client_for(httpx.Response(200))
+    with pytest.raises(RuntimeError, match="expected HTTP 204"):
+        api("POST", "/dispatches", {})
+
+
+def test_github_api_client_get_rejects_a_non_json_body() -> None:
+    api, _ = _client_for(httpx.Response(200, text="{"))
+    with pytest.raises(RuntimeError, match="not valid JSON"):
+        api("GET", "/runs", None)
+
+
+def test_github_api_client_fetch_logs_joins_every_archive_member() -> None:
+    archive_bytes = io.BytesIO()
+    with zipfile.ZipFile(archive_bytes, "w") as archive:
+        archive.writestr("receiver/1.txt", b"first")
+        archive.writestr("receiver/2.txt", b"second")
+    _, fetch_logs = _client_for(httpx.Response(200, content=archive_bytes.getvalue()))
+    assert fetch_logs(101) == b"first\nsecond"
+
+
+def test_github_api_client_fetch_logs_redacts_the_response_body_on_error() -> None:
+    _, fetch_logs = _client_for(httpx.Response(404, text="private logs"))
+    with pytest.raises(RuntimeError, match="HTTP 404") as exc_info:
+        fetch_logs(101)
+    assert "private logs" not in str(exc_info.value)
+
+
+def test_github_api_client_fetch_logs_rejects_a_non_zip_body() -> None:
+    _, fetch_logs = _client_for(httpx.Response(200, content=b"not-a-zip"))
+    with pytest.raises(RuntimeError, match="not a zip archive"):
+        fetch_logs(101)
+
+
+def test_dispatch_main_cli_requires_token(monkeypatch) -> None:
+    monkeypatch.delenv("INFRA2_PAT", raising=False)
+    rc = dispatch_main(["--request", "{}"])
+    assert rc == 1
+
+
+def test_dispatch_main_cli_success(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.setenv("INFRA2_PAT", "fake-token")
+    req = _dispatch_request()
+    req_file = tmp_path / "req.json"
+    req_file.write_text(json.dumps(req.to_dict()), encoding="utf-8")
+
+    fake_run = ReceiverRun(
+        run_id=999,
+        url="https://github.com/wangzitian0/infra2/actions/runs/999",
+    )
+    monkeypatch.setattr(
+        "infra2_sdk.deploy.github_api_client",
+        lambda **kwargs: (lambda m, p, b: None, lambda r: b""),
+    )
+    monkeypatch.setattr(
+        "infra2_sdk.deploy.dispatch_and_wait",
+        lambda *args, **kwargs: fake_run,
+    )
+
+    rc = dispatch_main(["--request", str(req_file)])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert '"receiver_run_id": 999' in captured.out
+    assert (
+        '"receiver_run_url": "https://github.com/wangzitian0/infra2/actions/runs/999"'
+        in captured.out
+    )
