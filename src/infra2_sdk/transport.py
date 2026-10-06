@@ -28,9 +28,11 @@ def urllib_transport(*, timeout: float = 30.0) -> HttpTransport:
                 headers = {k.lower(): v for k, v in response.headers.items()}
                 return HttpResponse(response.status, headers, response.read())
         except urllib.error.HTTPError as error:
-            return HttpResponse(
-                error.code, {k.lower(): v for k, v in error.headers.items()}, error.read()
-            )
+            try:
+                headers = {k.lower(): v for k, v in error.headers.items()}
+                return HttpResponse(error.code, headers, error.read())
+            finally:
+                error.close()
 
     return send
 

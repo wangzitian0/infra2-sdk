@@ -367,6 +367,16 @@ def test_onepassword_errors_carry_only_the_last_stderr_line() -> None:
         backend.read("x")
 
 
+def test_onepassword_timeout_raises_secrets_error() -> None:
+    def timing_out(args, **kwargs):
+        assert kwargs.get("timeout") == 7.5
+        raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+
+    backend = OnePasswordBackend(runner=timing_out, timeout=7.5)
+    with pytest.raises(SecretsError, match="timed out after 7.5s"):
+        backend.read("x")
+
+
 # ----------------------------------------------------------------------------- renderers
 
 

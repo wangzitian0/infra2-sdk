@@ -147,3 +147,12 @@ def test_onepassword_capacity_cli_failure_raises() -> None:
 
     with pytest.raises(RuntimeError, match="op service-account ratelimit failed"):
         onepassword_capacity("infra2-cli", runner=fail_runner)
+
+
+def test_onepassword_capacity_cli_timeout_raises() -> None:
+    def timeout_runner(args, **kwargs):
+        assert kwargs.get("timeout") == 12.5
+        raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+
+    with pytest.raises(RuntimeError, match="timed out after 12.5s"):
+        onepassword_capacity("infra2-cli", runner=timeout_runner, timeout=12.5)

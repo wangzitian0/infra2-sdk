@@ -21,18 +21,20 @@ def test_dispatch_shim_re_exports() -> None:
     assert isinstance(dispatch_shim, ModuleType)
     for name in dispatch_shim.__all__:
         assert hasattr(dispatch_shim, name), f"dispatch shim missing {name}"
-        assert getattr(dispatch_shim, name) is getattr(deploy_mod, name) or callable(
-            getattr(dispatch_shim, name)
-        )
+        if name == "main":
+            assert callable(dispatch_shim.main)
+        else:
+            assert getattr(dispatch_shim, name) is getattr(deploy_mod, name)
 
 
 def test_deploy_health_shim_re_exports() -> None:
     assert isinstance(deploy_health_shim, ModuleType)
     for name in deploy_health_shim.__all__:
         assert hasattr(deploy_health_shim, name), f"deploy_health shim missing {name}"
-        assert getattr(deploy_health_shim, name) is getattr(deploy_mod, name) or callable(
-            getattr(deploy_health_shim, name)
-        )
+        if name == "main":
+            assert callable(deploy_health_shim.main)
+        else:
+            assert getattr(deploy_health_shim, name) is getattr(deploy_mod, name)
 
 
 def test_release_shim_re_exports() -> None:

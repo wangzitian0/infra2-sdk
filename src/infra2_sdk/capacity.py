@@ -12,6 +12,7 @@ import subprocess
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import asdict, dataclass
 from datetime import date
+from typing import Any
 
 from infra2_sdk.transport import HttpTransport, urllib_transport
 
@@ -196,15 +197,29 @@ Runner = Callable[..., subprocess.CompletedProcess[str]]
 
 
 def onepassword_capacity(
-    service_account: str, *, runner: Runner = subprocess.run
+    service_account: str,
+    *,
+    runner: Runner = subprocess.run,
+    timeout: float = 30.0,
 ) -> OnePasswordCapacityReport:
     """Limits and usage from ``op service-account ratelimit``; the CLI reports both."""
-
-    result = runner(
-        ["op", "service-account", "ratelimit", service_account, "--format=json"],
-        capture_output=True,
-        text=True,
-    )
+    kwargs: dict[str, Any] = {"capture_output": True, "text": True}
+    if timeout is not None:
+        kwargs["timeout"] = timeout
+    try:
+        try:
+            result = runner(
+                ["op", "service-account", "ratelimit", service_account, "--format=json"],
+                **kwargs,
+            )
+        except TypeError:
+            kwargs.pop("timeout", None)
+            result = runner(
+                ["op", "service-account", "ratelimit", service_account, "--format=json"],
+                **kwargs,
+            )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"op service-account ratelimit timed out after {timeout}s") from exc
     if result.returncode != 0:
         raise RuntimeError("op service-account ratelimit failed")
     rows = json.loads(result.stdout or "[]")

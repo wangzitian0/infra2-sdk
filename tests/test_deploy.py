@@ -1,3 +1,4 @@
+import base64
 import io
 import json
 import zipfile
@@ -480,7 +481,21 @@ def test_verify_production_evidence_success() -> None:
         "/repos/wangzitian0/finance_report/pulls/10/reviews": reviews,
     }
 
-    verify_production_evidence(req, policy=sample_policy(), fetch_json=responses.__getitem__)
+    assert (
+        verify_production_evidence(req, policy=sample_policy(), fetch_json=responses.__getitem__)
+        is None
+    )
+
+    # Negative mutation: failing staging conclusion must raise ValueError
+    failing_staging = dict(staging_run, conclusion="failure")
+    bad_responses = dict(
+        responses,
+        **{"/repos/wangzitian0/finance_report/actions/runs/101": failing_staging},
+    )
+    with pytest.raises(ValueError, match="staging run must be completed successfully"):
+        verify_production_evidence(
+            req, policy=sample_policy(), fetch_json=bad_responses.__getitem__
+        )
 
 
 def test_verify_production_evidence_rejected_when_changes_requested() -> None:
@@ -1141,6 +1156,35 @@ def test_github_api_client_fetch_logs_rejects_a_non_zip_body() -> None:
     _, fetch_logs = _client_for(httpx.Response(200, content=b"not-a-zip"))
     with pytest.raises(RuntimeError, match="not a zip archive"):
         fetch_logs(101)
+
+
+def test_github_api_client_close_releases_underlying_client() -> None:
+    api, fetch_logs = _client_for(httpx.Response(200, json={}))
+    assert hasattr(api, "close")
+    assert hasattr(api, "client")
+    assert hasattr(fetch_logs, "close")
+    assert hasattr(fetch_logs, "client")
+    assert not api.client.is_closed
+    api.close()
+    assert api.client.is_closed
+
+
+def test_derive_release_evidence_raises_on_malformed_policy_file() -> None:
+    from infra2_sdk.deploy import derive_release_evidence
+
+    def fetch_json(url: str):
+        if "contents" in url:
+            return {"content": base64.b64encode(b"invalid-json{").decode("utf-8")}
+        return {}
+
+    with pytest.raises(ValueError, match="not valid JSON"):
+        derive_release_evidence(
+            "wangzitian0/finance_report",
+            "v1.0.0",
+            DeployType.PRODUCTION,
+            tag_sha="a" * 40,
+            fetch_json=fetch_json,
+        )
 
 
 def test_dispatch_main_cli_requires_token(monkeypatch) -> None:

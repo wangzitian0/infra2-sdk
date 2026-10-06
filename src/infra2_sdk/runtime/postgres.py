@@ -21,6 +21,7 @@ _SQLALCHEMY_DRIVER_RE = re.compile(r"\Apostgresql\+[a-zA-Z0-9_]+://")
 class PostgresSettings:
     dsn: str = field(repr=False)
     connect_timeout_seconds: int = 5
+    statement_timeout_seconds: int = 5
 
     def __post_init__(self) -> None:
         normalized = normalize_postgres_dsn(self.dsn)
@@ -28,6 +29,8 @@ class PostgresSettings:
             raise ValueError("dsn must use PostgreSQL")
         if not 1 <= self.connect_timeout_seconds <= 60:
             raise ValueError("connect_timeout_seconds must be between 1 and 60")
+        if not 1 <= self.statement_timeout_seconds <= 60:
+            raise ValueError("statement_timeout_seconds must be between 1 and 60")
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> PostgresSettings:
@@ -39,6 +42,11 @@ class PostgresSettings:
             connect_timeout_seconds=env_int(
                 environ,
                 RuntimeEnvKey.DATABASE_CONNECT_TIMEOUT_SECONDS,
+                default=5,
+            ),
+            statement_timeout_seconds=env_int(
+                environ,
+                RuntimeEnvKey.DATABASE_STATEMENT_TIMEOUT_SECONDS,
                 default=5,
             ),
         )
@@ -61,9 +69,16 @@ def probe_postgres(
     raw_conn = None
     try:
         connect = connector or require("psycopg", extra="postgres").connect
+        connect_kwargs: dict[str, Any] = {
+            "connect_timeout": settings.connect_timeout_seconds,
+        }
+        if connector is None:
+            connect_kwargs["options"] = (
+                f"-c statement_timeout={int(settings.statement_timeout_seconds * 1000)}"
+            )
         conn_or_cm = connect(
             settings.psycopg_dsn,
-            connect_timeout=settings.connect_timeout_seconds,
+            **connect_kwargs,
         )
         if hasattr(conn_or_cm, "__enter__"):
             with conn_or_cm as connection:
