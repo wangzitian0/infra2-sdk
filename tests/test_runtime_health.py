@@ -424,3 +424,14 @@ async def test_sync_probe_propagates_system_exit() -> None:
     with pytest.raises(SystemExit) as exc_info:
         await _run_sync_probe(exit_probe, name="exit")
     assert exc_info.value.code == 42
+
+
+async def test_sync_probe_semaphore_bounds_concurrency() -> None:
+    from infra2_sdk.runtime.health import _get_sync_probe_semaphore
+
+    sem = _get_sync_probe_semaphore()
+    assert sem._value <= 16
+
+    results = await asyncio.gather(*(_run_sync_probe(lambda: 123, name=f"p{i}") for i in range(20)))
+    assert len(results) == 20
+    assert all(r == 123 for r in results)

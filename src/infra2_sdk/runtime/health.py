@@ -332,6 +332,19 @@ async def run_probes(
     return tuple(await asyncio.gather(*(bounded(check) for check in values)))
 
 
+_MAX_CONCURRENT_SYNC_PROBES = 16
+_SYNC_SEMAPHORES: dict[asyncio.AbstractEventLoop, asyncio.Semaphore] = {}
+
+
+def _get_sync_probe_semaphore() -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    sem = _SYNC_SEMAPHORES.get(loop)
+    if sem is None:
+        sem = asyncio.Semaphore(_MAX_CONCURRENT_SYNC_PROBES)
+        _SYNC_SEMAPHORES[loop] = sem
+    return sem
+
+
 async def _run_sync_probe(probe, *, name: str):
     """Run a sync probe without making CLI shutdown wait for timed-out worker threads."""
     loop = asyncio.get_running_loop()
@@ -361,12 +374,14 @@ async def _run_sync_probe(probe, *, name: str):
         with suppress(RuntimeError):
             loop.call_soon_threadsafe(callback)
 
-    Thread(target=worker, name=f"infra2-probe-{name}", daemon=True).start()
-    try:
-        return await future
-    finally:
-        if not future.done():
-            future.cancel()
+    sem = _get_sync_probe_semaphore()
+    async with sem:
+        Thread(target=worker, name=f"infra2-probe-{name}", daemon=True).start()
+        try:
+            return await future
+        finally:
+            if not future.done():
+                future.cancel()
 
 
 def assert_required_dependencies(

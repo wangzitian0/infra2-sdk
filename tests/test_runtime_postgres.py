@@ -53,10 +53,12 @@ def test_postgres_settings_load_from_standard_env() -> None:
         {
             "DATABASE_URL": "postgresql+asyncpg://user:secret@db/app",
             "DATABASE_CONNECT_TIMEOUT_SECONDS": "9",
+            "DATABASE_STATEMENT_TIMEOUT_SECONDS": "7",
         }
     )
     assert settings.psycopg_dsn == "postgresql://user:secret@db/app"
     assert settings.connect_timeout_seconds == 9
+    assert settings.statement_timeout_seconds == 7
 
 
 def test_postgres_from_env_requires_dsn_and_integer_timeout() -> None:

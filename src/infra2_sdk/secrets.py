@@ -317,14 +317,30 @@ class OnePasswordBackend:
     """
 
     def __init__(
-        self, vault: str = "Infra2", *, runner: Runner = subprocess.run, category: str = "Login"
+        self,
+        vault: str = "Infra2",
+        *,
+        runner: Runner = subprocess.run,
+        category: str = "Login",
+        timeout: float = 30.0,
     ) -> None:
         self._vault = vault
         self._run = runner
         self._category = category
+        self._timeout = timeout
 
     def _op(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-        result = self._run(["op", *args], capture_output=True, text=True)
+        kwargs: dict[str, Any] = {"capture_output": True, "text": True}
+        if self._timeout is not None:
+            kwargs["timeout"] = self._timeout
+        try:
+            try:
+                result = self._run(["op", *args], **kwargs)
+            except TypeError:
+                kwargs.pop("timeout", None)
+                result = self._run(["op", *args], **kwargs)
+        except subprocess.TimeoutExpired as exc:
+            raise SecretsError(f"op {args[0]} {args[1]} timed out after {self._timeout}s") from exc
         if check and result.returncode != 0:
             tail = (result.stderr or "").strip().splitlines()[-1:] or ["no stderr"]
             raise SecretsError(f"op {args[0]} {args[1]} failed: {tail[0][:160]}")

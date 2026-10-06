@@ -698,18 +698,28 @@ def derive_release_evidence(
 
     effective_policy = policy
     if effective_policy is None and dt == DeployType.PRODUCTION:
+        policy_payload = None
         try:
             policy_payload = fetch(
                 f"/repos/{repository}/contents/{PRODUCTION_EVIDENCE_POLICY_PATH}?ref={tag_sha}"
             )
-            if isinstance(policy_payload, Mapping):
-                content = policy_payload.get("content")
-                if isinstance(content, str):
-                    raw_policy = json.loads(base64.b64decode(content, validate=False))
-                    if isinstance(raw_policy, Mapping):
-                        effective_policy = ProductionEvidencePolicy.from_dict(raw_policy)
         except Exception:
-            pass
+            policy_payload = None
+
+        if isinstance(policy_payload, Mapping):
+            content = policy_payload.get("content")
+            if isinstance(content, str):
+                try:
+                    raw_policy = json.loads(base64.b64decode(content, validate=False))
+                except (binascii.Error, ValueError) as exc:
+                    raise ValueError(
+                        f"malformed {PRODUCTION_EVIDENCE_POLICY_PATH}: not valid JSON ({exc})"
+                    ) from exc
+                if not isinstance(raw_policy, Mapping):
+                    raise ValueError(
+                        f"malformed {PRODUCTION_EVIDENCE_POLICY_PATH}: expected JSON object"
+                    )
+                effective_policy = ProductionEvidencePolicy.from_dict(raw_policy)
 
     derived_source_url = source_run_url
     derived_source_id = source_run_id
@@ -1073,6 +1083,10 @@ def github_api_client(
         except zipfile.BadZipFile:
             raise RuntimeError("GitHub receiver logs response was not a zip archive") from None
 
+    api.close = client.close  # type: ignore[attr-defined]
+    api.client = client  # type: ignore[attr-defined]
+    fetch_logs.close = client.close  # type: ignore[attr-defined]
+    fetch_logs.client = client  # type: ignore[attr-defined]
     return api, fetch_logs
 
 
@@ -1171,17 +1185,22 @@ def dispatch_main(
             timeout=30.0,
         )
 
-        max_attempts = max(1, (args.timeout + args.poll_interval - 1) // args.poll_interval)
-        runner = dispatch_fn or dispatch_and_wait
-        result = runner(
-            request,
-            api=api,
-            fetch_logs=fetch_logs,
-            poll_interval=float(args.poll_interval),
-            max_attempts=max_attempts,
-        )
-        print(json.dumps({"receiver_run_id": result.run_id, "receiver_run_url": result.url}))
-        return 0
+        try:
+            max_attempts = max(1, (args.timeout + args.poll_interval - 1) // args.poll_interval)
+            runner = dispatch_fn or dispatch_and_wait
+            result = runner(
+                request,
+                api=api,
+                fetch_logs=fetch_logs,
+                poll_interval=float(args.poll_interval),
+                max_attempts=max_attempts,
+            )
+            print(json.dumps({"receiver_run_id": result.run_id, "receiver_run_url": result.url}))
+            return 0
+        finally:
+            closer = getattr(api, "close", None) or getattr(fetch_logs, "close", None)
+            if callable(closer):
+                closer()
 
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)

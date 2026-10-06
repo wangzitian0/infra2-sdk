@@ -5,6 +5,17 @@ changes are minor releases, removing or changing a public symbol is a major rele
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.0.2 - 2026-10-06
+
+### Fixed
+
+- Harden external subprocess calls with explicit `timeout=30.0s` and structured timeout error handling in `onepassword_capacity` and `OnePasswordBackend._op` ([#73](https://github.com/wangzitian0/infra2-sdk/issues/73)).
+- Add statement timeout configuration to `PostgresSettings` and `probe_postgres` ([#73](https://github.com/wangzitian0/infra2-sdk/issues/73)).
+- Close HTTP connection pool and error streams in `github_api_client` and `urllib_transport` ([#73](https://github.com/wangzitian0/infra2-sdk/issues/73)).
+- Bound concurrent sync probe worker threads in `_run_sync_probe` using an asynchronous semaphore ([#73](https://github.com/wangzitian0/infra2-sdk/issues/73)).
+- Fail closed on malformed production evidence policy files during release evidence derivation ([#73](https://github.com/wangzitian0/infra2-sdk/issues/73)).
+- Fix test assertions and eliminate tautological checks in `test_deploy.py` and `test_compat_shims.py` ([#73](https://github.com/wangzitian0/infra2-sdk/issues/73)).
+
 ## 3.0.1 - 2026-10-06
 
 ### Fixed
