@@ -5,6 +5,14 @@ changes are minor releases, removing or changing a public symbol is a major rele
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.1.0 - 2026-10-09
+
+### Added
+
+- Introduce `infra2-sdk scaffold` CLI command for AST-compliant microservice scaffolding ([#75](https://github.com/wangzitian0/infra2-sdk/issues/75), [#78](https://github.com/wangzitian0/infra2-sdk/pull/78)).
+- Introduce `init_service` 1-line FastAPI initializer with OpenTelemetry, Prometheus metrics, structured logging, and health routes ([#75](https://github.com/wangzitian0/infra2-sdk/issues/75), [#78](https://github.com/wangzitian0/infra2-sdk/pull/78)).
+- Add template generators for `compose.yaml`, `vault-agent.hcl`, `vault-policy.hcl`, `deploy.py`, and `pyproject.toml` ([#75](https://github.com/wangzitian0/infra2-sdk/issues/75), [#78](https://github.com/wangzitian0/infra2-sdk/pull/78)).
+
 ## 3.0.2 - 2026-10-06
 
 ### Fixed
