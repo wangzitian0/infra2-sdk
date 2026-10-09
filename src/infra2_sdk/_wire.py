@@ -78,14 +78,7 @@ def require_exact_fields(
         raise ValueError(message)
 
 
-_string = parse_string
-_integer = parse_integer
-_require_exact_fields = require_exact_fields
-
 __all__ = [
-    "_integer",
-    "_require_exact_fields",
-    "_string",
     "parse_contract_version",
     "parse_integer",
     "parse_string",

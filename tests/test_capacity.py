@@ -112,7 +112,9 @@ def test_onepassword_capacity_reads_limits_and_usage_from_the_cli() -> None:
         assert args[:4] == ["op", "service-account", "ratelimit", "infra2-cli"]
         return subprocess.CompletedProcess(args, 0, json.dumps(rows), "")
 
-    limits, readings = onepassword_capacity("infra2-cli", runner=runner)
+    report = onepassword_capacity("infra2-cli", runner=runner)
+    limits = report.limits
+    readings = report.readings
     assert [(item.name, item.limit, item.window) for item in limits] == [
         ("onepassword.token.read", 1000, "hour"),
         ("onepassword.account.write", 100, "day"),
@@ -133,11 +135,9 @@ def test_onepassword_capacity_report_structured_interface() -> None:
 
     report = onepassword_capacity("infra2-cli", runner=runner)
     assert isinstance(report, OnePasswordCapacityReport)
-    assert len(report) == 2
-    assert report.limits == report[0]
-    assert report.readings == report[1]
     assert len(report.limits) == 1
     assert report.limits[0].name == "onepassword.token.read"
+    assert len(report.readings) == 1
     assert report.readings[0].used == 10
 
 

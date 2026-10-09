@@ -170,12 +170,6 @@ def redact_repo(repo: str) -> str:
     return re.sub(r"(://)[^/@\s]+@", r"\1<redacted>@", repo)
 
 
-# Deprecated aliases (since 2.4.0): these were private before they were published. They stay
-# plain module attributes, the very same functions, until consumers have moved to the public
-# names; use ``ls_remote_rows`` and ``redact_repo``.
-_ls_remote_rows = ls_remote_rows
-_redact_repo = redact_repo
-
 _OCI_DIGEST_RE = re.compile(r"\Asha256:[0-9a-f]{64}\Z")
 _REFERENCE_RE = re.compile(r"\A[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\Z")
 _IMAGE_RE = re.compile(r"\A[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+\Z")
@@ -343,8 +337,6 @@ __all__ = [
     "ReleaseError",
     "ReleaseIdentity",
     "ResolvedRef",
-    "_ls_remote_rows",
-    "_redact_repo",
     "classify_ref",
     "ls_remote_rows",
     "redact_repo",

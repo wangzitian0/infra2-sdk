@@ -276,13 +276,9 @@ def test_signal_endpoint_derives_each_signal_from_any_base_form(base: str, signa
     assert signal_endpoint(base, signal) == f"http://collector:4318/v1/{signal}"
 
 
-def test_signal_endpoint_requires_a_base_and_keeps_the_deprecated_private_alias() -> None:
+def test_signal_endpoint_requires_a_base() -> None:
     with pytest.raises(ValueError, match="endpoint is required"):
         signal_endpoint(None, "traces")
-    # finance_report imports (and its tests delete) the private spelling: it must remain a
-    # plain module attribute that is the very same function until it is retired.
-    assert otel_module._signal_endpoint is signal_endpoint
-    assert "_signal_endpoint" in vars(otel_module)
 
 
 @pytest.mark.parametrize(

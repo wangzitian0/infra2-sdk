@@ -114,7 +114,9 @@ def resolve_app_hostname(
     # Handle legacy canary PR 999
     if slot_id is not None:
         slot_str = str(slot_id).strip().lower()
-        if slot_str in ("999", "pr-999", "canary-preview"):
+        if slot_str == CANARY_SLOT:
+            return f"{CANARY_SLOT}.{base_domain}"
+        if slot_str in ("999", "pr-999"):
             warnings.warn(
                 f"Legacy canary slot {slot_id!r} mapped to {CANARY_SLOT}. "
                 "Use CANARY_SLOT or tier='canary'.",

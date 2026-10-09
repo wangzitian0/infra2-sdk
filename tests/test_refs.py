@@ -4,7 +4,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from infra2_sdk import refs
 from infra2_sdk.refs import (
     ReleaseError,
     ReleaseIdentity,
@@ -183,12 +182,6 @@ def test_ls_remote_rows_wraps_failures_and_never_leaks_embedded_credentials(erro
 )
 def test_redact_repo_is_public_and_strips_url_credentials(value: str, expected: str) -> None:
     assert redact_repo(value) == expected
-
-
-def test_private_names_remain_as_deprecated_aliases_of_the_public_functions() -> None:
-    # infra2's libs/deploy/refs.py imports these two private spellings until it migrates.
-    assert refs._ls_remote_rows is refs.ls_remote_rows
-    assert refs._redact_repo is refs.redact_repo
 
 
 # --- Release Identity & Verification (consolidated from release) --------------

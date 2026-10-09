@@ -30,7 +30,7 @@ from functools import partial
 from threading import Thread
 from typing import Any, Protocol, runtime_checkable
 
-from infra2_sdk._wire import _string, parse_contract_version, require_contract_version
+from infra2_sdk._wire import parse_contract_version, parse_string, require_contract_version
 from infra2_sdk.runtime.environment import EnvironmentTier, resolve_environment_tier
 
 DEPENDENCY_MANIFEST_VERSION = 1
@@ -92,13 +92,13 @@ class Dependency:
         if any(not isinstance(value, str) for value in (*required, *env_vars)):
             raise ValueError("required_in and env_vars must contain strings")
         return cls(
-            name=_string(raw, "name"),
-            kind=DependencyKind(_string(raw, "kind")),
+            name=parse_string(raw, "name"),
+            kind=DependencyKind(parse_string(raw, "kind")),
             required_in=frozenset(resolve_environment_tier(value) for value in required),
             env_vars=frozenset(env_vars),
-            summary=_string(raw, "summary", required=False),
-            local_backend=_string(raw, "local_backend", required=False),
-            deployed_backend=_string(raw, "deployed_backend", required=False),
+            summary=parse_string(raw, "summary", required=False),
+            local_backend=parse_string(raw, "local_backend", required=False),
+            deployed_backend=parse_string(raw, "deployed_backend", required=False),
         )
 
 
@@ -247,9 +247,9 @@ class ProbeResult:
         except (TypeError, ValueError):
             raise ValueError("duration_ms must be numeric") from None
         return cls(
-            name=_string(raw, "name"),
-            status=DependencyStatus(_string(raw, "status")),
-            detail=_string(raw, "detail", required=False),
+            name=parse_string(raw, "name"),
+            status=DependencyStatus(parse_string(raw, "status")),
+            detail=parse_string(raw, "detail", required=False),
             duration_ms=duration_ms,
         )
 

@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from infra2_sdk._wire import _string
+from infra2_sdk._wire import parse_string
 from infra2_sdk.runtime._otel_env import load_resource_attributes
 from infra2_sdk.runtime.environment import (
     EnvironmentTier,
@@ -96,17 +96,17 @@ class RuntimeIdentity:
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> RuntimeIdentity:
         return cls(
-            service_name=_string(raw, "service_name"),
-            service_version=_string(raw, "service_version"),
-            environment=resolve_environment_tier(_string(raw, "environment")),
-            commit_sha=_string(raw, "commit_sha"),
-            deployment_environment=_string(raw, "deployment_environment", required=False),
-            image_digest=_string(raw, "image_digest", required=False),
-            configuration_sha256=_string(raw, "configuration_sha256", required=False),
-            release_id=_string(raw, "release_id", required=False),
-            instance_id=_string(raw, "instance_id", required=False),
-            provenance_uri=_string(raw, "provenance_uri", required=False),
-            sbom_uri=_string(raw, "sbom_uri", required=False),
+            service_name=parse_string(raw, "service_name"),
+            service_version=parse_string(raw, "service_version"),
+            environment=resolve_environment_tier(parse_string(raw, "environment")),
+            commit_sha=parse_string(raw, "commit_sha"),
+            deployment_environment=parse_string(raw, "deployment_environment", required=False),
+            image_digest=parse_string(raw, "image_digest", required=False),
+            configuration_sha256=parse_string(raw, "configuration_sha256", required=False),
+            release_id=parse_string(raw, "release_id", required=False),
+            instance_id=parse_string(raw, "instance_id", required=False),
+            provenance_uri=parse_string(raw, "provenance_uri", required=False),
+            sbom_uri=parse_string(raw, "sbom_uri", required=False),
         )
 
     @classmethod
