@@ -21,8 +21,8 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from infra2_sdk._wire import (
-    _string,
     parse_contract_version,
+    parse_string,
     require_contract_version,
     require_exact_fields,
 )
@@ -68,10 +68,10 @@ class DeployEvidence:
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> DeployEvidence:
         return cls(
-            source_run_url=_string(raw, "source_run_url"),
-            source_run_id=_string(raw, "source_run_id", required=False),
-            staging_run_url=_string(raw, "staging_run_url", required=False),
-            reviewed_change_url=_string(raw, "reviewed_change_url", required=False),
+            source_run_url=parse_string(raw, "source_run_url"),
+            source_run_id=parse_string(raw, "source_run_id", required=False),
+            staging_run_url=parse_string(raw, "staging_run_url", required=False),
+            reviewed_change_url=parse_string(raw, "reviewed_change_url", required=False),
         )
 
 
@@ -108,13 +108,13 @@ class DeployRequest:
         )
         return cls(
             contract_version=contract_version,
-            request_id=_string(raw, "request_id"),
-            operation=DeployOperation(_string(raw, "operation")),
-            service=_string(raw, "service"),
-            deploy_type=DeployType(_string(raw, "deploy_type")),
-            version_ref=_string(raw, "version_ref"),
-            source_repository=_string(raw, "source_repository"),
-            source_sha=_string(raw, "source_sha").lower(),
+            request_id=parse_string(raw, "request_id"),
+            operation=DeployOperation(parse_string(raw, "operation")),
+            service=parse_string(raw, "service"),
+            deploy_type=DeployType(parse_string(raw, "deploy_type")),
+            version_ref=parse_string(raw, "version_ref"),
+            source_repository=parse_string(raw, "source_repository"),
+            source_sha=parse_string(raw, "source_sha").lower(),
             evidence=DeployEvidence.from_dict(evidence),
         )
 
@@ -155,11 +155,11 @@ class DeployStatus:
         )
         return cls(
             contract_version=contract_version,
-            request_id=_string(raw, "request_id"),
-            state=DeployState(_string(raw, "state")),
-            detail=_string(raw, "detail", required=False),
-            evidence_url=_string(raw, "evidence_url", required=False),
-            deployed_version=_string(raw, "deployed_version", required=False),
+            request_id=parse_string(raw, "request_id"),
+            state=DeployState(parse_string(raw, "state")),
+            detail=parse_string(raw, "detail", required=False),
+            evidence_url=parse_string(raw, "evidence_url", required=False),
+            deployed_version=parse_string(raw, "deployed_version", required=False),
         )
 
 
@@ -297,9 +297,9 @@ class RunEvidenceExpectation:
         if type(require_head_sha) is not bool:
             raise ValueError("require_head_sha must be a boolean")
         return cls(
-            workflow_path=_string(raw, "workflow_path"),
-            event=_string(raw, "event"),
-            display_title_template=_string(raw, "display_title_template"),
+            workflow_path=parse_string(raw, "workflow_path"),
+            event=parse_string(raw, "event"),
+            display_title_template=parse_string(raw, "display_title_template"),
             require_head_sha=require_head_sha,
         )
 
@@ -347,10 +347,10 @@ class ProductionEvidencePolicy:
             raise ValueError("staging must be an object")
         return cls(
             contract_version=contract_version,
-            service=_string(raw, "service"),
+            service=parse_string(raw, "service"),
             source=RunEvidenceExpectation.from_dict(source),
             staging=RunEvidenceExpectation.from_dict(staging),
-            review_base_ref=_string(raw, "review_base_ref"),
+            review_base_ref=parse_string(raw, "review_base_ref"),
         )
 
 
@@ -569,6 +569,34 @@ def _verify_reviewed_pull(
             raise ValueError("reviewed pull request has pending CHANGES_REQUESTED")
 
 
+def _parse_evidence_policy_payload(
+    where: str,
+    payload: Any,
+    *,
+    service: str | None = None,
+) -> ProductionEvidencePolicy:
+    if not isinstance(payload, Mapping):
+        raise ValueError(f"{where} must contain a JSON object")
+    content = payload.get("content")
+    if not isinstance(content, str):
+        raise ValueError(f"{where} did not return file content")
+    try:
+        raw = json.loads(base64.b64decode(content, validate=False))
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError(
+            f"malformed {PRODUCTION_EVIDENCE_POLICY_PATH}: not valid JSON ({exc})"
+        ) from exc
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"malformed {PRODUCTION_EVIDENCE_POLICY_PATH}: expected JSON object")
+    try:
+        policy = ProductionEvidencePolicy.from_dict(raw)
+    except ValueError as exc:
+        raise ValueError(f"{where} is not a valid evidence contract: {exc}") from exc
+    if service is not None and policy.service != service:
+        raise ValueError(f"{where} declares service {policy.service!r}, not {service!r}")
+    return policy
+
+
 def fetch_production_evidence_policy(
     request: DeployRequest,
     *,
@@ -589,24 +617,7 @@ def fetch_production_evidence_policy(
             "app repo to declare its own contract file (infra2#576); without one "
             "the app is staging-only."
         ) from exc
-    if not isinstance(payload, Mapping):
-        raise ValueError(f"{where} must contain a JSON object")
-    content = payload.get("content")
-    if not isinstance(content, str):
-        raise ValueError(f"{where} did not return file content")
-    try:
-        raw = json.loads(base64.b64decode(content, validate=False))
-    except (binascii.Error, ValueError) as exc:
-        raise ValueError(f"{where} is not valid JSON: {exc}") from exc
-    if not isinstance(raw, Mapping):
-        raise ValueError(f"{where} must contain a JSON object")
-    try:
-        policy = ProductionEvidencePolicy.from_dict(raw)
-    except ValueError as exc:
-        raise ValueError(f"{where} is not a valid evidence contract: {exc}") from exc
-    if policy.service != request.service:
-        raise ValueError(f"{where} declares service {policy.service!r}, not {request.service!r}")
-    return policy
+    return _parse_evidence_policy_payload(where, payload, service=request.service)
 
 
 def verify_production_evidence(
@@ -706,20 +717,9 @@ def derive_release_evidence(
         except Exception:
             policy_payload = None
 
-        if isinstance(policy_payload, Mapping):
-            content = policy_payload.get("content")
-            if isinstance(content, str):
-                try:
-                    raw_policy = json.loads(base64.b64decode(content, validate=False))
-                except (binascii.Error, ValueError) as exc:
-                    raise ValueError(
-                        f"malformed {PRODUCTION_EVIDENCE_POLICY_PATH}: not valid JSON ({exc})"
-                    ) from exc
-                if not isinstance(raw_policy, Mapping):
-                    raise ValueError(
-                        f"malformed {PRODUCTION_EVIDENCE_POLICY_PATH}: expected JSON object"
-                    )
-                effective_policy = ProductionEvidencePolicy.from_dict(raw_policy)
+        if policy_payload is not None:
+            where = f"{repository}:{PRODUCTION_EVIDENCE_POLICY_PATH}@{tag_sha}"
+            effective_policy = _parse_evidence_policy_payload(where, policy_payload)
 
     derived_source_url = source_run_url
     derived_source_id = source_run_id

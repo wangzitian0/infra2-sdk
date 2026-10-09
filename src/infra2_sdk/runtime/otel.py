@@ -428,12 +428,6 @@ def signal_endpoint(base: str | None, signal: str) -> str:
     return urlunsplit((endpoint.scheme, endpoint.netloc, path, endpoint.query, ""))
 
 
-# Deprecated alias (since 2.4.0): ``_signal_endpoint`` was the only spelling before the
-# function was published. It stays a plain module attribute so consumers that probe or
-# patch it keep working; use ``signal_endpoint``.
-_signal_endpoint = signal_endpoint
-
-
 def _validate_endpoint(value: str) -> None:
     try:
         endpoint = urlsplit(value)

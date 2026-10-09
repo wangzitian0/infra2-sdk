@@ -19,10 +19,10 @@ from typing import Any
 
 from infra2_sdk._wire import (
     parse_contract_version,
+    parse_integer,
+    parse_string,
     require_contract_version,
-)
-from infra2_sdk._wire import (
-    require_exact_fields as _require_exact_fields,
+    require_exact_fields,
 )
 
 SNAPSHOT_MANIFEST_VERSION = 1
@@ -76,16 +76,16 @@ class SnapshotProducer:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> SnapshotProducer:
-        _require_exact_fields(
+        require_exact_fields(
             raw,
             {"repository", "source_sha", "run_id", "run_url"},
             description="producer",
         )
         return cls(
-            repository=_string(raw, "repository"),
-            source_sha=_string(raw, "source_sha"),
-            run_id=_string(raw, "run_id"),
-            run_url=_string(raw, "run_url"),
+            repository=parse_string(raw, "repository"),
+            source_sha=parse_string(raw, "source_sha"),
+            run_id=parse_string(raw, "run_id"),
+            run_url=parse_string(raw, "run_url"),
         )
 
 
@@ -114,20 +114,20 @@ class ResidualScanProof:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> ResidualScanProof:
-        _require_exact_fields(
+        require_exact_fields(
             raw,
             {"status", "classified_columns", "tables_scanned", "residuals_found"},
             description="residual_scan",
         )
         try:
-            status = ResidualScanStatus(_string(raw, "status"))
+            status = ResidualScanStatus(parse_string(raw, "status"))
         except ValueError as exc:
             raise ValueError("residual scan status must be passed") from exc
         return cls(
             status=status,
-            classified_columns=_integer(raw, "classified_columns"),
-            tables_scanned=_integer(raw, "tables_scanned"),
-            residuals_found=_integer(raw, "residuals_found"),
+            classified_columns=parse_integer(raw, "classified_columns"),
+            tables_scanned=parse_integer(raw, "tables_scanned"),
+            residuals_found=parse_integer(raw, "residuals_found"),
         )
 
 
@@ -153,19 +153,19 @@ class SnapshotArtifact:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> SnapshotArtifact:
-        _require_exact_fields(
+        require_exact_fields(
             raw,
             {"format", "sha256", "size_bytes"},
             description="artifact",
         )
         try:
-            artifact_format = SnapshotArtifactFormat(_string(raw, "format"))
+            artifact_format = SnapshotArtifactFormat(parse_string(raw, "format"))
         except ValueError as exc:
             raise ValueError("unsupported snapshot artifact format") from exc
         return cls(
             format=artifact_format,
-            sha256=_string(raw, "sha256"),
-            size_bytes=_integer(raw, "size_bytes"),
+            sha256=parse_string(raw, "sha256"),
+            size_bytes=parse_integer(raw, "size_bytes"),
         )
 
 
@@ -218,7 +218,7 @@ class AnonymizedSnapshotManifest:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> AnonymizedSnapshotManifest:
-        _require_exact_fields(
+        require_exact_fields(
             raw,
             {
                 "contract_version",
@@ -240,11 +240,11 @@ class AnonymizedSnapshotManifest:
         )
         return cls(
             contract_version=contract_version,
-            snapshot_id=_string(raw, "snapshot_id"),
-            source_environment=_string(raw, "source_environment"),
-            source_schema_revision=_string(raw, "source_schema_revision"),
-            anonymizer_sha=_string(raw, "anonymizer_sha"),
-            generated_at=_string(raw, "generated_at"),
+            snapshot_id=parse_string(raw, "snapshot_id"),
+            source_environment=parse_string(raw, "source_environment"),
+            source_schema_revision=parse_string(raw, "source_schema_revision"),
+            anonymizer_sha=parse_string(raw, "anonymizer_sha"),
+            generated_at=parse_string(raw, "generated_at"),
             producer=SnapshotProducer.from_dict(_mapping(raw, "producer")),
             residual_scan=ResidualScanProof.from_dict(_mapping(raw, "residual_scan")),
             artifact=SnapshotArtifact.from_dict(_mapping(raw, "artifact")),
@@ -341,23 +341,6 @@ def verify_snapshot_artifact(
         raise ValueError("snapshot artifact is unavailable") from exc
     if digest.hexdigest() != manifest.artifact.sha256:
         raise ValueError("snapshot artifact sha256 mismatch")
-
-
-def _string(raw: Mapping[str, Any], key: str) -> str:
-    value = raw.get(key)
-    if not isinstance(value, str):
-        raise ValueError(f"{key} must be a string")
-    value = value.strip()
-    if not value:
-        raise ValueError(f"{key} is required")
-    return value
-
-
-def _integer(raw: Mapping[str, Any], key: str) -> int:
-    value = raw.get(key)
-    if type(value) is not int:
-        raise ValueError(f"{key} must be an integer")
-    return value
 
 
 def _mapping(raw: Mapping[str, Any], key: str) -> Mapping[str, Any]:

@@ -177,16 +177,9 @@ def inspect_compose(path_or_text: str | Path) -> ComposeReport:
         services = doc.get("services")
         if not isinstance(services, dict):
             continue
-        for name, spec in services.items():
-            if not isinstance(spec, dict):
-                unlimited.append(str(name))
-                continue
-            if "extends" in spec:
-                continue
-            if is_memory_ceiling(spec.get("mem_limit")):
-                compliant.append(str(name))
-            else:
-                unlimited.append(str(name))
+        comp, unlim = inspect_service_resource_limits(services)
+        compliant.extend(comp)
+        unlimited.extend(unlim)
 
     return ComposeReport(
         path=path_str,

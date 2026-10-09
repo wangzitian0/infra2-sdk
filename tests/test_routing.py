@@ -110,6 +110,14 @@ def test_canary_hostname_resolution_and_legacy_fallback():
         host = resolve_app_hostname("report", EnvironmentTier.PREVIEW, slot_id="pr-999")
         assert host == f"{CANARY_SLOT}.{DEFAULT_BASE_DOMAIN}"
 
+    # Canonical CANARY_SLOT slot_id does not trigger deprecation warning
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        host = resolve_app_hostname("report", EnvironmentTier.PREVIEW, slot_id=CANARY_SLOT)
+        assert host == f"{CANARY_SLOT}.{DEFAULT_BASE_DOMAIN}"
+
 
 def test_resolve_dokploy_domains():
     pref = AppRoutePreference(

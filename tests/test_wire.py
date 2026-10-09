@@ -1,8 +1,6 @@
 import pytest
 
 from infra2_sdk._wire import (
-    _integer,
-    _string,
     parse_contract_version,
     parse_integer,
     parse_string,
@@ -36,9 +34,6 @@ def test_parse_string() -> None:
     with pytest.raises(ValueError, match="key must be a string"):
         parse_string({"key": 123}, "key")
 
-    # Alias check
-    assert _string({"a": "b"}, "a") == "b"
-
 
 def test_parse_integer() -> None:
     assert parse_integer({"count": 42}, "count") == 42
@@ -50,6 +45,3 @@ def test_parse_integer() -> None:
         parse_integer({"count": "42"}, "count")
     with pytest.raises(ValueError, match="count must be an integer"):
         parse_integer({"count": True}, "count")
-
-    # Alias check
-    assert _integer({"a": 1}, "a") == 1

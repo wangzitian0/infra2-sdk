@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from datetime import date
 from typing import Any
@@ -174,23 +174,10 @@ def cloudflare_readings(
 
 @dataclass(frozen=True)
 class OnePasswordCapacityReport:
-    """Structured report of 1Password service account rate limits and usage.
-
-    Supports tuple unpacking `limits, readings = report` for backward compatibility.
-    """
+    """Structured report of 1Password service account rate limits and usage."""
 
     limits: tuple[CapacityLimit, ...]
     readings: tuple[CapacityReading, ...]
-
-    def __iter__(self) -> Iterator[tuple[CapacityLimit, ...] | tuple[CapacityReading, ...]]:
-        """Deprecated compatibility iterator. Access `.limits` and `.readings` directly."""
-        return iter((self.limits, self.readings))
-
-    def __getitem__(self, index: int) -> tuple[CapacityLimit, ...] | tuple[CapacityReading, ...]:
-        return (self.limits, self.readings)[index]
-
-    def __len__(self) -> int:
-        return 2
 
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]

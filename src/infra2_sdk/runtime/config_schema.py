@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass, replace
 from enum import StrEnum
 from typing import Any, get_args
 
-from infra2_sdk._wire import _string, parse_contract_version, require_contract_version
+from infra2_sdk._wire import parse_contract_version, parse_string, require_contract_version
 from infra2_sdk.runtime.environment import EnvironmentConflictError
 
 JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
@@ -130,23 +130,23 @@ class EnvironmentField:
         if not isinstance(aliases, list) or any(not isinstance(value, str) for value in aliases):
             raise ValueError("aliases must be an array of strings")
         return cls(
-            field=_string(raw, "field"),
-            env=_string(raw, "env"),
+            field=parse_string(raw, "field"),
+            env=parse_string(raw, "env"),
             aliases=tuple(aliases),
             required=_boolean(raw, "required"),
             injected=_boolean(raw, "injected"),
             has_default=_boolean(raw, "has_default", default=True),
             sensitive=_boolean(raw, "sensitive"),
-            group=_string(raw, "group", required=False) or "Application",
-            description=_string(raw, "description", required=False),
-            source=_string(raw, "source", required=False) or FieldSource.CODE,
+            group=parse_string(raw, "group", required=False) or "Application",
+            description=parse_string(raw, "description", required=False),
+            source=parse_string(raw, "source", required=False) or FieldSource.CODE,
             empty_ok=_boolean(raw, "empty_ok"),
-            scope=_string(raw, "scope", required=False) or "env",
-            provided_by=_string(raw, "provided_by", required=False),
-            composed_from=_string(raw, "composed_from", required=False),
+            scope=parse_string(raw, "scope", required=False) or "env",
+            provided_by=parse_string(raw, "provided_by", required=False),
+            composed_from=parse_string(raw, "composed_from", required=False),
             mirror_to_1password=_boolean(raw, "mirror_to_1password"),
-            ci=_string(raw, "ci", required=False) or "forbidden",
-            store_key=_string(raw, "store_key", required=False),
+            ci=parse_string(raw, "ci", required=False) or "forbidden",
+            store_key=parse_string(raw, "store_key", required=False),
         )
 
 
@@ -204,7 +204,7 @@ class EnvironmentManifest:
             raise ValueError("fields must be an array of objects")
         return cls(
             contract_version=contract_version,
-            source=_string(raw, "source"),
+            source=parse_string(raw, "source"),
             fields=tuple(EnvironmentField.from_dict(value) for value in fields),
         )
 
