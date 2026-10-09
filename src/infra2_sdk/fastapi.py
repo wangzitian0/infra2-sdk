@@ -10,11 +10,8 @@ Provides turnkey compliance with ops.observability.md §5.1:
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import os
-import signal
-import sys
 import time
 from collections.abc import Callable
 from typing import Any
@@ -163,12 +160,3 @@ def init_service(
     if enable_otel:
         otel_service_name = os.getenv("OTEL_SERVICE_NAME") or name
         _setup_opentelemetry(app, otel_service_name)
-
-    # 5. Graceful SIGTERM shutdown hook
-    def _sigterm_handler(signum, _frame):
-        logger.info(f"Received signal {signum}, initiating graceful shutdown...")
-        # Let ASGI server (Uvicorn) naturally drain active requests
-        sys.exit(0)
-
-    with contextlib.suppress(ValueError, AttributeError):
-        signal.signal(signal.SIGTERM, _sigterm_handler)

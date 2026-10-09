@@ -105,3 +105,23 @@ def test_fastapi_init_with_db_exception():
     health = client.get("/health")
     assert health.status_code == 503
     assert health.json()["status"] == "unhealthy"
+
+
+def test_fastapi_init_with_otel_enabled(monkeypatch):
+    from unittest.mock import MagicMock
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+    monkeypatch.setenv(
+        "OTEL_RESOURCE_ATTRIBUTES",
+        "deployment.environment=staging,service.version=1.0.0",
+    )
+    monkeypatch.setattr(
+        "opentelemetry.exporter.otlp.proto.http.trace_exporter.OTLPSpanExporter",
+        MagicMock(),
+    )
+    app = FastAPI()
+    init_service(app, name="metrics-svc", enable_otel=True)
+    client = TestClient(app)
+    res = client.get("/livez")
+    assert res.status_code == 200
+    assert res.json() == {"status": "alive", "service": "metrics-svc"}

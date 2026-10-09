@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 
@@ -34,6 +35,7 @@ def generate_compose_yaml(
     clean_service = _clean_ident(service_name)
     clean_project = _clean_ident(project)
     container_prefix = f"{clean_project}-{clean_service}"
+    db_env = "      DATABASE_URL: ${DATABASE_URL:-}\n" if db == "postgres" else ""
 
     return f"""services:
   vault-agent:
@@ -110,7 +112,7 @@ def generate_compose_yaml(
     volumes:
       - secrets:/secrets:ro
     environment:
-      PORT: "{port}"
+{db_env}      PORT: "{port}"
       ENV: ${{ENV}}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${{OTEL_EXPORTER_OTLP_ENDPOINT:-}}
       OTEL_SERVICE_NAME: ${{OTEL_SERVICE_NAME:-}}
@@ -381,7 +383,7 @@ def scaffold_service(
     return created
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Zero-Compromise Microservice Scaffolder")
     parser.add_argument("name", help="Service name (e.g. demo-app)")
     parser.add_argument("--project", default="apps", help="Project identifier (default: apps)")
@@ -402,7 +404,7 @@ def main() -> int:
         "--out-dir", default=None, help="Target output directory (default: ./<name>)"
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     out = Path(args.out_dir) if args.out_dir else Path(f"./{args.name}")
 
     try:

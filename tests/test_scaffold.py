@@ -97,3 +97,25 @@ def test_scaffold_compose_yaml_resource_limits(tmp_path: Path):
 
     # Assert health check start_period is at least 120s (for DB migration safety)
     assert "start_period: 120s" in compose_text
+
+
+def test_scaffold_compose_yaml_db_environment(tmp_path: Path):
+    out_pg = tmp_path / "pg_svc"
+    scaffold_service("pg-app", out_pg, db="postgres")
+    compose_pg = (out_pg / "compose.yaml").read_text(encoding="utf-8")
+    assert "DATABASE_URL: ${DATABASE_URL:-}" in compose_pg
+
+    out_none = tmp_path / "none_svc"
+    scaffold_service("none-app", out_none, db="none")
+    compose_none = (out_none / "compose.yaml").read_text(encoding="utf-8")
+    assert "DATABASE_URL" not in compose_none
+
+
+def test_scaffold_main_cli_with_argv(tmp_path: Path):
+    from infra2_sdk.scaffold import main
+
+    out = tmp_path / "argv_test"
+    code = main(["argv-svc", "--out-dir", str(out), "--port", "8088"])
+    assert code == 0
+    assert (out / "compose.yaml").exists()
+    assert (out / "deploy.py").exists()
