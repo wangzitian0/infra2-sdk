@@ -33,11 +33,13 @@ python -m pip install \
 | Module | Ownership |
 |---|---|
 | `infra2_sdk.capacity` | Capacity limits, readings, and levels; collectors for Cloudflare analytics and 1Password rate limits |
+| `infra2_sdk.cli.scaffold` | Command-line interface for microservice scaffolding |
 | `infra2_sdk.ci` | Delivery-stage vocabulary and CI gate inventory validation |
 | `infra2_sdk.delivery` | Environment/stage evidence and failure taxonomy |
 | `infra2_sdk.deploy` | Deploy lifecycle wire contracts, dispatch client, health poller, and production evidence policies |
 | `infra2_sdk.deploy_health` | Compatibility shim re-exporting health check polling from `infra2_sdk.deploy` |
 | `infra2_sdk.dispatch` | Compatibility shim re-exporting dispatch operations from `infra2_sdk.deploy` |
+| `infra2_sdk.fastapi` | Turnkey single-line FastAPI integration with /livez, /readyz, /health, and SigNoz APM |
 | `infra2_sdk.manifests` | Settings manifest driver (`--write`, `--check`, `--validate-env`) wrapping application configuration models |
 | `infra2_sdk.refs` | Git ref resolution, PR and release identity (`ReleaseIdentity`), remote ref queries, and credential redaction |
 | `infra2_sdk.release` | Compatibility shim re-exporting release identity resolution from `infra2_sdk.refs` |
@@ -54,6 +56,7 @@ python -m pip install \
 | `infra2_sdk.runtime.postgres` | PostgreSQL DSN normalization and psycopg reachability probe |
 | `infra2_sdk.runtime.probes` | Compatibility shim re-exporting probe contracts and runners from `infra2_sdk.runtime.health` |
 | `infra2_sdk.runtime.s3` | Standard boto3 S3 client, probe, and safe bucket/object primitives |
+| `infra2_sdk.scaffold` | Zero-compromise scaffolding engine producing compose, deployer, and entrypoint assets |
 | `infra2_sdk.secrets` | Secret-store adapters (Vault KV, 1Password, Env), manifest-driven `SecretsResolver`, and Vault template renderers |
 | `infra2_sdk.snapshot` | Versioned anonymized-snapshot manifest, residual-proof shape, and artifact digest verification |
 | `infra2_sdk.transport` | Minimal injectable HTTP transport (`HttpTransport`, `HttpResponse`, `urllib_transport`) shared by adapters |
