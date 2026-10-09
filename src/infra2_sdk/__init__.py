@@ -14,12 +14,14 @@ from infra2_sdk import (
     deploy,
     deploy_health,
     dispatch,
+    fastapi,
     manifests,
     refs,
     release,
     routing,
     rules,
     runtime,
+    scaffold,
     secrets,
     snapshot,
     transport,
@@ -219,4 +221,7 @@ __all__ = [
     "HttpResponse",
     "HttpTransport",
     "urllib_transport",
+    # Frameworks & Automation
+    "fastapi",
+    "scaffold",
 ]
