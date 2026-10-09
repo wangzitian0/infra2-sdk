@@ -5,6 +5,17 @@ changes are minor releases, removing or changing a public symbol is a major rele
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.1.1 - 2026-10-09
+
+### Fixed
+
+- Deduplicate string and integer parsing in `snapshot.py` and internal runtime modules using canonical `_wire.py` helpers ([#80](https://github.com/wangzitian0/infra2-sdk/issues/80), [#81](https://github.com/wangzitian0/infra2-sdk/pull/81)).
+- Deduplicate evidence policy parsing in `deploy.py` through shared payload helper ([#80](https://github.com/wangzitian0/infra2-sdk/issues/80), [#81](https://github.com/wangzitian0/infra2-sdk/pull/81)).
+- Deduplicate container service inspection in compose rule checker with `inspect_service_resource_limits` ([#80](https://github.com/wangzitian0/infra2-sdk/issues/80), [#81](https://github.com/wangzitian0/infra2-sdk/pull/81)).
+- Prevent false deprecation warnings in `routing.py` when passing canonical `CANARY_SLOT` ([#80](https://github.com/wangzitian0/infra2-sdk/issues/80), [#81](https://github.com/wangzitian0/infra2-sdk/pull/81)).
+- Remove obsolete tuple unpacking protocol from `OnePasswordCapacityReport` in `capacity.py` ([#80](https://github.com/wangzitian0/infra2-sdk/issues/80), [#81](https://github.com/wangzitian0/infra2-sdk/pull/81)).
+- Remove dead private aliases `_ls_remote_rows`, `_redact_repo`, `_signal_endpoint`, `_string`, `_integer`, and `_require_exact_fields` ([#80](https://github.com/wangzitian0/infra2-sdk/issues/80), [#81](https://github.com/wangzitian0/infra2-sdk/pull/81)).
+
 ## 3.1.0 - 2026-10-09
 
 ### Added
