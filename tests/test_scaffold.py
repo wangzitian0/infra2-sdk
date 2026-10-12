@@ -1,12 +1,20 @@
 """Tests for microservice scaffolder and AST facet compliance."""
 
 import ast
+from importlib.metadata import version as installed_version
 from pathlib import Path
 
 import pytest
+from packaging.version import Version
 
+import infra2_sdk
 from infra2_sdk.ci import validate_manifest_offline
-from infra2_sdk.scaffold import main, scaffold_manifest, scaffold_service
+from infra2_sdk.scaffold import (
+    generate_requirements_txt,
+    main,
+    scaffold_manifest,
+    scaffold_service,
+)
 
 
 def test_scaffold_generates_all_required_files(tmp_path: Path):
@@ -181,17 +189,55 @@ def test_scaffold_app_py_wires_db_healthcheck(tmp_path: Path):
 
 
 def test_scaffold_requirements_txt_includes_extras(tmp_path: Path):
+    # The expected bound comes from the installed package metadata, never from a literal.
+    release = Version(installed_version("infra2-sdk")).base_version
+
     out_pg = tmp_path / "pg_reqs"
     scaffold_service("pg-reqs", out_pg, db="postgres")
     reqs_pg = (out_pg / "requirements.txt").read_text(encoding="utf-8")
-    assert "infra2-sdk[fastapi,otel,postgres]>=3.1.2" in reqs_pg
+    assert f"infra2-sdk[fastapi,otel,postgres]>={release}\n" in reqs_pg
     # The SDK extra owns the FastAPI version bound: a second line would drift from it.
     assert not [line for line in reqs_pg.splitlines() if line.startswith("fastapi")]
 
     out_none = tmp_path / "none_reqs"
     scaffold_service("none-reqs", out_none, db="none")
     reqs_none = (out_none / "requirements.txt").read_text(encoding="utf-8")
-    assert "infra2-sdk[fastapi,otel]>=3.1.2" in reqs_none
+    assert f"infra2-sdk[fastapi,otel]>={release}\n" in reqs_none
+
+
+def test_scaffold_requirement_follows_the_sdk_version(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(infra2_sdk, "__version__", "9.8.7")
+
+    assert "infra2-sdk[fastapi,otel,postgres]>=9.8.7\n" in generate_requirements_txt(db="postgres")
+    assert "infra2-sdk[fastapi,otel]>=9.8.7\n" in generate_requirements_txt(db="none")
+
+
+@pytest.mark.parametrize(
+    ("sdk_version", "bound"),
+    [
+        ("3.4.0.dev1", "3.4.0"),
+        ("3.4.0.dev12+g1a2b3c4", "3.4.0"),
+        ("3.4.0+local", "3.4.0"),
+        ("3.4.0rc1", "3.4.0"),
+        ("3.4.0.post2", "3.4.0"),
+        ("3.4.0", "3.4.0"),
+    ],
+)
+def test_scaffold_requirement_keeps_only_the_release_part(
+    monkeypatch: pytest.MonkeyPatch, sdk_version: str, bound: str
+):
+    monkeypatch.setattr(infra2_sdk, "__version__", sdk_version)
+
+    assert generate_requirements_txt(db="none").endswith(f"infra2-sdk[fastapi,otel]>={bound}\n")
+
+
+def test_scaffold_requirement_rejects_a_version_without_a_release_part(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(infra2_sdk, "__version__", "not-a-version")
+
+    with pytest.raises(ValueError, match="not-a-version"):
+        generate_requirements_txt(db="none")
 
 
 def test_scaffold_cli_subcommand_forwarding_and_wrapper(tmp_path: Path):
