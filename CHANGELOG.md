@@ -5,6 +5,47 @@ changes are minor releases, removing or changing a public symbol is a major rele
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.3.0 - 2026-10-12
+
+### Added
+
+- Add the keywords `strict_otel`, `log_level`, and `check_timeout_seconds` to `init_service` ([#89](https://github.com/wangzitian0/infra2-sdk/issues/89), [#93](https://github.com/wangzitian0/infra2-sdk/pull/93)).
+- Log a warning that names `OTEL_EXPORTER_OTLP_ENDPOINT` when `init_service` runs in a deployed tier (preview, staging, production) without it ([#89](https://github.com/wangzitian0/infra2-sdk/issues/89), [#93](https://github.com/wangzitian0/infra2-sdk/pull/93)).
+- Write `vault-policy.hcl` in the `infra2` scaffold profile ([#89](https://github.com/wangzitian0/infra2-sdk/issues/89), [#93](https://github.com/wangzitian0/infra2-sdk/pull/93)).
+- Raise `RuntimeError` on a second `init_service` call for one app, because that call duplicated `/livez` and shut the shared providers down twice ([#89](https://github.com/wangzitian0/infra2-sdk/issues/89), [#93](https://github.com/wangzitian0/infra2-sdk/pull/93)).
+- Add the OpenTelemetry packages to the `fastapi` extra ([#89](https://github.com/wangzitian0/infra2-sdk/issues/89), [#93](https://github.com/wangzitian0/infra2-sdk/pull/93)).
+
+### Changed
+
+- Build `/readyz` and `/health` of `init_service` with `runtime.health.check_health`, so each check entry has `status`, `detail`, `duration_ms`, and `required` ([#89](https://github.com/wangzitian0/infra2-sdk/issues/89), [#93](https://github.com/wangzitian0/infra2-sdk/pull/93)).
+- `/health` of `init_service` now returns the `runtime.health` report: check status `failed` is now `absent`, each reason starts with the check name, and `service` stays ([#89](https://github.com/wangzitian0/infra2-sdk/issues/89), [#93](https://github.com/wangzitian0/infra2-sdk/pull/93)).
+- Raise the `fastapi` extra lower bound to 0.142, the first release that ships `fastapi.telemetry` ([#89](https://github.com/wangzitian0/infra2-sdk/issues/89), [#93](https://github.com/wangzitian0/infra2-sdk/pull/93)).
+- Render the scaffold `secrets.ctmpl` with `infra2_sdk.secrets.render_agent_template` from a declared manifest, and remove the `fastapi` line from the generated `requirements.txt` ([#89](https://github.com/wangzitian0/infra2-sdk/issues/89), [#93](https://github.com/wangzitian0/infra2-sdk/pull/93)).
+- Run the dispatch and deploy-health CLIs as `python -m infra2_sdk.deploy dispatch` and `python -m infra2_sdk.deploy deploy-health`, not as `python -m infra2_sdk.dispatch` and `python -m infra2_sdk.deploy_health` ([#90](https://github.com/wangzitian0/infra2-sdk/issues/90), [#92](https://github.com/wangzitian0/infra2-sdk/pull/92)).
+- Define `JSON_SCHEMA_DIALECT` once in `infra2_sdk._wire`, so `config_schema`, `health`, `identity`, and `snapshot` import it and `infra2_sdk.runtime.health.JSON_SCHEMA_DIALECT` stays importable ([#90](https://github.com/wangzitian0/infra2-sdk/issues/90), [#92](https://github.com/wangzitian0/infra2-sdk/pull/92)).
+
+### Fixed
+
+- Fix `/readyz` and `/health` that answered 200 when an async `db_checker` returned `False`, and fail closed on exceptions and timeouts ([#89](https://github.com/wangzitian0/infra2-sdk/issues/89), [#93](https://github.com/wangzitian0/infra2-sdk/pull/93)).
+- Fix the OpenTelemetry shutdown that never ran on Starlette 1.x, because the SDK now stops the providers with the application lifespan ([#89](https://github.com/wangzitian0/infra2-sdk/issues/89), [#93](https://github.com/wangzitian0/infra2-sdk/pull/93)).
+- Fix the 3.1.3 regression where `init_service` left the root logger at WARNING and dropped INFO logs ([#89](https://github.com/wangzitian0/infra2-sdk/issues/89), [#93](https://github.com/wangzitian0/infra2-sdk/pull/93)).
+- Fix `GET /openapi.json`, which answered 500 for every app that called `init_service` because the `-> Response` annotation of the route stayed a `ForwardRef` ([#89](https://github.com/wangzitian0/infra2-sdk/issues/89), [#93](https://github.com/wangzitian0/infra2-sdk/pull/93)).
+- Fix the scaffold vault-agent healthcheck for `--db none` with the `infra2` profile, which now tests that `.env` exists, not that it has content, when the manifest declares no secret ([#89](https://github.com/wangzitian0/infra2-sdk/issues/89), [#93](https://github.com/wangzitian0/infra2-sdk/pull/93)).
+
+### Removed
+
+- Remove the six compatibility shim modules `infra2_sdk.deploy_health`, `infra2_sdk.dispatch`, `infra2_sdk.release`, `infra2_sdk.runtime.environ`, `infra2_sdk.runtime.dependencies`, and `infra2_sdk.runtime.probes`; import `infra2_sdk.deploy`, `infra2_sdk.refs`, `infra2_sdk.runtime.environment`, and `infra2_sdk.runtime.health` instead ([#90](https://github.com/wangzitian0/infra2-sdk/issues/90), [#92](https://github.com/wangzitian0/infra2-sdk/pull/92)).
+- Remove `routing.LEGACY_CANARY_PR` and its mapping of the slot ids `999` and `pr-999` to the canary host, so these slot ids now resolve as ordinary preview slots ([#90](https://github.com/wangzitian0/infra2-sdk/issues/90), [#92](https://github.com/wangzitian0/infra2-sdk/pull/92)).
+- Remove the keyword hooks `api_client_factory`, `dispatch_fn`, `http_get_factory`, and `poll_fn` from `deploy.dispatch_main` and `deploy.deploy_health_main`, because only the removed shims used them ([#90](https://github.com/wangzitian0/infra2-sdk/issues/90), [#92](https://github.com/wangzitian0/infra2-sdk/pull/92)).
+- Remove the private alias `infra2_sdk.runtime.postgres._redact_error`; use `redact_postgres_error` instead ([#94](https://github.com/wangzitian0/infra2-sdk/issues/94), [#95](https://github.com/wangzitian0/infra2-sdk/pull/95)).
+- Remove the 3.1.0 promises that the code never kept (Prometheus metrics, structured logging, graceful shutdown handling, and a generated `pyproject.toml`) and the SigNoz APM wording ([#89](https://github.com/wangzitian0/infra2-sdk/issues/89), [#93](https://github.com/wangzitian0/infra2-sdk/pull/93)).
+- Remove the dead `FastAPIInstrumentor` branch ([#89](https://github.com/wangzitian0/infra2-sdk/issues/89), [#93](https://github.com/wangzitian0/infra2-sdk/pull/93)).
+- Remove the scaffold `generic` template, `--template generic`, and `scaffold.generate_secrets_ctmpl` ([#89](https://github.com/wangzitian0/infra2-sdk/issues/89), [#93](https://github.com/wangzitian0/infra2-sdk/pull/93)).
+
+### Compatibility note
+
+Version 3.3.0 removes the six compatibility shims and the private aliases that the Compatibility section of the README announced for removal after consumers moved; all known consumers have moved.
+
 ## 3.1.3 - 2026-10-12
 
 ### Fixed
