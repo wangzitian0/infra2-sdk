@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
+
 
 def require_contract_version(value: Any, expected: int, *, description: str) -> int:
     if type(value) is not int:
@@ -79,6 +81,7 @@ def require_exact_fields(
 
 
 __all__ = [
+    "JSON_SCHEMA_DIALECT",
     "parse_contract_version",
     "parse_integer",
     "parse_string",

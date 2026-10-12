@@ -1490,15 +1490,19 @@ def test_deploy_health_main_cli_validation(capsys) -> None:
     captured = capsys.readouterr()
     assert "error: max-attempts and interval must be positive" in captured.err
 
-    # status_code == 0
+
+def test_deploy_health_main_cli_reports_a_failed_connection(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "infra2_sdk.deploy.default_http_get",
+        lambda timeout: lambda url: (0, "connection failed"),
+    )
     rc = deploy_health_main(
-        ["http://localhost:8080/health", "--max-attempts", "1", "--interval", "0.01"],
-        http_get_factory=lambda timeout: lambda url: (0, "connection failed"),
-        poll_fn=lambda **kwargs: HealthCheckResult(
-            attempts=1, status_code=0, body="connection failed"
-        ),
+        ["http://localhost:8080/health", "--max-attempts", "1", "--interval", "0.01"]
     )
     assert rc == 1
+    captured = capsys.readouterr()
+    assert "[WARNING] Connection failed (attempt 1/1)" in captured.err
+    assert "[FAIL] Health check failed" in captured.err
 
 
 def test_verify_workflow_run_and_reviewed_pull_edge_cases() -> None:
@@ -1729,6 +1733,68 @@ def test_dispatch_main_closer_and_exception(monkeypatch, tmp_path) -> None:
     rc = dispatch_main(["--request", str(req_file)])
     assert rc == 1
     assert closed is True
+
+
+def test_main_dispatch_subcommand_runs_the_dispatch_cli(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.setenv("INFRA2_PAT", "fake-token")
+    req_file = tmp_path / "req.json"
+    req_file.write_text(json.dumps(_dispatch_request().to_dict()), encoding="utf-8")
+    fake_run = ReceiverRun(
+        run_id=4242,
+        url="https://github.com/wangzitian0/infra2/actions/runs/4242",
+    )
+    monkeypatch.setattr(
+        "infra2_sdk.deploy.github_api_client",
+        lambda **kwargs: (lambda m, p, b: None, lambda r: b""),
+    )
+    monkeypatch.setattr("infra2_sdk.deploy.dispatch_and_wait", lambda *a, **kw: fake_run)
+
+    rc = deploy_main(["dispatch", "--request", str(req_file)])
+
+    assert rc == 0
+    assert '"receiver_run_id": 4242' in capsys.readouterr().out
+
+
+def test_main_deploy_health_subcommand_runs_the_health_cli(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "infra2_sdk.deploy.default_http_get",
+        lambda timeout: lambda url: (200, json.dumps({"status": "ok", "version": "v1.0.0"})),
+    )
+    rc = deploy_main(
+        [
+            "deploy-health",
+            "https://example.test/health",
+            "--expected-version",
+            "v1.0.0",
+            "--require-status",
+            "ok",
+        ]
+    )
+    assert rc == 0
+    assert "[OK] Health check passed at https://example.test/health" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("command", ["dispatch", "deploy-health"])
+def test_delegated_subcommand_help_names_the_deploy_module(command: str, capsys) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        deploy_main([command, "--help"])
+    assert exit_info.value.code == 0
+    assert f"usage: python -m infra2_sdk.deploy {command}" in capsys.readouterr().out
+
+
+def test_main_help_lists_every_subcommand(capsys) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        deploy_main(["--help"])
+    assert exit_info.value.code == 0
+    out = capsys.readouterr().out
+    for command in (
+        "build-request",
+        "derive-evidence",
+        "verify-evidence",
+        "dispatch",
+        "deploy-health",
+    ):
+        assert command in out
 
 
 def test_version_prefix_matches() -> None:

@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from infra2_sdk._wire import (
+    JSON_SCHEMA_DIALECT,
     parse_contract_version,
     parse_integer,
     parse_string,
@@ -253,7 +254,7 @@ class AnonymizedSnapshotManifest:
     @staticmethod
     def json_schema() -> dict[str, Any]:
         return {
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$schema": JSON_SCHEMA_DIALECT,
             "title": "Anonymized production snapshot manifest",
             "type": "object",
             "additionalProperties": False,

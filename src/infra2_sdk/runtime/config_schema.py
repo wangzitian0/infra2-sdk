@@ -16,10 +16,14 @@ from dataclasses import asdict, dataclass, replace
 from enum import StrEnum
 from typing import Any, get_args
 
-from infra2_sdk._wire import parse_contract_version, parse_string, require_contract_version
+from infra2_sdk._wire import (
+    JSON_SCHEMA_DIALECT,
+    parse_contract_version,
+    parse_string,
+    require_contract_version,
+)
 from infra2_sdk.runtime.environment import EnvironmentConflictError
 
-JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 ENVIRONMENT_MANIFEST_VERSION = 2
 
 

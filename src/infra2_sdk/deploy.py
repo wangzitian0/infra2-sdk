@@ -864,6 +864,11 @@ def _verify_evidence_parser(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument("--token", default="")
 
 
+def _delegated_parser(subparsers: argparse._SubParsersAction, name: str, help_text: str) -> None:
+    """List a subcommand whose own parser lives in its ``*_main`` function."""
+    subparsers.add_parser(name, help=help_text, add_help=False)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entrypoint for deploy protocol contracts and derivation."""
     parser = argparse.ArgumentParser(prog="python -m infra2_sdk.deploy", description=__doc__)
@@ -871,8 +876,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     _build_request_parser(subparsers)
     _derive_evidence_parser(subparsers)
     _verify_evidence_parser(subparsers)
+    _delegated_parser(subparsers, "dispatch", "Dispatch a DeployRequest and wait for the receiver")
+    _delegated_parser(subparsers, "deploy-health", "Poll a health endpoint until healthy")
 
-    args = parser.parse_args(argv)
+    argv_list = list(sys.argv[1:] if argv is None else argv)
+    if argv_list[:1] == ["dispatch"]:
+        return dispatch_main(argv_list[1:])
+    if argv_list[:1] == ["deploy-health"]:
+        return deploy_health_main(argv_list[1:])
+
+    args = parser.parse_args(argv_list)
 
     try:
         if args.command == "build-request":
@@ -1112,15 +1125,10 @@ def _run_id(run: Mapping[str, object]) -> int:
     return run_id
 
 
-def dispatch_main(
-    argv: Sequence[str] | None = None,
-    *,
-    api_client_factory: Any = None,
-    dispatch_fn: Any = None,
-) -> int:
+def dispatch_main(argv: Sequence[str] | None = None) -> int:
     """CLI entrypoint to dispatch a DeployRequest and wait for completion."""
     parser = argparse.ArgumentParser(
-        prog="python -m infra2_sdk.dispatch",
+        prog="python -m infra2_sdk.deploy dispatch",
         description="Dispatch a DeployRequest to infra2 receiver and verify execution.",
     )
     parser.add_argument(
@@ -1178,8 +1186,7 @@ def dispatch_main(
         validate_wire_shape(raw)
         request = DeployRequest.from_dict(raw)
 
-        client_builder = api_client_factory or github_api_client
-        api, fetch_logs = client_builder(
+        api, fetch_logs = github_api_client(
             token=token,
             user_agent=args.user_agent,
             timeout=30.0,
@@ -1187,8 +1194,7 @@ def dispatch_main(
 
         try:
             max_attempts = max(1, (args.timeout + args.poll_interval - 1) // args.poll_interval)
-            runner = dispatch_fn or dispatch_and_wait
-            result = runner(
+            result = dispatch_and_wait(
                 request,
                 api=api,
                 fetch_logs=fetch_logs,
@@ -1324,15 +1330,10 @@ def _version_prefix_matches(actual: str, expected: str) -> bool:
     return actual.startswith(expected) or expected.startswith(actual)
 
 
-def deploy_health_main(
-    argv: Sequence[str] | None = None,
-    *,
-    http_get_factory: Any = None,
-    poll_fn: Any = None,
-) -> int:
+def deploy_health_main(argv: Sequence[str] | None = None) -> int:
     """CLI entrypoint to poll a health endpoint until healthy."""
     parser = argparse.ArgumentParser(
-        prog="python -m infra2_sdk.deploy_health",
+        prog="python -m infra2_sdk.deploy deploy-health",
         description="Poll a deployed HTTP endpoint until healthy.",
     )
     parser.add_argument("url", help="URL of the health check endpoint")
@@ -1382,8 +1383,7 @@ def deploy_health_main(
         return 1
 
     try:
-        getter_builder = http_get_factory or default_http_get
-        http_get = getter_builder(timeout=args.timeout)
+        http_get = default_http_get(timeout=args.timeout)
         attempts = 0
 
         def probing_http_get(url: str) -> tuple[int, str]:
@@ -1407,8 +1407,7 @@ def deploy_health_main(
             return status_code, body
 
         keys = tuple(k.strip() for k in args.version_json_keys.split(",") if k.strip())
-        runner = poll_fn or poll_until_healthy
-        result = runner(
+        result = poll_until_healthy(
             args.url,
             http_get=probing_http_get,
             expected_version=args.expected_version,

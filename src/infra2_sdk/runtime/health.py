@@ -30,11 +30,15 @@ from functools import partial
 from threading import Thread
 from typing import Any, Protocol, runtime_checkable
 
-from infra2_sdk._wire import parse_contract_version, parse_string, require_contract_version
+from infra2_sdk._wire import (
+    JSON_SCHEMA_DIALECT,
+    parse_contract_version,
+    parse_string,
+    require_contract_version,
+)
 from infra2_sdk.runtime.environment import EnvironmentTier, resolve_environment_tier
 
 DEPENDENCY_MANIFEST_VERSION = 1
-JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 
 HTTP_OK = 200
 HTTP_SERVICE_UNAVAILABLE = 503

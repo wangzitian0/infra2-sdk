@@ -1,9 +1,10 @@
+import warnings
+
 import pytest
 
 from infra2_sdk.routing import (
     CANARY_SLOT,
     DEFAULT_BASE_DOMAIN,
-    LEGACY_CANARY_PR,
     AppRoutePreference,
     DokployDomainSpec,
     RouteEndpoint,
@@ -93,7 +94,7 @@ def test_resolve_app_hostname_standards():
     )
 
 
-def test_canary_hostname_resolution_and_legacy_fallback():
+def test_canary_hostname_resolution_and_slot_999_is_not_special():
     # Canonical canary
     assert resolve_app_hostname("report", "canary") == f"{CANARY_SLOT}.{DEFAULT_BASE_DOMAIN}"
     assert (
@@ -101,20 +102,21 @@ def test_canary_hostname_resolution_and_legacy_fallback():
         == f"{CANARY_SLOT}.{DEFAULT_BASE_DOMAIN}"
     )
 
-    # Legacy canary PR 999 triggers warning and returns canary-preview
-    with pytest.deprecated_call(match="Legacy canary slot 999 mapped to canary-preview"):
-        host = resolve_app_hostname("report", EnvironmentTier.PREVIEW, slot_id=LEGACY_CANARY_PR)
-        assert host == f"{CANARY_SLOT}.{DEFAULT_BASE_DOMAIN}"
-
-    with pytest.deprecated_call(match="Legacy canary slot 'pr-999' mapped to canary-preview"):
-        host = resolve_app_hostname("report", EnvironmentTier.PREVIEW, slot_id="pr-999")
-        assert host == f"{CANARY_SLOT}.{DEFAULT_BASE_DOMAIN}"
-
-    # Canonical CANARY_SLOT slot_id does not trigger deprecation warning
-    import warnings
-
+    # Slot 999 is an ordinary preview slot: the legacy canary mapping is gone.
     with warnings.catch_warnings():
-        warnings.simplefilter("error", DeprecationWarning)
+        warnings.simplefilter("error")
+        assert (
+            resolve_app_hostname("report", EnvironmentTier.PREVIEW, slot_id=999)
+            == f"report-preview-999.{DEFAULT_BASE_DOMAIN}"
+        )
+        assert (
+            resolve_app_hostname("report", EnvironmentTier.PREVIEW, slot_id="pr-999")
+            == f"report-preview-pr-999.{DEFAULT_BASE_DOMAIN}"
+        )
+
+    # Canonical CANARY_SLOT slot_id resolves to the canary host and raises no warning
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         host = resolve_app_hostname("report", EnvironmentTier.PREVIEW, slot_id=CANARY_SLOT)
         assert host == f"{CANARY_SLOT}.{DEFAULT_BASE_DOMAIN}"
 
@@ -163,3 +165,12 @@ def test_resolve_service_url():
 
     url_canary = resolve_service_url("report", "canary", path="/healthz")
     assert url_canary == "https://canary-preview.zitian.party/healthz"
+
+
+def test_legacy_canary_pr_constant_is_removed() -> None:
+    import infra2_sdk
+    import infra2_sdk.routing
+
+    assert not hasattr(infra2_sdk.routing, "LEGACY_CANARY_PR")
+    assert not hasattr(infra2_sdk, "LEGACY_CANARY_PR")
+    assert "LEGACY_CANARY_PR" not in infra2_sdk.__all__

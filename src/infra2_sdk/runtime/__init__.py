@@ -2,15 +2,12 @@
 
 from infra2_sdk.runtime import (
     config_schema,
-    dependencies,
-    environ,
     environment,
     health,
     http,
     identity,
     otel,
     postgres,
-    probes,
     s3,
 )
 from infra2_sdk.runtime.config_schema import (
@@ -99,15 +96,12 @@ from infra2_sdk.runtime.s3 import (
 __all__ = [
     # Submodules
     "config_schema",
-    "dependencies",
-    "environ",
     "environment",
     "health",
     "http",
     "identity",
     "otel",
     "postgres",
-    "probes",
     "s3",
     # Environment
     "APP_OWNED_TIERS",
@@ -121,7 +115,7 @@ __all__ = [
     "strict_environment_from_env",
     "to_deploy_type",
     "to_environment_tier",
-    # Environ
+    # Environment variables
     "EnvironmentConflictError",
     "RUNTIME_ENV_CONTRACT_VERSION",
     "RUNTIME_ENV_SPECS",
@@ -143,7 +137,7 @@ __all__ = [
     "manifest_config_fingerprint",
     "settings_json_schema",
     "validate_environment",
-    # Dependencies
+    # Dependency declarations
     "Dependency",
     "DependencyKind",
     "DependencyManifest",

@@ -36,25 +36,19 @@ python -m pip install \
 | `infra2_sdk.cli.scaffold` | Command-line interface for microservice scaffolding |
 | `infra2_sdk.ci` | Delivery-stage vocabulary and CI gate inventory validation |
 | `infra2_sdk.delivery` | Environment/stage evidence and failure taxonomy |
-| `infra2_sdk.deploy` | Deploy lifecycle wire contracts, dispatch client, health poller, and production evidence policies |
-| `infra2_sdk.deploy_health` | Compatibility shim re-exporting health check polling from `infra2_sdk.deploy` |
-| `infra2_sdk.dispatch` | Compatibility shim re-exporting dispatch operations from `infra2_sdk.deploy` |
+| `infra2_sdk.deploy` | Deploy lifecycle wire contracts, dispatch client, health poller, and production evidence policies; CLI at `python -m infra2_sdk.deploy` |
 | `infra2_sdk.fastapi` | Turnkey single-line FastAPI integration with /livez, /readyz, /health, and SigNoz APM |
 | `infra2_sdk.manifests` | Settings manifest driver (`--write`, `--check`, `--validate-env`) wrapping application configuration models |
 | `infra2_sdk.refs` | Git ref resolution, PR and release identity (`ReleaseIdentity`), remote ref queries, and credential redaction |
-| `infra2_sdk.release` | Compatibility shim re-exporting release identity resolution from `infra2_sdk.refs` |
 | `infra2_sdk.routing` | Canonical domain and routing SSOT: `AppRoutePreference`, Dokploy domain specs, and service URL resolution |
 | `infra2_sdk.rules.compose` | Pure compose-file rules (memory ceilings, bare `:latest` image refs); CLI at `python -m infra2_sdk.rules` |
 | `infra2_sdk.runtime.config_schema` | JSON Schema 2020-12 and environment injection manifests |
-| `infra2_sdk.runtime.dependencies` | Compatibility shim re-exporting dependency contracts from `infra2_sdk.runtime.health` |
-| `infra2_sdk.runtime.environ` | Compatibility shim re-exporting environment registry from `infra2_sdk.runtime.environment` |
 | `infra2_sdk.runtime.environment` | Canonical six-tier environment vocabulary, variable resolution, and contract definitions |
 | `infra2_sdk.runtime.health` | Framework-agnostic readiness checks (`check_health`), probe runners, and dependency declarations |
 | `infra2_sdk.runtime.http` | Standard httpx clients and HTTP retry semantics |
 | `infra2_sdk.runtime.identity` | OCI/config/release identity, `canonical_sha256`, and OTel resource coordinates |
 | `infra2_sdk.runtime.otel` | Explicit OTLP provider bootstrap, env-configured samplers, and W3C trace-context propagation |
 | `infra2_sdk.runtime.postgres` | PostgreSQL DSN normalization and psycopg reachability probe |
-| `infra2_sdk.runtime.probes` | Compatibility shim re-exporting probe contracts and runners from `infra2_sdk.runtime.health` |
 | `infra2_sdk.runtime.s3` | Standard boto3 S3 client, probe, and safe bucket/object primitives |
 | `infra2_sdk.scaffold` | Zero-compromise scaffolding engine producing compose, deployer, and entrypoint assets |
 | `infra2_sdk.secrets` | Secret-store adapters (Vault KV, 1Password, Env), manifest-driven `SecretsResolver`, and Vault template renderers |
@@ -329,21 +323,25 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
 - Repository submodules are development workspace pointers, not package dependencies.
 - Importing any runtime module performs no network I/O and mutates no global provider state.
 - Since 2.4.0 the package ships a `py.typed` marker, so type checkers use its annotations.
-- In v3.0.0, legacy compatibility symbols scheduled for removal have been eradicated:
+- In v3.0.0, these legacy symbols were removed:
   - The `infra2_sdk.images` module and `data/platform_images.yaml`;
   - `RuntimeIdentity.to_otel_resource_attributes()`.
-- Primary domain modules own canonical implementations in 3.0.0 with backwards-compatible shims:
-  - `deploy`: canonical dispatch and deploy health polling (shims: `dispatch`, `deploy_health`);
-  - `refs`: canonical release identity resolution (shim: `release`);
-  - `runtime.environment`: canonical environment vocabulary and variables (shim: `runtime.environ`);
-  - `runtime.health`: canonical dependency declarations, probes, and health check runner (shims: `runtime.dependencies`, `runtime.probes`).
-- Former private names stay as plain aliases until consumers have moved to the public ones:
+- In v3.1.1, these private aliases were removed. Use the public name:
   `runtime.otel._signal_endpoint` is `signal_endpoint`, `refs._ls_remote_rows` is
-  `ls_remote_rows`, `refs._redact_repo` is `redact_repo`. The private module
-  `infra2_sdk._transport` is gone; import `infra2_sdk.transport`.
+  `ls_remote_rows`, `refs._redact_repo` is `redact_repo`.
+- In v2.4.0, the private module `infra2_sdk._transport` was removed; import `infra2_sdk.transport`.
+- In v3.3.0, the six compatibility shim modules were removed. Import the canonical module:
+  - `infra2_sdk.dispatch` and `infra2_sdk.deploy_health`: use `infra2_sdk.deploy`. The CLIs are
+    `python -m infra2_sdk.deploy dispatch` and `python -m infra2_sdk.deploy deploy-health`;
+  - `infra2_sdk.release`: use `infra2_sdk.refs`;
+  - `infra2_sdk.runtime.environ`: use `infra2_sdk.runtime.environment`;
+  - `infra2_sdk.runtime.dependencies` and `infra2_sdk.runtime.probes`: use
+    `infra2_sdk.runtime.health`.
+- In v3.3.0, `routing.LEGACY_CANARY_PR` and its `999` and `pr-999` slot mapping were removed.
+  Those slot ids now resolve as ordinary preview slots. For the canary host, pass `tier="canary"`,
+  `is_canary=True`, or `slot_id=CANARY_SLOT`.
 - `to_environment_tier` and `to_deploy_type` provide canonical bridging mappings across `EnvironmentTier` and `DeployType`.
 - `CommandRunner` protocol is exported from `infra2_sdk.refs` for subprocess runner injection.
-- `OnePasswordCapacityReport` provides structured access to limits and usage while preserving tuple unpacking.
 
 ### Anonymized snapshot trust boundary
 

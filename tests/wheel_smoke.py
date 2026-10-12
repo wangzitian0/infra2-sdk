@@ -12,6 +12,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
 
+# Modules removed in 3.3.0 (issue #90). One frozen list: tests/test_removed_modules.py imports it.
+REMOVED_MODULES = (
+    "infra2_sdk.deploy_health",
+    "infra2_sdk.dispatch",
+    "infra2_sdk.release",
+    "infra2_sdk.runtime.environ",
+    "infra2_sdk.runtime.dependencies",
+    "infra2_sdk.runtime.probes",
+)
+
 
 def smoke_core() -> None:
     from infra2_sdk.runtime import environment_from_env, runtime_env_contract
@@ -32,7 +42,7 @@ def smoke_core() -> None:
 
 
 def smoke_package_data() -> None:
-    """The wheel ships py.typed and the data files; the eradicated catalog is absent."""
+    """The wheel ships py.typed and the data files; the removed modules are absent."""
 
     from importlib.resources import files
 
@@ -46,6 +56,14 @@ def smoke_package_data() -> None:
         pass
     else:
         raise AssertionError("infra2_sdk.images was removed in 3.0.0 and must not be importable")
+    assert len(REMOVED_MODULES) == 6
+    for module in REMOVED_MODULES:
+        try:
+            importlib.import_module(module)
+        except ModuleNotFoundError as exc:
+            assert exc.name == module, (module, exc.name)
+        else:
+            raise AssertionError(f"{module} was removed in 3.3.0 and must not be importable")
 
 
 def smoke_health() -> None:
