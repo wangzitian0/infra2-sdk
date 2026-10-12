@@ -53,6 +53,14 @@ def test_every_public_module_is_in_the_readme_module_table() -> None:
     assert not missing, f"README module table is missing: {missing}"
 
 
+def test_readme_module_table_has_no_phantom_rows() -> None:
+    rows = re.findall(r"^\| `(infra2_sdk[\w.]*)` \|", README, re.M)
+    assert "infra2_sdk.runtime.health" in rows, "README module table not found: guard is empty"
+    assert len(rows) == len(set(rows)), "README module table has a duplicate row"
+    phantom = [name for name in rows if name not in _public_modules()]
+    assert not phantom, f"README module table lists modules that do not exist: {phantom}"
+
+
 def test_py_typed_marker_ships_with_the_package() -> None:
     assert (SRC / "py.typed").is_file()
     package_data = PYPROJECT["tool"]["setuptools"]["package-data"]["infra2_sdk"]

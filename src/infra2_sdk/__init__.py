@@ -12,12 +12,9 @@ from infra2_sdk import (
     ci,
     delivery,
     deploy,
-    deploy_health,
-    dispatch,
     fastapi,
     manifests,
     refs,
-    release,
     routing,
     rules,
     runtime,
@@ -88,7 +85,6 @@ from infra2_sdk.refs import (
 from infra2_sdk.routing import (
     CANARY_SLOT,
     DEFAULT_BASE_DOMAIN,
-    LEGACY_CANARY_PR,
     AppRoutePreference,
     DokployDomainSpec,
     RouteEndpoint,
@@ -126,11 +122,8 @@ __all__ = [
     "ci",
     "delivery",
     "deploy",
-    "deploy_health",
-    "dispatch",
     "manifests",
     "refs",
-    "release",
     "routing",
     "rules",
     "runtime",
@@ -171,10 +164,10 @@ __all__ = [
     "derive_release_evidence",
     "fetch_production_evidence_policy",
     "verify_production_evidence",
-    # Deploy Health
+    # Deploy health polling
     "HealthCheckResult",
     "poll_until_healthy",
-    # Dispatch
+    # Deploy dispatch
     "ReceiverRun",
     "dispatch_and_wait",
     # Manifests
@@ -188,7 +181,7 @@ __all__ = [
     "resolve_image_ref",
     "resolve_pr",
     "resolve_to_sha",
-    # Release
+    # Release identity
     "ReleaseError",
     "ReleaseIdentity",
     "resolve_release_identity",
@@ -198,7 +191,6 @@ __all__ = [
     "CANARY_SLOT",
     "DEFAULT_BASE_DOMAIN",
     "DokployDomainSpec",
-    "LEGACY_CANARY_PR",
     "RouteEndpoint",
     "resolve_app_hostname",
     "resolve_dokploy_domains",

@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import re
-import warnings
 from dataclasses import dataclass
 from typing import Any
 
 from infra2_sdk.runtime.environment import CANARY_SLOT, EnvironmentTier, to_environment_tier
 
-LEGACY_CANARY_PR = 999
 DEFAULT_BASE_DOMAIN = "zitian.party"
 
 _SLUG_RE = re.compile(r"\A[a-z0-9][a-z0-9_-]*\Z")
@@ -111,19 +109,9 @@ def resolve_app_hostname(
     if is_canary or raw_tier in ("canary", "deploy-v2-canary"):
         return f"{CANARY_SLOT}.{base_domain}"
 
-    # Handle legacy canary PR 999
-    if slot_id is not None:
-        slot_str = str(slot_id).strip().lower()
-        if slot_str == CANARY_SLOT:
-            return f"{CANARY_SLOT}.{base_domain}"
-        if slot_str in ("999", "pr-999"):
-            warnings.warn(
-                f"Legacy canary slot {slot_id!r} mapped to {CANARY_SLOT}. "
-                "Use CANARY_SLOT or tier='canary'.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return f"{CANARY_SLOT}.{base_domain}"
+    # The canary slot id maps to the canary host.
+    if slot_id is not None and str(slot_id).strip().lower() == CANARY_SLOT:
+        return f"{CANARY_SLOT}.{base_domain}"
 
     canonical_tier = to_environment_tier(tier)
 

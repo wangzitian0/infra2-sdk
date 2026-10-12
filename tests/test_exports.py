@@ -13,10 +13,9 @@ import infra2_sdk.runtime
 
 def test_infra2_sdk_root_all_matches_actual_attributes() -> None:
     """Verify that every symbol declared in __all__ exists on infra2_sdk."""
+    assert len(infra2_sdk.__all__) == len(set(infra2_sdk.__all__)), "duplicate name in __all__"
     for name in infra2_sdk.__all__:
         assert hasattr(infra2_sdk, name), f"infra2_sdk.__all__ has {name!r} but missing"
-        val = getattr(infra2_sdk, name)
-        assert val is not None, f"infra2_sdk.{name} should not be None"
 
 
 def test_infra2_sdk_submodules_accessible_from_root() -> None:
@@ -26,11 +25,8 @@ def test_infra2_sdk_submodules_accessible_from_root() -> None:
         "ci",
         "delivery",
         "deploy",
-        "deploy_health",
-        "dispatch",
         "manifests",
         "refs",
-        "release",
         "routing",
         "rules",
         "runtime",
@@ -46,25 +42,22 @@ def test_infra2_sdk_submodules_accessible_from_root() -> None:
 
 def test_infra2_sdk_runtime_all_matches_actual_attributes() -> None:
     """Verify that every symbol declared in runtime.__all__ exists on infra2_sdk.runtime."""
-    for name in infra2_sdk.runtime.__all__:
+    runtime_all = infra2_sdk.runtime.__all__
+    assert len(runtime_all) == len(set(runtime_all)), "duplicate name in runtime.__all__"
+    for name in runtime_all:
         assert hasattr(infra2_sdk.runtime, name), f"runtime.__all__ has {name!r} but missing"
-        val = getattr(infra2_sdk.runtime, name)
-        assert val is not None, f"infra2_sdk.runtime.{name} should not be None"
 
 
 def test_infra2_sdk_runtime_submodules_accessible() -> None:
     """Verify that all canonical runtime submodules are accessible on infra2_sdk.runtime."""
     expected_submodules = [
         "config_schema",
-        "dependencies",
-        "environ",
         "environment",
         "health",
         "http",
         "identity",
         "otel",
         "postgres",
-        "probes",
         "s3",
     ]
     for sub in expected_submodules:
@@ -111,11 +104,13 @@ def test_consolidated_secondary_modules() -> None:
     from infra2_sdk.runtime.environment import RuntimeEnvKey, runtime_env_contract
     from infra2_sdk.runtime.health import DependencyManifest, check_health
 
-    assert callable(dispatch_and_wait)
-    assert callable(poll_until_healthy)
-    assert ReleaseIdentity is not None
-    assert callable(resolve_release_identity)
+    # Each capability is defined in its canonical module, not in a removed shim.
+    assert dispatch_and_wait.__module__ == "infra2_sdk.deploy"
+    assert poll_until_healthy.__module__ == "infra2_sdk.deploy"
+    assert ReleaseIdentity.__module__ == "infra2_sdk.refs"
+    assert resolve_release_identity.__module__ == "infra2_sdk.refs"
+    assert RuntimeEnvKey.__module__ == "infra2_sdk.runtime.environment"
     assert RuntimeEnvKey.ENVIRONMENT == "ENVIRONMENT"
-    assert callable(runtime_env_contract)
-    assert DependencyManifest is not None
-    assert callable(check_health)
+    assert runtime_env_contract.__module__ == "infra2_sdk.runtime.environment"
+    assert DependencyManifest.__module__ == "infra2_sdk.runtime.health"
+    assert check_health.__module__ == "infra2_sdk.runtime.health"

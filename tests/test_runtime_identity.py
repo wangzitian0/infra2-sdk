@@ -222,3 +222,8 @@ def test_runtime_identity_fingerprint_is_canonical() -> None:
     res = runtime_identity_fingerprint(data)
     assert len(res) == 64
     assert imported_fp(data) == res
+
+
+def test_runtime_identity_json_schema_declares_the_exact_2020_12_dialect() -> None:
+    schema = RuntimeIdentity.json_schema()
+    assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"

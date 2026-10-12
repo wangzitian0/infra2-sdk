@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from infra2_sdk._wire import parse_string
+from infra2_sdk._wire import JSON_SCHEMA_DIALECT, parse_string
 from infra2_sdk.runtime._otel_env import load_resource_attributes
 from infra2_sdk.runtime.environment import (
     EnvironmentTier,
@@ -20,7 +20,6 @@ from infra2_sdk.runtime.environment import (
 _SHA40_RE = re.compile(r"\A[0-9a-f]{40}\Z")
 _SHA256_RE = re.compile(r"\A[0-9a-f]{64}\Z")
 _OCI_DIGEST_RE = re.compile(r"\Asha256:[0-9a-f]{64}\Z")
-JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 
 
 @dataclass(frozen=True)
