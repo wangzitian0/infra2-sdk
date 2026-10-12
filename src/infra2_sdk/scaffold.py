@@ -30,12 +30,46 @@ def generate_compose_yaml(
     project: str,
     port: int,
     db: str = "postgres",
+    profile: str = "infra2",
 ) -> str:
     """Generate compose.yaml compliant with ops.standards.md §5 and memory limit lint."""
     clean_service = _clean_ident(service_name)
     clean_project = _clean_ident(project)
     container_prefix = f"{clean_project}-{clean_service}"
     db_env = "      DATABASE_URL: ${DATABASE_URL:-}\n" if db == "postgres" else ""
+
+    if profile == "standalone":
+        return f"""services:
+  {clean_service}:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: {clean_service}
+    restart: always
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    env_file:
+      - .env
+    environment:
+{db_env}      PORT: "{port}"
+      ENV: ${{ENV:-local_dev}}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${{OTEL_EXPORTER_OTLP_ENDPOINT:-}}
+      OTEL_SERVICE_NAME: ${{OTEL_SERVICE_NAME:-{clean_service}}}
+      OTEL_RESOURCE_ATTRIBUTES: ${{OTEL_RESOURCE_ATTRIBUTES:-}}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:{port}/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+"""
 
     return f"""services:
   vault-agent:
@@ -267,8 +301,33 @@ template {
 """
 
 
-def generate_entrypoint_sh(port: int) -> str:
+def generate_entrypoint_sh(port: int, profile: str = "infra2") -> str:
     """Generate entrypoint script waiting for tmpfs secrets and executing migrations."""
+    if profile == "standalone":
+        return f"""#!/bin/sh
+set -e
+
+# Source .env if present
+if [ -f ".env" ]; then
+  set -a
+  . ./.env
+  set +a
+elif [ -f "/secrets/.env" ]; then
+  set -a
+  . /secrets/.env
+  set +a
+fi
+
+# Apply database migrations if alembic exists
+if [ -f "alembic.ini" ]; then
+  echo "Applying database migrations..."
+  alembic upgrade head || echo "Alembic upgrade completed with warnings"
+fi
+
+echo "Starting service on port ${{PORT:-{port}}}..."
+exec "$@"
+"""
+
     return f"""#!/bin/sh
 set -e
 
@@ -294,9 +353,50 @@ exec "$@"
 """
 
 
-def generate_fastapi_app(service_name: str) -> str:
+def generate_env_example(service_name: str, port: int, db: str = "postgres") -> str:
+    """Generate 12-factor environment template."""
+    clean_service = _clean_ident(service_name)
+    lines = [
+        f"PORT={port}",
+        "ENV=local_dev",
+        f"OTEL_SERVICE_NAME={clean_service}",
+        "OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318",
+    ]
+    if db == "postgres":
+        lines.append(f"DATABASE_URL=postgresql://postgres:postgres@localhost:5432/{clean_service}")
+    return "\n".join(lines) + "\n"
+
+
+def generate_fastapi_app(service_name: str, db: str = "postgres") -> str:
     """Generate starter FastAPI application with 1-liner init_service."""
     clean_service = _clean_ident(service_name)
+    if db == "postgres":
+        return f'''"""Application entry point for {clean_service}."""
+
+from fastapi import FastAPI
+from infra2_sdk.fastapi import init_service
+from infra2_sdk.runtime.postgres import PostgresSettings, probe_postgres
+
+app = FastAPI(title="{clean_service}")
+
+# Database reachability probe via infra2_sdk standard PostgreSQL adapter
+db_settings = PostgresSettings.from_env()
+
+
+def check_db() -> tuple[bool, str]:
+    res = probe_postgres(db_settings)
+    return (res.status.value == "present", res.detail or "ok")
+
+
+# One-liner compliance: sets up /livez, /readyz, /health, SigNoz OTel, and SIGTERM
+init_service(app, name="{clean_service}", db_checker=check_db)
+
+
+@app.get("/")
+def read_root():
+    return {{"service": "{clean_service}", "status": "running"}}
+'''
+
     return f'''"""Application entry point for {clean_service}."""
 
 from fastapi import FastAPI
@@ -337,11 +437,15 @@ CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "{port}"]
 """
 
 
-def generate_requirements_txt() -> str:
+def generate_requirements_txt(template: str = "fastapi", db: str = "postgres") -> str:
     """Generate minimum starter dependencies."""
-    return """fastapi>=0.110.0,<1.0.0
+    extras = ["fastapi", "otel"]
+    if db == "postgres":
+        extras.append("postgres")
+    extras_str = ",".join(extras)
+    return f"""fastapi>=0.110.0,<1.0.0
 uvicorn[standard]>=0.28.0,<1.0.0
-infra2-sdk>=3.0.2
+infra2-sdk[{extras_str}]>=3.1.2
 """
 
 
@@ -352,6 +456,7 @@ def scaffold_service(
     port: int = 8000,
     template: str = "fastapi",
     db: str = "postgres",
+    profile: str = "infra2",
 ) -> list[str]:
     """Scaffold a new microservice repository or subdirectory.
 
@@ -360,18 +465,22 @@ def scaffold_service(
     target_dir.mkdir(parents=True, exist_ok=True)
     created: list[str] = []
 
-    files = {
-        "compose.yaml": generate_compose_yaml(name, project, port, db),
-        "deploy.py": generate_deploy_py(name, project, port),
-        "secrets.ctmpl": generate_secrets_ctmpl(name, project),
-        "vault-agent.hcl": generate_vault_agent_hcl(),
-        "entrypoint.sh": generate_entrypoint_sh(port),
+    files: dict[str, str] = {
+        "compose.yaml": generate_compose_yaml(name, project, port, db, profile=profile),
+        "entrypoint.sh": generate_entrypoint_sh(port, profile=profile),
         "Dockerfile": generate_dockerfile(port),
-        "requirements.txt": generate_requirements_txt(),
+        "requirements.txt": generate_requirements_txt(template=template, db=db),
     }
 
+    if profile == "infra2":
+        files["deploy.py"] = generate_deploy_py(name, project, port)
+        files["secrets.ctmpl"] = generate_secrets_ctmpl(name, project)
+        files["vault-agent.hcl"] = generate_vault_agent_hcl()
+    elif profile == "standalone":
+        files[".env.example"] = generate_env_example(name, port, db)
+
     if template == "fastapi":
-        files["app.py"] = generate_fastapi_app(name)
+        files["app.py"] = generate_fastapi_app(name, db=db)
 
     for rel_path, content in files.items():
         file_path = target_dir / rel_path
@@ -384,6 +493,10 @@ def scaffold_service(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv and argv[0] == "scaffold":
+        argv = argv[1:]
+
     parser = argparse.ArgumentParser(description="Zero-Compromise Microservice Scaffolder")
     parser.add_argument("name", help="Service name (e.g. demo-app)")
     parser.add_argument("--project", default="apps", help="Project identifier (default: apps)")
@@ -401,6 +514,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Database backend",
     )
     parser.add_argument(
+        "--profile",
+        choices=["infra2", "standalone"],
+        default="infra2",
+        help="Target profile: infra2 (Dokploy/Vault sidecar) or standalone (pure 12-factor .env)",
+    )
+    parser.add_argument(
         "--out-dir", default=None, help="Target output directory (default: ./<name>)"
     )
 
@@ -415,6 +534,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             port=args.port,
             template=args.template,
             db=args.db,
+            profile=args.profile,
         )
         print(f"✅ Successfully scaffolded '{args.name}' in {out.resolve()}:")
         for f in created:
