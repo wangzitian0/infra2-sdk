@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from infra2_sdk.scaffold import main, scaffold_service
+from infra2_sdk.ci import validate_manifest_offline
+from infra2_sdk.scaffold import main, scaffold_manifest, scaffold_service
 
 
 def test_scaffold_generates_all_required_files(tmp_path: Path):
@@ -279,3 +280,52 @@ def test_scaffolded_app_promises_only_what_init_service_does(tmp_path: Path, db:
     assert "init_service(app" in app_text
     for unkept_promise in ("SIGTERM", "SigNoz", "Prometheus"):
         assert unkept_promise not in app_text
+
+
+def test_scaffold_manifest_declares_the_database_url_as_a_required_sensitive_human_secret():
+    # The Vault renderers ignore `sensitive`. The flag changes the JSON schema and how
+    # validate_environment compares values, so those are the observable outputs.
+    manifest = scaffold_manifest("demo-service", "apps", "postgres")
+
+    schema = manifest.to_json_schema()
+
+    assert list(schema["properties"]) == ["DATABASE_URL"]
+    assert schema["properties"]["DATABASE_URL"]["x-sensitive"] is True
+    assert schema["properties"]["DATABASE_URL"]["x-source"] == "human"
+    assert schema["required"] == ["DATABASE_URL"]
+    assert validate_manifest_offline(manifest) == []
+
+
+def test_scaffold_manifest_without_database_declares_no_field():
+    manifest = scaffold_manifest("demo-service", "apps", "none")
+
+    assert manifest.fields == ()
+    assert manifest.to_json_schema()["properties"] == {}
+    assert validate_manifest_offline(manifest) == []
+
+
+def test_scaffold_vault_agent_healthcheck_needs_a_non_empty_env_file_when_secrets_are_declared(
+    tmp_path: Path,
+):
+    scaffold_service("demo-service", tmp_path / "pg", db="postgres")
+
+    compose = (tmp_path / "pg" / "compose.yaml").read_text(encoding="utf-8")
+
+    assert "test -s /vault/secrets/.env" in compose
+    assert "test -e /vault/secrets/.env" not in compose
+    assert "test -s /vault/.token" in compose
+
+
+def test_scaffold_vault_agent_healthcheck_accepts_an_empty_env_file_when_no_secret_is_declared(
+    tmp_path: Path,
+):
+    scaffold_service("demo-service", tmp_path / "none", db="none")
+
+    compose = (tmp_path / "none" / "compose.yaml").read_text(encoding="utf-8")
+    template = (tmp_path / "none" / "secrets.ctmpl").read_text(encoding="utf-8")
+
+    assert "with secret" not in template, "the rendered .env is empty"
+    assert "test -e /vault/secrets/.env" in compose
+    assert "test -s /vault/secrets/.env" not in compose
+    assert "test -s /vault/.token" in compose
+    assert 'grep -q "<no value>" /vault/secrets/.env' in compose

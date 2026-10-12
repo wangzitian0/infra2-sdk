@@ -428,7 +428,7 @@ async def test_sync_probe_propagates_system_exit() -> None:
     assert exc_info.value.code == 42
 
 
-async def test_sync_probes_run_in_parallel_but_never_exceed_sixteen_worker_threads() -> None:
+async def test_sync_probes_reach_and_never_exceed_sixteen_threads_while_probes_finish() -> None:
     # The bound is part of the contract: 16 sync probes at once, no more and no fewer.
     limit = 16
     total = limit + 20

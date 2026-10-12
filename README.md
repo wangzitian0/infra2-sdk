@@ -229,7 +229,7 @@ This single call registers three standardized endpoints and starts telemetry
 
 `db_checker` returns `bool` or `(bool, detail)` and may be sync or async. A false result, an exception, or a call longer than `check_timeout_seconds` (default 10) counts as a failure. Sync checkers run in a worker thread. `strict_otel=True` raises on invalid telemetry settings instead of logging a warning.
 
-Before OpenTelemetry attaches its logging handler, `init_service` calls `logging.basicConfig(level=log_level)` (default `INFO`). The call changes nothing when the application configured the root logger already. Pass `log_level=None` to skip it. The SDK serves no `/metrics` endpoint.
+Before OpenTelemetry attaches its logging handler, `init_service` calls `logging.basicConfig(level=log_level)` (default `INFO`). The call changes nothing when the root logger already has a handler. Pass `log_level=None` to skip it. The SDK serves no `/metrics` endpoint.
 
 ## Microservice scaffolder
 

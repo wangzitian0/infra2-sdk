@@ -44,6 +44,8 @@ def generate_compose_yaml(
     clean_project = _clean_ident(project)
     container_prefix = f"{clean_project}-{clean_service}"
     db_env = "      DATABASE_URL: ${DATABASE_URL:-}\n" if db == "postgres" else ""
+    # A manifest without fields renders an empty .env, so the sidecar check tests existence.
+    env_file_test = "-s" if scaffold_manifest(service_name, project, db).fields else "-e"
 
     if profile == "standalone":
         return f"""services:
@@ -125,7 +127,7 @@ def generate_compose_yaml(
       test:
         - CMD-SHELL
         - |
-          test -s /vault/secrets/.env && \\
+          test {env_file_test} /vault/secrets/.env && \\
             ! grep -q "<no value>" /vault/secrets/.env && \\
             test -s /vault/.token || exit 1
           if [ -z "$$(find /tmp/.vault_hc -mmin -5 2>/dev/null)" ]; then

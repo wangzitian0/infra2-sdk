@@ -39,6 +39,7 @@ from infra2_sdk.runtime.health import (
 logger = logging.getLogger("infra2_sdk.fastapi")
 
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
+_INITIALIZED_ATTRIBUTE = "infra2_service_name"
 
 _CheckerResult = bool | tuple[bool, str]
 
@@ -139,27 +140,35 @@ def init_service(
 ) -> None:
     """Register /livez, /readyz and /health on a FastAPI app and start OpenTelemetry.
 
+    Call it once per app: a second call raises ``RuntimeError``. Call it after you set the
+    app lifespan; a lifespan set later replaces the SDK shutdown.
+
     Parameters:
         app: The FastAPI application.
         name: Logical service name. ``OTEL_SERVICE_NAME`` takes precedence for telemetry.
         db_checker: Optional sync or async callable. It returns ``bool`` or ``(bool, detail)``.
             A false result, an exception or a timeout makes /readyz and /health answer 503.
+            A sync db_checker must set its own protocol-level timeout; a timed-out call keeps
+            its thread.
         enable_otel: Start OpenTelemetry when ``OTEL_EXPORTER_OTLP_ENDPOINT`` is set. A
             deployed tier (preview, staging, production) without the endpoint logs a warning.
         strict_otel: Raise on invalid telemetry settings instead of logging a warning.
         log_level: Level for the ``logging.basicConfig`` call that runs before OpenTelemetry
             attaches its handler. The call changes nothing when the root logger already has a
-            handler, so an application that configured logging keeps its level. ``None`` skips
-            the call.
+            handler, so an application that configured logging keeps its level. An application
+            that only called ``root.setLevel`` and has no handler gets ``log_level``. ``None``
+            skips the call.
         check_timeout_seconds: Time limit of one ``db_checker`` call.
     """
     try:
-        from fastapi import Response
         from fastapi.responses import JSONResponse
     except ImportError as exc:
         raise ImportError("fastapi is required to use infra2_sdk.fastapi.init_service") from exc
+    if hasattr(app.state, _INITIALIZED_ATTRIBUTE):
+        raise RuntimeError("init_service was already called for this app")
     if not check_timeout_seconds > 0:
         raise ValueError("check_timeout_seconds must be positive")
+    setattr(app.state, _INITIALIZED_ATTRIBUTE, name)
 
     async def report() -> tuple[int, dict[str, Any]]:
         if db_checker is None:
@@ -168,13 +177,17 @@ def init_service(
             [_DatabaseCheck(db_checker)], timeout_seconds=check_timeout_seconds
         )
 
+    # Do not add ``-> Response`` to these handlers. The module uses ``from __future__ import
+    # annotations``, so the annotation would stay a ForwardRef and the OpenAPI build would
+    # fail for /health.
+
     # /livez never checks a remote dependency: a database outage must not restart the container.
     @app.get("/livez", tags=["Observability"], include_in_schema=False)
-    def livez() -> Response:
+    def livez():
         return JSONResponse(status_code=200, content={"status": "alive", "service": name})
 
     @app.get("/readyz", tags=["Observability"], include_in_schema=False)
-    async def readyz() -> Response:
+    async def readyz():
         status_code, body = await report()
         if status_code == HTTP_OK:
             return JSONResponse(content={"status": "ready", "service": name})
@@ -184,7 +197,7 @@ def init_service(
         )
 
     @app.get("/health", tags=["Observability"], include_in_schema=True)
-    async def health() -> Response:
+    async def health():
         status_code, body = await report()
         return JSONResponse(status_code=status_code, content={**body, "service": name})
 

@@ -4,11 +4,11 @@ import asyncio
 import io
 import logging
 import time
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 
 import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from starlette.testclient import TestClient
 
 from infra2_sdk.fastapi import init_service
@@ -185,19 +185,23 @@ def _async(result):
     return checker
 
 
+_FALSE_VALUE_REASON = "db_checker returned a false value"
+
+
 @pytest.mark.parametrize("wrap", [_sync, _async], ids=["sync", "async"])
 @pytest.mark.parametrize(
-    "result,status",
+    "result,status,detail",
     [
-        (False, 503),
-        (True, 200),
-        ((False, "pool exhausted"), 503),
-        ((True, "ok"), 200),
-        (None, 503),
+        (False, 503, _FALSE_VALUE_REASON),
+        (True, 200, "ok"),
+        ((False, "pool exhausted"), 503, "pool exhausted"),
+        ((True, "replica lag 2s"), 200, "replica lag 2s"),
+        ((True, ""), 200, "ok"),
+        (None, 503, _FALSE_VALUE_REASON),
     ],
-    ids=["bare-false", "bare-true", "tuple-false", "tuple-true", "none"],
+    ids=["bare-false", "bare-true", "tuple-false", "tuple-true", "tuple-true-empty", "none"],
 )
-def test_db_checker_result_decides_readyz_and_health(wrap, result, status):
+def test_db_checker_result_decides_readyz_and_health(wrap, result, status, detail):
     client = TestClient(_app(db_checker=wrap(result)))
 
     readyz = client.get("/readyz")
@@ -207,9 +211,30 @@ def test_db_checker_result_decides_readyz_and_health(wrap, result, status):
     assert health.status_code == status
     assert health.json()["status"] == ("healthy" if status == 200 else "unhealthy")
     assert readyz.json()["status"] == ("ready" if status == 200 else "not_ready")
+    assert health.json()["checks"]["database"]["detail"] == detail
     if status == 503:
-        assert readyz.json()["reasons"] == health.json()["reasons"]
-        assert readyz.json()["reasons"][0].startswith("database: ")
+        assert readyz.json()["reasons"] == [f"database: {detail}"]
+        assert health.json()["reasons"] == [f"database: {detail}"]
+
+
+@pytest.mark.parametrize("kind", ["sync", "async"])
+def test_health_reports_the_checker_duration_in_milliseconds(kind):
+    if kind == "sync":
+
+        def checker():
+            time.sleep(0.05)
+            return True
+
+    else:
+
+        async def checker():
+            await asyncio.sleep(0.05)
+            return True
+
+    health = TestClient(_app(db_checker=checker)).get("/health")
+
+    duration_ms = health.json()["checks"]["database"]["duration_ms"]
+    assert 40 <= duration_ms < 2000
 
 
 def test_async_checker_returning_false_is_unready_and_unhealthy():
@@ -284,8 +309,8 @@ def test_checker_slower_than_the_timeout_is_unready_with_a_timeout_reason(kind):
     assert elapsed < 0.9, "the response must not wait for the slow checker"
 
 
-@pytest.mark.parametrize("seconds", [0, -1.0])
-def test_non_positive_check_timeout_is_rejected_at_init(seconds):
+@pytest.mark.parametrize("seconds", [0, -1.0, float("-inf"), float("nan")])
+def test_non_positive_or_undefined_check_timeout_is_rejected_at_init(seconds):
     with pytest.raises(ValueError, match="check_timeout_seconds"):
         _app(db_checker=_sync(True), check_timeout_seconds=seconds)
 
@@ -325,6 +350,118 @@ def test_probe_routes_do_not_collide_with_the_default_documentation_routes():
 
     assert paths >= _PROBE_ROUTES
     assert paths - _PROBE_ROUTES <= {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
+
+
+def test_openapi_json_builds_and_documents_only_health():
+    app = _app(db_checker=_sync(True))
+
+    response = TestClient(app, raise_server_exceptions=False).get("/openapi.json")
+
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+    assert "/health" in paths
+    assert "/livez" not in paths
+    assert "/readyz" not in paths
+
+
+def test_second_init_service_call_on_one_app_raises_and_changes_nothing():
+    app = _app(db_checker=_sync(True))
+    routes_before = list(app.router.routes)
+
+    with pytest.raises(RuntimeError, match="init_service was already called"):
+        init_service(app, "svc", enable_otel=False)
+
+    assert app.router.routes == routes_before
+    assert [route.path for route in app.router.routes].count("/livez") == 1
+
+
+def test_init_service_marks_only_the_app_it_ran_on():
+    for app in (_app(), _app()):
+        assert [route.path for route in app.router.routes].count("/livez") == 1
+
+
+# --- the application lifespan: the SDK stops telemetry after the application's own lifespan ---
+
+
+def _otel_environment(monkeypatch):
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
+    monkeypatch.setenv("OTEL_METRIC_EXPORT_INTERVAL", "3600000")
+
+
+def _record_sdk_shutdown(app, events):
+    providers = app.state.telemetry_providers
+    real_shutdown = providers.shutdown
+
+    def recording_shutdown():
+        events.append("SDK_SHUTDOWN")
+        real_shutdown()
+
+    providers.shutdown = recording_shutdown
+
+
+def test_sdk_shutdown_runs_after_the_user_lifespan_stops(
+    monkeypatch, memory_otlp, clean_otel_globals
+):
+    _otel_environment(monkeypatch)
+    events = []
+
+    @asynccontextmanager
+    async def user_lifespan(app):
+        events.append("START")
+        yield
+        events.append("STOP")
+
+    app = FastAPI(lifespan=user_lifespan)
+    init_service(app, "svc", enable_otel=True)
+    _record_sdk_shutdown(app, events)
+
+    with TestClient(app) as client:
+        assert events == ["START"]
+        assert client.get("/livez").status_code == 200
+
+    assert events == ["START", "STOP", "SDK_SHUTDOWN"]
+
+
+def test_state_yielded_by_the_user_lifespan_reaches_the_request(
+    monkeypatch, memory_otlp, clean_otel_globals
+):
+    _otel_environment(monkeypatch)
+
+    @asynccontextmanager
+    async def user_lifespan(app):
+        yield {"pool": "pool-1"}
+
+    app = FastAPI(lifespan=user_lifespan)
+    init_service(app, "svc", enable_otel=True)
+
+    @app.get("/pool")
+    def pool(request: Request):
+        return {"pool": request.state.pool}
+
+    with TestClient(app) as client:
+        assert client.get("/pool").json() == {"pool": "pool-1"}
+
+
+def test_sdk_shutdown_runs_when_the_user_lifespan_fails_at_startup(
+    monkeypatch, memory_otlp, clean_otel_globals
+):
+    _otel_environment(monkeypatch)
+    events = []
+
+    @asynccontextmanager
+    async def failing_lifespan(app):
+        events.append("START")
+        raise RuntimeError("startup failed")
+        yield  # pragma: no cover - makes this function an async generator
+
+    app = FastAPI(lifespan=failing_lifespan)
+    init_service(app, "svc", enable_otel=True)
+    _record_sdk_shutdown(app, events)
+
+    with pytest.raises(RuntimeError, match="startup failed"), TestClient(app):
+        pass
+
+    assert events == ["START", "SDK_SHUTDOWN"]
 
 
 # --- OpenTelemetry: one bootstrap, three signals, stopped with the app ------------------------
