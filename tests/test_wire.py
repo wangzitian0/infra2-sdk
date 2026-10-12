@@ -74,3 +74,7 @@ def test_json_schema_dialect_is_the_same_value_in_every_schema_emitter() -> None
         assert module.JSON_SCHEMA_DIALECT is _wire.JSON_SCHEMA_DIALECT, module.__name__
     schema = snapshot.AnonymizedSnapshotManifest.json_schema()
     assert schema["$schema"] == _wire.JSON_SCHEMA_DIALECT
+
+
+def test_json_schema_dialect_is_the_exact_2020_12_uri() -> None:
+    assert _wire.JSON_SCHEMA_DIALECT == "https://json-schema.org/draft/2020-12/schema"

@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import sys
 import zipfile
 from dataclasses import replace
 from urllib.error import HTTPError, URLError
@@ -1772,6 +1773,31 @@ def test_main_deploy_health_subcommand_runs_the_health_cli(monkeypatch, capsys) 
     )
     assert rc == 0
     assert "[OK] Health check passed at https://example.test/health" in capsys.readouterr().out
+
+
+def test_main_reads_sys_argv_when_argv_is_none_for_deploy_health(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(sys, "argv", ["deploy", "deploy-health"])
+    with pytest.raises(SystemExit) as exit_info:
+        deploy_main()
+    assert exit_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "usage: python -m infra2_sdk.deploy deploy-health" in err
+    assert "the following arguments are required: url" in err
+
+
+def test_main_reads_sys_argv_when_argv_is_none_for_dispatch(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(sys, "argv", ["deploy", "dispatch"])
+    monkeypatch.delenv("INFRA2_PAT", raising=False)
+    assert deploy_main() == 1
+    assert "error: INFRA2_PAT environment variable is required" in capsys.readouterr().err
+
+
+def test_main_without_a_subcommand_exits_2(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(sys, "argv", ["deploy"])
+    with pytest.raises(SystemExit) as exit_info:
+        deploy_main()
+    assert exit_info.value.code == 2
+    assert "the following arguments are required: command" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("command", ["dispatch", "deploy-health"])

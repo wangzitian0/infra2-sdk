@@ -16,10 +16,27 @@ from wheel_smoke import REMOVED_MODULES
 import infra2_sdk
 import infra2_sdk.runtime
 
+# Second, independent copy of the six names. It is the oracle for the list imported above.
+EXPECTED_REMOVED_MODULES = frozenset(
+    {
+        "infra2_sdk.deploy_health",
+        "infra2_sdk.dispatch",
+        "infra2_sdk.release",
+        "infra2_sdk.runtime.environ",
+        "infra2_sdk.runtime.dependencies",
+        "infra2_sdk.runtime.probes",
+    }
+)
+
 
 def test_removed_module_list_has_six_unique_names() -> None:
     assert len(REMOVED_MODULES) == 6
     assert len(set(REMOVED_MODULES)) == 6
+
+
+def test_removed_module_list_equals_the_independent_literal_set() -> None:
+    assert len(EXPECTED_REMOVED_MODULES) == 6
+    assert set(REMOVED_MODULES) == EXPECTED_REMOVED_MODULES
 
 
 @pytest.mark.parametrize("module", REMOVED_MODULES)
