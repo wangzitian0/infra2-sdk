@@ -5,6 +5,13 @@ changes are minor releases, removing or changing a public symbol is a major rele
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.1.3 - 2026-10-12
+
+### Fixed
+
+- Wire FastAPI `init_service` OpenTelemetry setup directly to `infra2_sdk.runtime.otel.configure_telemetry` to enable OTLP log exporting and prevent silent telemetry loss ([#86](https://github.com/wangzitian0/infra2-sdk/issues/86), [#87](https://github.com/wangzitian0/infra2-sdk/pull/87)).
+- Register application shutdown lifecycle handler in FastAPI `init_service` to unbind and flush OpenTelemetry logging handlers cleanly ([#86](https://github.com/wangzitian0/infra2-sdk/issues/86), [#87](https://github.com/wangzitian0/infra2-sdk/pull/87)).
+
 ## 3.1.2 - 2026-10-12
 
 ### Added
