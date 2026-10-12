@@ -119,9 +119,22 @@ def test_fastapi_init_with_otel_enabled(monkeypatch):
         "opentelemetry.exporter.otlp.proto.http.trace_exporter.OTLPSpanExporter",
         MagicMock(),
     )
+    monkeypatch.setattr(
+        "opentelemetry.exporter.otlp.proto.http._log_exporter.OTLPLogExporter",
+        MagicMock(),
+    )
     app = FastAPI()
     init_service(app, name="metrics-svc", enable_otel=True)
     client = TestClient(app)
     res = client.get("/livez")
     assert res.status_code == 200
     assert res.json() == {"status": "alive", "service": "metrics-svc"}
+
+    assert hasattr(app.state, "telemetry_providers")
+    providers = app.state.telemetry_providers
+    assert providers.tracer_provider is not None
+    assert providers.logger_provider is not None
+    assert providers.logging_handler is not None
+
+    providers.shutdown()
+    assert providers.logging_handler is None

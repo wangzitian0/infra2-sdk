@@ -27,38 +27,44 @@ def _setup_opentelemetry(app: Any, service_name: str) -> bool:
         return False
 
     try:
-        from opentelemetry import trace
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-        from opentelemetry.sdk.resources import Resource
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        from infra2_sdk.runtime.otel import OtelSettings, configure_telemetry
 
-        resource_attrs = {"service.name": service_name}
-        raw_attrs = os.getenv("OTEL_RESOURCE_ATTRIBUTES")
-        if raw_attrs:
-            for pair in raw_attrs.split(","):
-                if "=" in pair:
-                    k, v = pair.split("=", 1)
-                    resource_attrs[k.strip()] = v.strip()
+        env_settings = OtelSettings.from_env(strict=False)
+        effective_service_name = service_name or env_settings.service_name
+        settings = OtelSettings(
+            service_name=effective_service_name,
+            endpoint=env_settings.endpoint or endpoint,
+            service_version=env_settings.service_version,
+            environment=env_settings.environment,
+            deployment_environment=env_settings.deployment_environment,
+            instance_id=env_settings.instance_id,
+            resource_attributes=env_settings.resource_attributes,
+            enabled=True,
+            export_interval_millis=env_settings.export_interval_millis,
+            traces_sampler=env_settings.traces_sampler,
+            traces_sampler_arg=env_settings.traces_sampler_arg,
+        )
 
-        resource = Resource.create(resource_attrs)
-        provider = TracerProvider(resource=resource)
-
-        # HTTP exporter against the Docker internal collector endpoint
-        exporter_url = f"{endpoint.rstrip('/')}/v1/traces"
-        exporter = OTLPSpanExporter(endpoint=exporter_url)
-        provider.add_span_processor(BatchSpanProcessor(exporter))
-        trace.set_tracer_provider(provider)
+        providers = configure_telemetry(settings, set_global=True, capture_logs=True)
+        if hasattr(app, "state"):
+            app.state.telemetry_providers = providers
 
         # Instrument FastAPI app if instrumentor is available
         try:
             from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-            FastAPIInstrumentor.instrument_app(app, tracer_provider=provider)
+            FastAPIInstrumentor.instrument_app(app, tracer_provider=providers.tracer_provider)
         except ImportError:
             logger.debug("opentelemetry-instrumentation-fastapi not installed; tracing disabled")
 
-        logger.info(f"OpenTelemetry tracing initialized for '{service_name}' -> {exporter_url}")
+        if hasattr(app, "add_event_handler"):
+            app.add_event_handler("shutdown", providers.shutdown)
+
+        logger.info(
+            "OpenTelemetry telemetry initialized for '%s' -> %s",
+            effective_service_name,
+            settings.endpoint,
+        )
         return True
     except Exception as exc:
         logger.warning(f"Could not initialize OpenTelemetry: {exc}")
