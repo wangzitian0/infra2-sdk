@@ -23,6 +23,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+import infra2_sdk
 from infra2_sdk.runtime.config_schema import EnvironmentField, EnvironmentManifest, FieldSource
 from infra2_sdk.secrets import render_agent_policy, render_agent_template
 
@@ -455,14 +456,32 @@ CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "{port}"]
 """
 
 
+def _sdk_release_version() -> str:
+    """Return the release part (``major.minor.patch``) of the running SDK version.
+
+    The generated app relies on the behavior of the SDK that generated it.
+    A suffix such as ``.dev1``, ``+local``, ``rc1`` or ``.post1`` is dropped.
+    Raise ``ValueError`` when the version has no release part.
+    """
+    sdk_version = infra2_sdk.__version__
+    match = re.match(r"\d+\.\d+\.\d+", sdk_version)
+    if match is None:
+        raise ValueError(f"SDK version {sdk_version!r} has no major.minor.patch release part")
+    return match.group()
+
+
 def generate_requirements_txt(template: str = "fastapi", db: str = "postgres") -> str:
-    """Generate minimum starter dependencies."""
+    """Generate minimum starter dependencies.
+
+    The lower bound of ``infra2-sdk`` is the release part of the SDK version that runs
+    this function. The bound follows the SDK release without a second version number.
+    """
     extras = ["fastapi", "otel"]
     if db == "postgres":
         extras.append("postgres")
     extras_str = ",".join(extras)
     return f"""uvicorn[standard]>=0.28.0,<1.0.0
-infra2-sdk[{extras_str}]>=3.1.2
+infra2-sdk[{extras_str}]>={_sdk_release_version()}
 """
 
 

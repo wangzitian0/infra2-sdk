@@ -249,7 +249,7 @@ Generated assets include:
 - `compose.yaml`: Hardened Docker Compose declaration with explicit memory ceilings and health check intervals.
 - `app.py`: FastAPI application with `init_service` and database probe wiring.
 - `entrypoint.sh`: Container bootstrap script applying migrations safely.
-- `requirements.txt`: Curated dependencies with exact runtime extras (`infra2-sdk[fastapi,otel,postgres]`).
+- `requirements.txt`: Curated dependencies with exact runtime extras (`infra2-sdk[fastapi,otel,postgres]`). The `infra2-sdk` lower bound is the `major.minor.patch` release of the SDK that generated the file.
 - `Dockerfile`: Minimal container image recipe.
 - `.env.example` (in standalone profile) or `deploy.py` and the Vault assets (in infra2 profile): `secrets.ctmpl` and `vault-policy.hcl` are rendered by `infra2_sdk.secrets` from one manifest, `vault-agent.hcl` configures the sidecar.
 
