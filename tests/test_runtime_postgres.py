@@ -161,7 +161,7 @@ def test_probe_postgres_closes_connection_on_execute_error() -> None:
 
 
 def test_redact_postgres_error_public_contract() -> None:
-    from infra2_sdk.runtime.postgres import _redact_error, redact_postgres_error
+    from infra2_sdk.runtime.postgres import redact_postgres_error
 
     settings = PostgresSettings("postgresql://user:top-secret@db.internal:5432/app")
     error = (
@@ -172,4 +172,12 @@ def test_redact_postgres_error_public_contract() -> None:
     assert "top-secret" not in redacted
     assert "<redacted>" in redacted
     assert "<redacted-postgres-dsn>" in redacted
-    assert _redact_error(error, settings) == redacted
+
+
+def test_postgres_module_has_no_private_redact_error_alias() -> None:
+    from infra2_sdk.runtime import postgres
+
+    assert "redact_postgres_error" in postgres.__all__
+    assert callable(postgres.redact_postgres_error)
+    assert not hasattr(postgres, "_redact_error")
+    assert "_redact_error" not in postgres.__all__

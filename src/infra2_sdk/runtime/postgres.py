@@ -97,7 +97,7 @@ def probe_postgres(
         return ProbeResult(
             "database",
             DependencyStatus.ABSENT,
-            f"{type(exc).__name__}: {_redact_error(str(exc), settings)}",
+            f"{type(exc).__name__}: {redact_postgres_error(str(exc), settings)}",
             _elapsed(started),
         )
     finally:
@@ -145,13 +145,10 @@ def redact_postgres_error(detail: str, settings: PostgresSettings) -> str:
     return redacted
 
 
-_redact_error = redact_postgres_error
-
 __all__ = [
     "PostgresCheck",
     "PostgresSettings",
     "normalize_postgres_dsn",
     "probe_postgres",
     "redact_postgres_error",
-    "_redact_error",
 ]
