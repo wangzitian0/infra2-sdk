@@ -1,168 +1,192 @@
-"""Single-line FastAPI runtime integration for infra2.
+"""FastAPI integration for infra2 services: probe routes and one OpenTelemetry bootstrap.
 
-Provides turnkey compliance with ops.observability.md §5.1:
-- /livez: Liveness probe (process-only, anti-puppet rule).
-- /readyz: Readiness probe (checks database and essential dependencies; fails 503).
-- /health: Backwards-compatible aggregated healthcheck.
-- OpenTelemetry APM bootstrapping with W3C TraceContext propagation.
-- Graceful shutdown handling.
+``init_service`` registers three top-level routes (``ops.observability`` section 5.1):
+
+- ``/livez``: liveness. It never calls a dependency.
+- ``/readyz``: readiness. It answers 503 with reasons when the database check fails.
+- ``/health``: the ``infra2_sdk.runtime.health`` report, plus the ``service`` name.
+
+It also calls ``infra2_sdk.runtime.otel.configure_telemetry``. OTLP carries traces, metrics and
+logs. The SDK shuts the providers down when the application lifespan ends. The SDK does not
+serve a metrics endpoint.
 """
 
 from __future__ import annotations
 
+import inspect
 import logging
-import os
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
+from dataclasses import replace
 from typing import Any
+
+from infra2_sdk.runtime.environment import (
+    PLATFORM_OWNED_TIERS,
+    RuntimeEnvKey,
+    UnknownEnvironmentPolicy,
+    environment_from_env,
+    resolve_runtime_env,
+)
+from infra2_sdk.runtime.health import (
+    HTTP_OK,
+    DependencyStatus,
+    HealthStatus,
+    ProbeResult,
+    check_health,
+)
 
 logger = logging.getLogger("infra2_sdk.fastapi")
 
+_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 
-def _setup_opentelemetry(app: Any, service_name: str) -> bool:
-    """Initialize OpenTelemetry instrumentation if packages and endpoint are present."""
-    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-    if not endpoint:
-        logger.debug("OTEL_EXPORTER_OTLP_ENDPOINT not set; skipping OTel instrumentation")
-        return False
+_CheckerResult = bool | tuple[bool, str]
+
+
+class _DatabaseCheck:
+    """Adapt ``db_checker`` to the ``DependencyCheck`` protocol of ``runtime.health``."""
+
+    name = "database"
+
+    def __init__(self, checker: Callable[[], Any]) -> None:
+        self._checker = checker
+
+    def probe(self) -> ProbeResult | Awaitable[ProbeResult]:
+        # run_probes calls this method in a worker thread. It awaits an awaitable result on
+        # the event loop, so a sync checker never blocks the loop and an async checker works.
+        started = time.perf_counter()
+        outcome = self._checker()
+        if inspect.isawaitable(outcome):
+            return self._finish(outcome, started)
+        return self._result(outcome, started)
+
+    async def _finish(self, outcome: Awaitable[Any], started: float) -> ProbeResult:
+        return self._result(await outcome, started)
+
+    def _result(self, outcome: Any, started: float) -> ProbeResult:
+        ok, detail = outcome if isinstance(outcome, tuple) else (outcome, "")
+        status = DependencyStatus.PRESENT if ok else DependencyStatus.ABSENT
+        fallback = "ok" if ok else "db_checker returned a false value"
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        return ProbeResult(self.name, status, str(detail or fallback), elapsed_ms)
+
+
+def _in_deployed_tier() -> bool:
+    """Return True for preview, staging and production.
+
+    An unknown or conflicting environment counts as deployed, so the caller logs more, not less.
+    """
+    try:
+        tier = environment_from_env(unknown=UnknownEnvironmentPolicy.PRODUCTION).tier
+    except ValueError:
+        return True
+    return tier in PLATFORM_OWNED_TIERS
+
+
+def _start_telemetry(app: Any, name: str, *, strict: bool, log_level: int | None) -> None:
+    endpoint_variable = RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT
+    if resolve_runtime_env(None, endpoint_variable).value is None:
+        level = logging.WARNING if _in_deployed_tier() else logging.DEBUG
+        logger.log(level, "%s is not set; OpenTelemetry export is off", endpoint_variable.value)
+        return
 
     try:
         from infra2_sdk.runtime.otel import OtelSettings, configure_telemetry
 
-        env_settings = OtelSettings.from_env(strict=False)
-        effective_service_name = service_name or env_settings.service_name
-        settings = OtelSettings(
-            service_name=effective_service_name,
-            endpoint=env_settings.endpoint or endpoint,
-            service_version=env_settings.service_version,
-            environment=env_settings.environment,
-            deployment_environment=env_settings.deployment_environment,
-            instance_id=env_settings.instance_id,
-            resource_attributes=env_settings.resource_attributes,
-            enabled=True,
-            export_interval_millis=env_settings.export_interval_millis,
-            traces_sampler=env_settings.traces_sampler,
-            traces_sampler_arg=env_settings.traces_sampler_arg,
-        )
+        settings = OtelSettings.from_env(strict=strict)
+        if not settings.enabled:
+            logger.debug("OpenTelemetry is disabled by the environment")
+            return
+        service_name = resolve_runtime_env(None, RuntimeEnvKey.SERVICE_NAME, default=name).value
+        settings = replace(settings, service_name=service_name or name)
+        if log_level is not None:
+            # basicConfig does nothing when the root logger already has a handler. Without
+            # this call the OpenTelemetry handler would make a later basicConfig a no-op and
+            # the root level would stay at WARNING.
+            logging.basicConfig(level=log_level, format=_LOG_FORMAT)
+        providers = configure_telemetry(settings, set_global=True)
+        app.state.telemetry_providers = providers
 
-        providers = configure_telemetry(settings, set_global=True, capture_logs=True)
-        if hasattr(app, "state"):
-            app.state.telemetry_providers = providers
+        original = app.router.lifespan_context
 
-        # Instrument FastAPI app if instrumentor is available
-        try:
-            from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        @asynccontextmanager
+        async def lifespan(scope_app: Any):
+            try:
+                async with original(scope_app) as state:
+                    yield state
+            finally:
+                providers.shutdown()
 
-            FastAPIInstrumentor.instrument_app(app, tracer_provider=providers.tracer_provider)
-        except ImportError:
-            logger.debug("opentelemetry-instrumentation-fastapi not installed; tracing disabled")
-
-        if hasattr(app, "add_event_handler"):
-            app.add_event_handler("shutdown", providers.shutdown)
-
+        app.router.lifespan_context = lifespan
         logger.info(
-            "OpenTelemetry telemetry initialized for '%s' -> %s",
-            effective_service_name,
-            settings.endpoint,
+            "OpenTelemetry started for '%s' -> %s", settings.service_name, settings.endpoint
         )
-        return True
     except Exception as exc:
-        logger.warning(f"Could not initialize OpenTelemetry: {exc}")
-        return False
+        if strict:
+            raise
+        logger.warning("Could not initialize OpenTelemetry: %s", exc)
 
 
 def init_service(
     app: Any,
     name: str,
     *,
-    db_checker: Callable[[], bool | tuple[bool, str]] | None = None,
+    db_checker: Callable[[], _CheckerResult | Awaitable[_CheckerResult]] | None = None,
     enable_otel: bool = True,
+    strict_otel: bool = False,
+    log_level: int | None = logging.INFO,
+    check_timeout_seconds: float = 10.0,
 ) -> None:
-    """Initialize service endpoints, observability, and lifecycle hooks on FastAPI app.
+    """Register /livez, /readyz and /health on a FastAPI app and start OpenTelemetry.
 
     Parameters:
-        app: The FastAPI application instance.
-        name: Logical service identifier (e.g. 'my-service').
-        db_checker: Optional callable returning True/False or (is_healthy: bool, detail: str).
-        enable_otel: Whether to initialize OpenTelemetry if endpoint is configured.
+        app: The FastAPI application.
+        name: Logical service name. ``OTEL_SERVICE_NAME`` takes precedence for telemetry.
+        db_checker: Optional sync or async callable. It returns ``bool`` or ``(bool, detail)``.
+            A false result, an exception or a timeout makes /readyz and /health answer 503.
+        enable_otel: Start OpenTelemetry when ``OTEL_EXPORTER_OTLP_ENDPOINT`` is set. A
+            deployed tier (preview, staging, production) without the endpoint logs a warning.
+        strict_otel: Raise on invalid telemetry settings instead of logging a warning.
+        log_level: Level for the ``logging.basicConfig`` call that runs before OpenTelemetry
+            attaches its handler. The call changes nothing when the root logger already has a
+            handler, so an application that configured logging keeps its level. ``None`` skips
+            the call.
+        check_timeout_seconds: Time limit of one ``db_checker`` call.
     """
     try:
         from fastapi import Response
         from fastapi.responses import JSONResponse
     except ImportError as exc:
         raise ImportError("fastapi is required to use infra2_sdk.fastapi.init_service") from exc
+    if not check_timeout_seconds > 0:
+        raise ValueError("check_timeout_seconds must be positive")
 
-    # 1. /livez — Liveness probe (ANTI-PUPPET: never check remote DB or external APIs)
+    async def report() -> tuple[int, dict[str, Any]]:
+        if db_checker is None:
+            return HTTP_OK, {"status": HealthStatus.HEALTHY.value, "checks": {}, "reasons": []}
+        return await check_health(
+            [_DatabaseCheck(db_checker)], timeout_seconds=check_timeout_seconds
+        )
+
+    # /livez never checks a remote dependency: a database outage must not restart the container.
     @app.get("/livez", tags=["Observability"], include_in_schema=False)
     def livez() -> Response:
         return JSONResponse(status_code=200, content={"status": "alive", "service": name})
 
-    # 2. /readyz — Readiness probe (validates required operational dependencies)
     @app.get("/readyz", tags=["Observability"], include_in_schema=False)
-    def readyz() -> Response:
-        reasons = []
-        if db_checker is not None:
-            try:
-                res = db_checker()
-                if isinstance(res, tuple):
-                    ok, detail = res
-                else:
-                    ok, detail = bool(res), ("ok" if res else "db unreachable")
-                if not ok:
-                    reasons.append(detail)
-            except Exception as exc:
-                reasons.append(f"db check raised {type(exc).__name__}: {exc}")
-
-        if reasons:
-            return JSONResponse(
-                status_code=503,
-                content={"status": "not_ready", "service": name, "reasons": reasons},
-            )
-        return JSONResponse(status_code=200, content={"status": "ready", "service": name})
-
-    # 3. /health — Aggregated health specification (ops.observability.md §5.1)
-    @app.get("/health", tags=["Observability"], include_in_schema=True)
-    def health() -> Response:
-        checks: dict[str, Any] = {}
-        reasons: list[str] = []
-        overall_status = "healthy"
-
-        if db_checker is not None:
-            t0 = time.perf_counter()
-            try:
-                res = db_checker()
-                duration_ms = round((time.perf_counter() - t0) * 1000, 2)
-                if isinstance(res, tuple):
-                    ok, detail = res
-                else:
-                    ok, detail = bool(res), ("ok" if res else "database unreachable")
-                checks["database"] = {
-                    "status": "present" if ok else "failed",
-                    "duration_ms": duration_ms,
-                }
-                if not ok:
-                    overall_status = "unhealthy"
-                    reasons.append(detail)
-            except Exception as exc:
-                overall_status = "unhealthy"
-                reasons.append(f"database error: {exc}")
-                checks["database"] = {
-                    "status": "failed",
-                    "error": str(exc),
-                }
-
-        http_code = 200 if overall_status == "healthy" else 503
+    async def readyz() -> Response:
+        status_code, body = await report()
+        if status_code == HTTP_OK:
+            return JSONResponse(content={"status": "ready", "service": name})
         return JSONResponse(
-            status_code=http_code,
-            content={
-                "status": overall_status,
-                "service": name,
-                "checks": checks,
-                "reasons": reasons,
-            },
+            status_code=status_code,
+            content={"status": "not_ready", "service": name, "reasons": body["reasons"]},
         )
 
-    # 4. OpenTelemetry Tracing
+    @app.get("/health", tags=["Observability"], include_in_schema=True)
+    async def health() -> Response:
+        status_code, body = await report()
+        return JSONResponse(status_code=status_code, content={**body, "service": name})
+
     if enable_otel:
-        otel_service_name = os.getenv("OTEL_SERVICE_NAME") or name
-        _setup_opentelemetry(app, otel_service_name)
+        _start_telemetry(app, name, strict=strict_otel, log_level=log_level)

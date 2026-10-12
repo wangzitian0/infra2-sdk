@@ -3,7 +3,9 @@
 import ast
 from pathlib import Path
 
-from infra2_sdk.scaffold import scaffold_service
+import pytest
+
+from infra2_sdk.scaffold import main, scaffold_service
 
 
 def test_scaffold_generates_all_required_files(tmp_path: Path):
@@ -22,6 +24,7 @@ def test_scaffold_generates_all_required_files(tmp_path: Path):
         "deploy.py",
         "secrets.ctmpl",
         "vault-agent.hcl",
+        "vault-policy.hcl",
         "entrypoint.sh",
         "Dockerfile",
         "requirements.txt",
@@ -112,8 +115,6 @@ def test_scaffold_compose_yaml_db_environment(tmp_path: Path):
 
 
 def test_scaffold_main_cli_with_argv(tmp_path: Path):
-    from infra2_sdk.scaffold import main
-
     out = tmp_path / "argv_test"
     code = main(["argv-svc", "--out-dir", str(out), "--port", "8088"])
     assert code == 0
@@ -148,6 +149,7 @@ def test_scaffold_standalone_profile(tmp_path: Path):
     # Verify no infra2-specific vault or deployer files in standalone profile
     assert not (out_dir / "deploy.py").exists()
     assert not (out_dir / "vault-agent.hcl").exists()
+    assert not (out_dir / "vault-policy.hcl").exists()
     assert not (out_dir / "secrets.ctmpl").exists()
 
     compose_text = (out_dir / "compose.yaml").read_text(encoding="utf-8")
@@ -182,6 +184,8 @@ def test_scaffold_requirements_txt_includes_extras(tmp_path: Path):
     scaffold_service("pg-reqs", out_pg, db="postgres")
     reqs_pg = (out_pg / "requirements.txt").read_text(encoding="utf-8")
     assert "infra2-sdk[fastapi,otel,postgres]>=3.1.2" in reqs_pg
+    # The SDK extra owns the FastAPI version bound: a second line would drift from it.
+    assert not [line for line in reqs_pg.splitlines() if line.startswith("fastapi")]
 
     out_none = tmp_path / "none_reqs"
     scaffold_service("none-reqs", out_none, db="none")
@@ -191,7 +195,6 @@ def test_scaffold_requirements_txt_includes_extras(tmp_path: Path):
 
 def test_scaffold_cli_subcommand_forwarding_and_wrapper(tmp_path: Path):
     from infra2_sdk.cli.scaffold import main as cli_main
-    from infra2_sdk.scaffold import main
 
     # 1. Forwarded 'scaffold' subcommand
     out1 = tmp_path / "sub_test"
@@ -204,3 +207,75 @@ def test_scaffold_cli_subcommand_forwarding_and_wrapper(tmp_path: Path):
     code2 = cli_main(["scaffold", "wrapped-svc", "--out-dir", str(out2)])
     assert code2 == 0
     assert (out2 / "compose.yaml").exists()
+
+
+def test_scaffold_secrets_template_comes_from_the_sdk_renderer(tmp_path: Path):
+    out_dir = tmp_path / "vault_pg"
+    scaffold_service("demo-service", out_dir, project="apps", db="postgres")
+
+    template = (out_dir / "secrets.ctmpl").read_text(encoding="utf-8")
+
+    assert "Generated from scaffold:apps/demo_service by infra2_sdk.secrets" in template
+    assert '{{- with secret (printf "secret/data/apps/%s/demo_service" $env) }}' in template
+    assert 'DATABASE_URL={{ printf "%q" .Data.data.DATABASE_URL }}' in template
+    assert "range $k, $v" not in template, "the hand-written wildcard template is gone"
+
+
+def test_scaffold_vault_policy_grants_exactly_the_template_reads(tmp_path: Path):
+    out_dir = tmp_path / "vault_policy"
+    scaffold_service("demo-service", out_dir, project="apps", db="postgres")
+
+    policy = (out_dir / "vault-policy.hcl").read_text(encoding="utf-8")
+
+    assert 'path "secret/data/apps/{{env}}/demo_service" {' in policy
+    assert 'path "secret/metadata/apps/{{env}}/demo_service" {' in policy
+    assert 'path "auth/token/renew-self" {' in policy
+    assert policy.count("capabilities") == 4
+
+
+def test_scaffold_without_database_declares_no_secret_fields(tmp_path: Path):
+    out_dir = tmp_path / "vault_none"
+    scaffold_service("demo-service", out_dir, project="apps", db="none")
+
+    template = (out_dir / "secrets.ctmpl").read_text(encoding="utf-8")
+    policy = (out_dir / "vault-policy.hcl").read_text(encoding="utf-8")
+
+    assert "DATABASE_URL" not in template
+    assert "with secret" not in template
+    assert 'path "secret/data/apps/{{env}}/demo_service" {' in policy
+
+
+@pytest.mark.parametrize("profile", ["infra2", "standalone"])
+@pytest.mark.parametrize("db", ["postgres", "none"])
+def test_scaffold_dockerfile_starts_an_app_that_exists(tmp_path: Path, profile: str, db: str):
+    out_dir = tmp_path / f"docker_{profile}_{db}"
+    created = scaffold_service("demo-service", out_dir, profile=profile, db=db)
+
+    dockerfile = (out_dir / "Dockerfile").read_text(encoding="utf-8")
+
+    assert '"uvicorn", "app:app"' in dockerfile
+    assert "app.py" in created
+    assert (out_dir / "app.py").is_file()
+
+
+def test_scaffold_generic_template_is_gone(tmp_path: Path, capsys):
+    with pytest.raises(ValueError, match="template"):
+        scaffold_service("demo-service", tmp_path / "generic", template="generic")
+    assert not (tmp_path / "generic").exists(), "a rejected template must not write files"
+
+    with pytest.raises(SystemExit) as exc:
+        main(["demo-service", "--template", "generic", "--out-dir", str(tmp_path / "cli")])
+    assert exc.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("db", ["postgres", "none"])
+def test_scaffolded_app_promises_only_what_init_service_does(tmp_path: Path, db: str):
+    out_dir = tmp_path / f"promises_{db}"
+    scaffold_service("demo-service", out_dir, db=db)
+
+    app_text = (out_dir / "app.py").read_text(encoding="utf-8")
+
+    assert "init_service(app" in app_text
+    for unkept_promise in ("SIGTERM", "SigNoz", "Prometheus"):
+        assert unkept_promise not in app_text

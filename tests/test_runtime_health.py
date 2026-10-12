@@ -1,7 +1,9 @@
 import asyncio
 import json
+import threading
 import time
 from contextvars import ContextVar
+from functools import partial
 
 import pytest
 
@@ -426,12 +428,30 @@ async def test_sync_probe_propagates_system_exit() -> None:
     assert exc_info.value.code == 42
 
 
-async def test_sync_probe_semaphore_bounds_concurrency() -> None:
-    from infra2_sdk.runtime.health import _get_sync_probe_semaphore
+async def test_sync_probes_run_in_parallel_but_never_exceed_sixteen_worker_threads() -> None:
+    # The bound is part of the contract: 16 sync probes at once, no more and no fewer.
+    limit = 16
+    total = limit + 20
+    barrier = threading.Barrier(limit, timeout=3)
+    lock = threading.Lock()
+    active = {"now": 0, "peak": 0}
 
-    sem = _get_sync_probe_semaphore()
-    assert sem._value <= 16
+    def probe(index: int) -> int:
+        with lock:
+            active["now"] += 1
+            active["peak"] = max(active["peak"], active["now"])
+        try:
+            if index < limit:
+                barrier.wait()  # releases only when 16 probes run at the same time
+            time.sleep(0.05)  # hold the slot so an unbounded run overlaps every probe
+        finally:
+            with lock:
+                active["now"] -= 1
+        return index
 
-    results = await asyncio.gather(*(_run_sync_probe(lambda: 123, name=f"p{i}") for i in range(20)))
-    assert len(results) == 20
-    assert all(r == 123 for r in results)
+    results = await asyncio.gather(
+        *(_run_sync_probe(partial(probe, index), name=f"p{index}") for index in range(total))
+    )
+
+    assert results == list(range(total))
+    assert active["peak"] == limit
