@@ -442,7 +442,8 @@ def _validate_endpoint(value: str) -> None:
         or any(char.isspace() for char in endpoint.netloc)
     ):
         raise ValueError("OTLP endpoint must use http:// or https:// with a host")
-    if endpoint.username is not None or endpoint.password is not None:
+    # urlsplit returns a username (maybe "") whenever a password exists: one check is enough.
+    if endpoint.username is not None:
         raise ValueError("OTLP endpoint must not contain credentials")
     if endpoint.fragment:
         raise ValueError("OTLP endpoint must not contain a fragment")

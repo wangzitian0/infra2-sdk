@@ -216,6 +216,32 @@ def smoke_otel() -> None:
     assert carried.get("traceparent") == inbound, carried
 
 
+async def _asgi_get(app, path: str) -> tuple[int, dict]:
+    """Send one GET through the ASGI interface; the fastapi extra does not ship httpx."""
+
+    messages = []
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "GET",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "headers": [],
+    }
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(msg):
+        messages.append(msg)
+
+    await app(scope, receive, send)
+    status = next(m["status"] for m in messages if m["type"] == "http.response.start")
+    body = b"".join(m.get("body", b"") for m in messages if m["type"] == "http.response.body")
+    return status, json.loads(body.decode())
+
+
 def smoke_fastapi() -> None:
     from fastapi import FastAPI
 
@@ -224,37 +250,111 @@ def smoke_fastapi() -> None:
     app = FastAPI()
     init_service(app, name="fastapi-smoke", enable_otel=False)
 
-    async def _req(path: str) -> tuple[int, dict]:
-        messages = []
-        scope = {
-            "type": "http",
-            "http_version": "1.1",
-            "method": "GET",
-            "path": path,
-            "raw_path": path.encode(),
-            "query_string": b"",
-            "headers": [],
-        }
-
-        async def receive():
-            return {"type": "http.request", "body": b"", "more_body": False}
-
-        async def send(msg):
-            messages.append(msg)
-
-        await app(scope, receive, send)
-        status = next(m["status"] for m in messages if m["type"] == "http.response.start")
-        body = b"".join(m.get("body", b"") for m in messages if m["type"] == "http.response.body")
-        return status, json.loads(body.decode())
-
-    status, livez = asyncio.run(_req("/livez"))
+    status, livez = asyncio.run(_asgi_get(app, "/livez"))
     assert (status, livez) == (200, {"status": "alive", "service": "fastapi-smoke"})
 
-    status, readyz = asyncio.run(_req("/readyz"))
+    status, readyz = asyncio.run(_asgi_get(app, "/readyz"))
     assert (status, readyz) == (200, {"status": "ready", "service": "fastapi-smoke"})
 
-    status, health = asyncio.run(_req("/health"))
+    status, health = asyncio.run(_asgi_get(app, "/health"))
     assert status == 200 and health.get("status") == "healthy"
+
+    async def down() -> bool:
+        return False
+
+    failing = FastAPI()
+    init_service(failing, name="fastapi-smoke", db_checker=down, enable_otel=False)
+    status, readyz = asyncio.run(_asgi_get(failing, "/readyz"))
+    assert status == 503 and readyz["status"] == "not_ready", (status, readyz)
+    status, health = asyncio.run(_asgi_get(failing, "/health"))
+    assert status == 503 and health["status"] == "unhealthy", (status, health)
+
+    smoke_fastapi_otel()
+
+
+def smoke_fastapi_otel() -> None:
+    """Start OTLP export through init_service and stop it with the app lifespan, offline."""
+
+    import logging
+
+    import opentelemetry.exporter.otlp.proto.http._log_exporter as log_exporter
+    import opentelemetry.exporter.otlp.proto.http.metric_exporter as metric_exporter
+    import opentelemetry.exporter.otlp.proto.http.trace_exporter as trace_exporter
+    from fastapi import FastAPI
+    from opentelemetry.sdk._logs import export as log_export
+    from opentelemetry.sdk.metrics.export import MetricExporter, MetricExportResult
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    from infra2_sdk.fastapi import init_service
+
+    class MemoryMetricExporter(MetricExporter):
+        def export(self, metrics_data, timeout_millis=10_000, **kwargs):
+            return MetricExportResult.SUCCESS
+
+        def force_flush(self, timeout_millis=10_000):
+            return True
+
+        def shutdown(self, timeout_millis=30_000, **kwargs):
+            return None
+
+    spans = InMemorySpanExporter()
+    endpoints: list[str] = []
+
+    def memory_exporter(exporter):
+        def build(*, endpoint):
+            endpoints.append(endpoint)
+            return exporter
+
+        return build
+
+    log_memory = (
+        getattr(log_export, "InMemoryLogRecordExporter", None) or log_export.InMemoryLogExporter
+    )()
+    trace_exporter.OTLPSpanExporter = memory_exporter(spans)
+    log_exporter.OTLPLogExporter = memory_exporter(log_memory)
+    metric_exporter.OTLPMetricExporter = memory_exporter(MemoryMetricExporter())
+    os.environ.update(
+        ENVIRONMENT="staging",
+        OTEL_EXPORTER_OTLP_ENDPOINT="http://collector.invalid:4318",
+        OTEL_METRIC_EXPORT_INTERVAL="3600000",
+    )
+
+    app = FastAPI()
+    init_service(app, name="fastapi-otel-smoke", enable_otel=True)
+    providers = app.state.telemetry_providers
+    root = logging.getLogger()
+    assert providers.logging_handler in root.handlers
+    assert sorted(endpoints) == [
+        "http://collector.invalid:4318/v1/logs",
+        "http://collector.invalid:4318/v1/metrics",
+        "http://collector.invalid:4318/v1/traces",
+    ], endpoints
+
+    async def run_app() -> None:
+        incoming: asyncio.Queue = asyncio.Queue()
+        sent: list[dict] = []
+
+        async def receive():
+            return await incoming.get()
+
+        async def send(msg):
+            sent.append(msg)
+
+        lifespan = asyncio.create_task(app({"type": "lifespan"}, receive, send))
+        await incoming.put({"type": "lifespan.startup"})
+        while not sent and not lifespan.done():
+            await asyncio.sleep(0.01)
+        assert sent and sent[0]["type"] == "lifespan.startup.complete", sent
+        status, livez = await _asgi_get(app, "/livez")
+        assert (status, livez) == (200, {"status": "alive", "service": "fastapi-otel-smoke"})
+        await incoming.put({"type": "lifespan.shutdown"})
+        await lifespan
+
+    asyncio.run(run_app())
+    assert "GET /livez" in [span.name for span in spans.get_finished_spans()]
+    assert providers.logging_handler is None and not [
+        handler for handler in root.handlers if type(handler).__name__ == "LoggingHandler"
+    ], "the lifespan shutdown must detach the OpenTelemetry logging handler"
 
 
 def smoke_all() -> None:

@@ -1,11 +1,15 @@
-"""Zero-Compromise Scaffolding Engine & CLI for infra2.
+"""Scaffolding engine and CLI for infra2 services.
 
-Generates standard-compliant, industrial-grade microservice skeletons in < 3 seconds:
-- compose.yaml (with explicit memory ceilings, tmpfs secrets, and health checks)
-- deploy.py (with literal AST-evaluable ProbeFacet, SignalFacet, SecretsFacet)
-- secrets.ctmpl & vault-agent.hcl (AppRole automated sidecar wiring)
-- entrypoint.sh (secrets synchronization + alembic database migrations)
-- app.py (FastAPI 1-liner initialization with /livez, /readyz, /health, and SigNoz APM)
+Generates a service skeleton:
+- compose.yaml (explicit memory ceilings, tmpfs secrets, health checks)
+- deploy.py (literal AST-evaluable ProbeFacet, SignalFacet, SecretsFacet)
+- secrets.ctmpl and vault-policy.hcl (rendered by infra2_sdk.secrets from one manifest)
+- vault-agent.hcl (AppRole sidecar configuration)
+- entrypoint.sh (secrets synchronization and alembic database migrations)
+- app.py (FastAPI app that calls init_service for /livez, /readyz and /health)
+- Dockerfile and requirements.txt
+
+The standalone profile skips the Vault files and writes .env.example instead.
 
 Usage:
     python -m infra2_sdk.scaffold <name> [--project apps] [--port 8000] [--db postgres]
@@ -18,6 +22,9 @@ import re
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+
+from infra2_sdk.runtime.config_schema import EnvironmentField, EnvironmentManifest, FieldSource
+from infra2_sdk.secrets import render_agent_policy, render_agent_template
 
 
 def _clean_ident(value: str) -> str:
@@ -37,6 +44,8 @@ def generate_compose_yaml(
     clean_project = _clean_ident(project)
     container_prefix = f"{clean_project}-{clean_service}"
     db_env = "      DATABASE_URL: ${DATABASE_URL:-}\n" if db == "postgres" else ""
+    # A manifest without fields renders an empty .env, so the sidecar check tests existence.
+    env_file_test = "-s" if scaffold_manifest(service_name, project, db).fields else "-e"
 
     if profile == "standalone":
         return f"""services:
@@ -118,7 +127,7 @@ def generate_compose_yaml(
       test:
         - CMD-SHELL
         - |
-          test -s /vault/secrets/.env && \\
+          test {env_file_test} /vault/secrets/.env && \\
             ! grep -q "<no value>" /vault/secrets/.env && \\
             test -s /vault/.token || exit 1
           if [ -z "$$(find /tmp/.vault_hc -mmin -5 2>/dev/null)" ]; then
@@ -249,19 +258,26 @@ if shared_tasks:
 '''
 
 
-def generate_secrets_ctmpl(service_name: str, project: str) -> str:
-    """Generate Consul Template for Vault KV secrets."""
-    clean_service = _clean_ident(service_name)
-    clean_project = _clean_ident(project)
-    hdr = f"{{{{- /* Generated for {clean_project}/{clean_service} by infra2-sdk. */ -}}}}"
-    return f"""{hdr}
-{{{{- $env := env "ENV" -}}}}
-{{{{- with secret (printf "secret/data/{clean_project}/%s/{clean_service}" $env) }}}}
-{{{{- range $k, $v := .Data.data }}}}
-{{{{ $k }}}}={{{{ printf "%q" $v }}}}
-{{{{- end }}}}
-{{{{- end }}}}
-"""
+def scaffold_manifest(service_name: str, project: str, db: str = "postgres") -> EnvironmentManifest:
+    """Declare the secrets the generated app reads.
+
+    ``infra2_sdk.secrets`` renders the Vault Agent template and policy from this manifest.
+    """
+    fields: tuple[EnvironmentField, ...] = ()
+    if db == "postgres":
+        fields = (
+            EnvironmentField(
+                field="database_url",
+                env="DATABASE_URL",
+                required=True,
+                has_default=False,
+                sensitive=True,
+                group="Database",
+                source=FieldSource.HUMAN,
+            ),
+        )
+    source = f"scaffold:{_clean_ident(project)}/{_clean_ident(service_name)}"
+    return EnvironmentManifest(source=source, fields=fields)
 
 
 def generate_vault_agent_hcl() -> str:
@@ -388,7 +404,8 @@ def check_db() -> tuple[bool, str]:
     return (res.status.value == "present", res.detail or "ok")
 
 
-# One-liner compliance: sets up /livez, /readyz, /health, SigNoz OTel, and SIGTERM
+# Registers /livez, /readyz and /health.
+# Starts OpenTelemetry when OTEL_EXPORTER_OTLP_ENDPOINT is set.
 init_service(app, name="{clean_service}", db_checker=check_db)
 
 
@@ -404,7 +421,8 @@ from infra2_sdk.fastapi import init_service
 
 app = FastAPI(title="{clean_service}")
 
-# One-liner compliance: sets up /livez, /readyz, /health, SigNoz OTel, and SIGTERM
+# Registers /livez, /readyz and /health.
+# Starts OpenTelemetry when OTEL_EXPORTER_OTLP_ENDPOINT is set.
 init_service(app, name="{clean_service}")
 
 
@@ -443,8 +461,7 @@ def generate_requirements_txt(template: str = "fastapi", db: str = "postgres") -
     if db == "postgres":
         extras.append("postgres")
     extras_str = ",".join(extras)
-    return f"""fastapi>=0.110.0,<1.0.0
-uvicorn[standard]>=0.28.0,<1.0.0
+    return f"""uvicorn[standard]>=0.28.0,<1.0.0
 infra2-sdk[{extras_str}]>=3.1.2
 """
 
@@ -462,6 +479,8 @@ def scaffold_service(
 
     Returns list of created relative file paths.
     """
+    if template != "fastapi":
+        raise ValueError(f"unsupported template {template!r}: only 'fastapi' exists")
     target_dir.mkdir(parents=True, exist_ok=True)
     created: list[str] = []
 
@@ -470,17 +489,18 @@ def scaffold_service(
         "entrypoint.sh": generate_entrypoint_sh(port, profile=profile),
         "Dockerfile": generate_dockerfile(port),
         "requirements.txt": generate_requirements_txt(template=template, db=db),
+        "app.py": generate_fastapi_app(name, db=db),
     }
 
     if profile == "infra2":
+        manifest = scaffold_manifest(name, project, db)
+        vault_names = {"project": _clean_ident(project), "service": _clean_ident(name)}
         files["deploy.py"] = generate_deploy_py(name, project, port)
-        files["secrets.ctmpl"] = generate_secrets_ctmpl(name, project)
+        files["secrets.ctmpl"] = render_agent_template(manifest, **vault_names)
+        files["vault-policy.hcl"] = render_agent_policy(manifest, **vault_names)
         files["vault-agent.hcl"] = generate_vault_agent_hcl()
     elif profile == "standalone":
         files[".env.example"] = generate_env_example(name, port, db)
-
-    if template == "fastapi":
-        files["app.py"] = generate_fastapi_app(name, db=db)
 
     for rel_path, content in files.items():
         file_path = target_dir / rel_path
@@ -503,7 +523,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=8000, help="HTTP service port (default: 8000)")
     parser.add_argument(
         "--template",
-        choices=["fastapi", "generic"],
+        choices=["fastapi"],
         default="fastapi",
         help="App template",
     )

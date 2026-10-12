@@ -37,7 +37,7 @@ python -m pip install \
 | `infra2_sdk.ci` | Delivery-stage vocabulary and CI gate inventory validation |
 | `infra2_sdk.delivery` | Environment/stage evidence and failure taxonomy |
 | `infra2_sdk.deploy` | Deploy lifecycle wire contracts, dispatch client, health poller, and production evidence policies; CLI at `python -m infra2_sdk.deploy` |
-| `infra2_sdk.fastapi` | Turnkey single-line FastAPI integration with /livez, /readyz, /health, and SigNoz APM |
+| `infra2_sdk.fastapi` | `init_service`: /livez, /readyz and /health routes for a FastAPI app, plus OTLP telemetry bootstrap |
 | `infra2_sdk.manifests` | Settings manifest driver (`--write`, `--check`, `--validate-env`) wrapping application configuration models |
 | `infra2_sdk.refs` | Git ref resolution, PR and release identity (`ReleaseIdentity`), remote ref queries, and credential redaction |
 | `infra2_sdk.routing` | Canonical domain and routing SSOT: `AppRoutePreference`, Dokploy domain specs, and service URL resolution |
@@ -220,11 +220,16 @@ def check_db() -> tuple[bool, str]:
 init_service(app, name="my-service", db_checker=check_db)
 ```
 
-This single call registers three standardized endpoints and telemetry:
+This single call registers three standardized endpoints and starts telemetry
+(`pip install 'infra2-sdk[fastapi]'` includes the OpenTelemetry packages):
 - `/livez`: Liveness probe (process-only, anti-puppet rule: never touches databases or external services).
-- `/readyz`: Readiness probe (evaluates `db_checker`, returns HTTP 503 if dependencies fail).
-- `/health`: Aggregated health check with execution durations and status taxonomy.
-- SigNoz OpenTelemetry APM: Automatic W3C TraceContext propagation and OTLP/HTTP tracing when `OTEL_EXPORTER_OTLP_ENDPOINT` is present.
+- `/readyz`: Readiness probe. It runs `db_checker` and answers HTTP 503 with `reasons` when the check fails.
+- `/health`: The `infra2_sdk.runtime.health` report (`status`, `checks`, `reasons`) plus `service`. A failed database check gives `unhealthy` and HTTP 503.
+- OpenTelemetry: when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, one OTLP bootstrap exports traces, metrics and logs. It stops with the application lifespan. FastAPI 0.142 or later emits the request spans itself. A deployed tier (preview, staging, production) without the endpoint logs a warning that names the variable.
+
+`db_checker` returns `bool` or `(bool, detail)` and may be sync or async. A false result, an exception, or a call longer than `check_timeout_seconds` (default 10) counts as a failure. Sync checkers run in a worker thread. `strict_otel=True` raises on invalid telemetry settings instead of logging a warning.
+
+Before OpenTelemetry attaches its logging handler, `init_service` calls `logging.basicConfig(level=log_level)` (default `INFO`). The call changes nothing when the root logger already has a handler. Pass `log_level=None` to skip it. The SDK serves no `/metrics` endpoint.
 
 ## Microservice scaffolder
 
@@ -246,7 +251,7 @@ Generated assets include:
 - `entrypoint.sh`: Container bootstrap script applying migrations safely.
 - `requirements.txt`: Curated dependencies with exact runtime extras (`infra2-sdk[fastapi,otel,postgres]`).
 - `Dockerfile`: Minimal container image recipe.
-- `.env.example` (in standalone profile) or Vault Agent sidecar assets (in infra2 profile).
+- `.env.example` (in standalone profile) or `deploy.py` and the Vault assets (in infra2 profile): `secrets.ctmpl` and `vault-policy.hcl` are rendered by `infra2_sdk.secrets` from one manifest, `vault-agent.hcl` configures the sidecar.
 
 ## Environment contract
 
