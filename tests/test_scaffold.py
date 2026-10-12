@@ -119,3 +119,88 @@ def test_scaffold_main_cli_with_argv(tmp_path: Path):
     assert code == 0
     assert (out / "compose.yaml").exists()
     assert (out / "deploy.py").exists()
+
+
+def test_scaffold_standalone_profile(tmp_path: Path):
+    out_dir = tmp_path / "standalone_service"
+    created = scaffold_service(
+        name="standalone-demo",
+        target_dir=out_dir,
+        project="apps",
+        port=8080,
+        template="fastapi",
+        db="postgres",
+        profile="standalone",
+    )
+
+    expected_files = {
+        "compose.yaml",
+        "entrypoint.sh",
+        "Dockerfile",
+        "requirements.txt",
+        ".env.example",
+        "app.py",
+    }
+    assert set(created) == expected_files
+    for f in expected_files:
+        assert (out_dir / f).exists(), f"Missing file: {f}"
+
+    # Verify no infra2-specific vault or deployer files in standalone profile
+    assert not (out_dir / "deploy.py").exists()
+    assert not (out_dir / "vault-agent.hcl").exists()
+    assert not (out_dir / "secrets.ctmpl").exists()
+
+    compose_text = (out_dir / "compose.yaml").read_text(encoding="utf-8")
+    assert "dokploy-network" not in compose_text
+    assert "vault-agent" not in compose_text
+    assert "env_file:" in compose_text
+
+    entrypoint_text = (out_dir / "entrypoint.sh").read_text(encoding="utf-8")
+    assert "while [ ! -f /secrets/.env ]" not in entrypoint_text
+
+    env_example = (out_dir / ".env.example").read_text(encoding="utf-8")
+    assert "DATABASE_URL=postgresql://" in env_example
+    assert "PORT=8080" in env_example
+
+
+def test_scaffold_app_py_wires_db_healthcheck(tmp_path: Path):
+    out_pg = tmp_path / "pg_app"
+    scaffold_service("pg-service", out_pg, db="postgres")
+    app_pg = (out_pg / "app.py").read_text(encoding="utf-8")
+    assert "from infra2_sdk.runtime.postgres import PostgresSettings, probe_postgres" in app_pg
+    assert "db_checker=check_db" in app_pg
+
+    out_none = tmp_path / "none_app"
+    scaffold_service("none-service", out_none, db="none")
+    app_none = (out_none / "app.py").read_text(encoding="utf-8")
+    assert "probe_postgres" not in app_none
+    assert "db_checker" not in app_none
+
+
+def test_scaffold_requirements_txt_includes_extras(tmp_path: Path):
+    out_pg = tmp_path / "pg_reqs"
+    scaffold_service("pg-reqs", out_pg, db="postgres")
+    reqs_pg = (out_pg / "requirements.txt").read_text(encoding="utf-8")
+    assert "infra2-sdk[fastapi,otel,postgres]>=3.1.2" in reqs_pg
+
+    out_none = tmp_path / "none_reqs"
+    scaffold_service("none-reqs", out_none, db="none")
+    reqs_none = (out_none / "requirements.txt").read_text(encoding="utf-8")
+    assert "infra2-sdk[fastapi,otel]>=3.1.2" in reqs_none
+
+
+def test_scaffold_cli_subcommand_forwarding_and_wrapper(tmp_path: Path):
+    from infra2_sdk.cli.scaffold import main as cli_main
+    from infra2_sdk.scaffold import main
+
+    # 1. Forwarded 'scaffold' subcommand
+    out1 = tmp_path / "sub_test"
+    code1 = main(["scaffold", "forwarded-svc", "--out-dir", str(out1), "--profile", "standalone"])
+    assert code1 == 0
+    assert (out1 / ".env.example").exists()
+
+    # 2. CLI wrapper execution
+    out2 = tmp_path / "cli_wrapper_test"
+    code2 = cli_main(["scaffold", "wrapped-svc", "--out-dir", str(out2)])
+    assert code2 == 0
+    assert (out2 / "compose.yaml").exists()

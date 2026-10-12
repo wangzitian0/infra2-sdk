@@ -5,6 +5,17 @@ changes are minor releases, removing or changing a public symbol is a major rele
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.1.2 - 2026-10-12
+
+### Added
+
+- Add `--profile {infra2,standalone}` support in microservice scaffolder; `standalone` generates pure 12-factor `.env.example` and Compose without Vault sidecars or external networks ([#84](https://github.com/wangzitian0/infra2-sdk/issues/84)).
+- Wire PostgreSQL reachability probe into scaffolded FastAPI application when `--db postgres` is requested ([#84](https://github.com/wangzitian0/infra2-sdk/issues/84)).
+- Register `infra2-sdk` script entry point alongside `infra2-scaffold` and support forwarded `scaffold` subcommand dispatch ([#84](https://github.com/wangzitian0/infra2-sdk/issues/84)).
+- Add `fastapi` extra to CI wheel smoke matrix and offline `smoke_fastapi` test in `wheel_smoke.py` ([#84](https://github.com/wangzitian0/infra2-sdk/issues/84)).
+- Curate dependency extras in scaffolded `requirements.txt` (`infra2-sdk[fastapi,otel,postgres]>=3.1.2`) ([#84](https://github.com/wangzitian0/infra2-sdk/issues/84)).
+- Add user documentation in README for `init_service` and `infra2-scaffold` ([#84](https://github.com/wangzitian0/infra2-sdk/issues/84)).
+
 ## 3.1.1 - 2026-10-09
 
 ### Fixed

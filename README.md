@@ -25,7 +25,7 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.1.1"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.1.2"
 ```
 
 ## Modules
@@ -68,10 +68,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.1.1'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.1.2'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.1.1'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.1.2'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -174,7 +174,7 @@ Install the published wheel in a fresh Python 3.11+ environment:
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install \
-  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.1.1/infra2_sdk-3.1.1-py3-none-any.whl'
+  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.1.2/infra2_sdk-3.1.2-py3-none-any.whl'
 ```
 
 For a local connectivity exercise, start this server in another terminal:
@@ -201,6 +201,58 @@ the example does not invent production identity to bypass strict validation.
 
 The HTTP wheel smoke runs this example against a local server and checks both
 success and failure paths on every PR, without installing the SDK source tree.
+
+## Turnkey FastAPI integration
+
+The SDK provides single-line compliance with operational observability standards:
+
+```python
+from fastapi import FastAPI
+from infra2_sdk.fastapi import init_service
+from infra2_sdk.runtime.postgres import PostgresSettings, probe_postgres
+
+app = FastAPI(title="my-service")
+
+# Optional database checker
+db_settings = PostgresSettings.from_env()
+
+
+def check_db() -> tuple[bool, str]:
+    res = probe_postgres(db_settings)
+    return (res.status.value == "present", res.detail or "ok")
+
+
+# Turnkey initialization
+init_service(app, name="my-service", db_checker=check_db)
+```
+
+This single call registers three standardized endpoints and telemetry:
+- `/livez`: Liveness probe (process-only, anti-puppet rule: never touches databases or external services).
+- `/readyz`: Readiness probe (evaluates `db_checker`, returns HTTP 503 if dependencies fail).
+- `/health`: Aggregated health check with execution durations and status taxonomy.
+- SigNoz OpenTelemetry APM: Automatic W3C TraceContext propagation and OTLP/HTTP tracing when `OTEL_EXPORTER_OTLP_ENDPOINT` is present.
+
+## Microservice scaffolder
+
+Generate standard microservice skeletons with a single command:
+
+```bash
+# Generate pure 12-factor standalone service (.env, compose without Vault)
+infra2-scaffold my-service --profile standalone --db postgres --port 8000
+
+# Or generate Dokploy/Vault sidecar service for the infra2 cluster
+infra2-scaffold my-service --profile infra2 --project apps --db postgres --port 8000
+```
+
+Both `infra2-scaffold` and `infra2-sdk scaffold` CLI invocations are supported.
+
+Generated assets include:
+- `compose.yaml`: Hardened Docker Compose declaration with explicit memory ceilings and health check intervals.
+- `app.py`: FastAPI application with `init_service` and database probe wiring.
+- `entrypoint.sh`: Container bootstrap script applying migrations safely.
+- `requirements.txt`: Curated dependencies with exact runtime extras (`infra2-sdk[fastapi,otel,postgres]`).
+- `Dockerfile`: Minimal container image recipe.
+- `.env.example` (in standalone profile) or Vault Agent sidecar assets (in infra2 profile).
 
 ## Environment contract
 

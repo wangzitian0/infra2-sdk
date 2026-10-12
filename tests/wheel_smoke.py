@@ -198,6 +198,47 @@ def smoke_otel() -> None:
     assert carried.get("traceparent") == inbound, carried
 
 
+def smoke_fastapi() -> None:
+    from fastapi import FastAPI
+
+    from infra2_sdk.fastapi import init_service
+
+    app = FastAPI()
+    init_service(app, name="fastapi-smoke", enable_otel=False)
+
+    async def _req(path: str) -> tuple[int, dict]:
+        messages = []
+        scope = {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "GET",
+            "path": path,
+            "raw_path": path.encode(),
+            "query_string": b"",
+            "headers": [],
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(msg):
+            messages.append(msg)
+
+        await app(scope, receive, send)
+        status = next(m["status"] for m in messages if m["type"] == "http.response.start")
+        body = b"".join(m.get("body", b"") for m in messages if m["type"] == "http.response.body")
+        return status, json.loads(body.decode())
+
+    status, livez = asyncio.run(_req("/livez"))
+    assert (status, livez) == (200, {"status": "alive", "service": "fastapi-smoke"})
+
+    status, readyz = asyncio.run(_req("/readyz"))
+    assert (status, readyz) == (200, {"status": "ready", "service": "fastapi-smoke"})
+
+    status, health = asyncio.run(_req("/health"))
+    assert status == 200 and health.get("status") == "healthy"
+
+
 def smoke_all() -> None:
     import boto3  # noqa: F401
     import httpx  # noqa: F401
@@ -215,6 +256,7 @@ SMOKES = {
     "postgres": smoke_postgres,
     "http": smoke_http,
     "otel": smoke_otel,
+    "fastapi": smoke_fastapi,
     "all": smoke_all,
 }
 
