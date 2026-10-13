@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+import importlib
 import re
 from pathlib import Path
-
-import pytest
 
 from infra2_sdk.runtime.environment import runtime_env_contract
 
@@ -16,11 +15,13 @@ def _extract_readme_env_table() -> tuple[set[str], set[str]]:
     content = readme_path.read_text(encoding="utf-8")
 
     # Locate the "## Environment contract" section and its markdown table
-    section_match = re.search(
-        r"## Environment contract.*?\n\| Concern \| Canonical names \| Compatibility aliases \|\n\|---\|---\|---\|\n(.*?)\n\n",
-        content,
-        re.DOTALL,
+    pattern = (
+        r"## Environment contract.*?\n"
+        r"\| Concern \| Canonical names \| Compatibility aliases \|\n"
+        r"\|---\|---\|---\|\n"
+        r"(.*?)\n\n"
     )
+    section_match = re.search(pattern, content, re.DOTALL)
     assert section_match is not None, "Could not find Environment contract table in README.md"
 
     table_body = section_match.group(1).strip()
@@ -48,7 +49,7 @@ def _extract_readme_env_table() -> tuple[set[str], set[str]]:
 
 
 def test_readme_documents_every_canonical_environment_variable() -> None:
-    """Verify that README.md environment table includes every canonical variable in runtime_env_contract."""
+    """Verify that README.md includes all canonical variables in runtime_env_contract."""
     documented_canonicals, documented_aliases = _extract_readme_env_table()
     contract = runtime_env_contract()
 
@@ -58,28 +59,36 @@ def test_readme_documents_every_canonical_environment_variable() -> None:
     missing_canonicals = expected_canonicals - documented_canonicals
     extra_canonicals = documented_canonicals - expected_canonicals
 
-    assert not missing_canonicals, f"README.md is missing canonical variables: {sorted(missing_canonicals)}"
-    assert not extra_canonicals, f"README.md documents unknown canonical variables: {sorted(extra_canonicals)}"
+    assert not missing_canonicals, (
+        f"README.md is missing canonical variables: {sorted(missing_canonicals)}"
+    )
+    assert not extra_canonicals, (
+        f"README.md documents unknown canonical variables: {sorted(extra_canonicals)}"
+    )
 
     missing_aliases = expected_aliases - documented_aliases
     extra_aliases = documented_aliases - expected_aliases
 
-    assert not missing_aliases, f"README.md is missing compatibility aliases: {sorted(missing_aliases)}"
-    assert not extra_aliases, f"README.md documents unknown compatibility aliases: {sorted(extra_aliases)}"
+    assert not missing_aliases, (
+        f"README.md is missing compatibility aliases: {sorted(missing_aliases)}"
+    )
+    assert not extra_aliases, (
+        f"README.md documents unknown compatibility aliases: {sorted(extra_aliases)}"
+    )
 
 
 def test_readme_documents_valid_core_runtime_entrypoints() -> None:
-    """Verify that every entrypoint documented in README.md Core runtime entrypoints table exists."""
-    import importlib
-
+    """Verify that all entrypoints documented in README.md Core entrypoints table exist."""
     readme_path = Path(__file__).resolve().parent.parent / "README.md"
     content = readme_path.read_text(encoding="utf-8")
 
-    section_match = re.search(
-        r"### Core runtime entrypoints.*?\n\| Capability \| Canonical entrypoint \| Primary module \| Description \|\n\|---\|---\|---\|---\|\n(.*?)\n\n",
-        content,
-        re.DOTALL,
+    pattern = (
+        r"### Core runtime entrypoints.*?\n"
+        r"\| Capability \| Canonical entrypoint \| Primary module \| Description \|\n"
+        r"\|---\|---\|---\|---\|\n"
+        r"(.*?)\n\n"
     )
+    section_match = re.search(pattern, content, re.DOTALL)
     assert section_match is not None, "Could not find Core runtime entrypoints table in README.md"
 
     table_body = section_match.group(1).strip()
@@ -91,5 +100,6 @@ def test_readme_documents_valid_core_runtime_entrypoints() -> None:
         module_name = module_name.strip("` ")
         mod = importlib.import_module(module_name)
         for symbol in re.findall(r"`([A-Za-z0-9_]+)`", raw_entrypoints):
-            assert hasattr(mod, symbol), f"Module {module_name!r} does not have symbol {symbol!r}"
-
+            assert hasattr(mod, symbol), (
+                f"Module {module_name!r} does not have symbol {symbol!r}"
+            )
