@@ -100,6 +100,4 @@ def test_readme_documents_valid_core_runtime_entrypoints() -> None:
         module_name = module_name.strip("` ")
         mod = importlib.import_module(module_name)
         for symbol in re.findall(r"`([A-Za-z0-9_]+)`", raw_entrypoints):
-            assert hasattr(mod, symbol), (
-                f"Module {module_name!r} does not have symbol {symbol!r}"
-            )
+            assert hasattr(mod, symbol), f"Module {module_name!r} does not have symbol {symbol!r}"
