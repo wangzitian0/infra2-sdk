@@ -53,6 +53,68 @@ def _readme_block(content: bytes) -> bytes:
     return content[start:stop]
 
 
+TABLE_HEADER = "| Canonical name | Compatibility aliases | Sensitive |"
+TABLE_SEPARATOR = "|---|---|---|"
+
+
+def _table_problems(block: str, variable_count: int) -> list[str]:
+    """Reasons why the text is not the table of a contract with that many variables."""
+    problems = []
+    lines = block.splitlines()
+    if lines[:2] != [TABLE_HEADER, TABLE_SEPARATOR]:
+        problems.append("the block does not start with the header and separator rows")
+    rows = lines[2:]
+    if variable_count < 1:
+        problems.append("the contract lists no variable")
+    if len(rows) != variable_count:
+        problems.append(f"the block has {len(rows)} rows for {variable_count} variables")
+    problems += [f"not a table row: {line!r}" for line in lines if line.strip() and line[0] != "|"]
+    return problems
+
+
+def _fence_problems(content: str, begin_marker: str) -> list[str]:
+    """Reasons why the block that starts at the marker sits inside a code fence."""
+    before = content[: content.index(begin_marker)]
+    fences = [line for line in before.splitlines() if line.lstrip().startswith(("```", "~~~"))]
+    return ["the block sits inside a code fence"] if len(fences) % 2 else []
+
+
+def test_readme_environment_block_is_a_table_with_one_row_per_variable() -> None:
+    block = _readme_block(README.read_bytes()).decode("utf-8")
+    variables = runtime_env_contract()["variables"]
+    assert _table_problems(block, len(variables)) == []
+
+
+def test_readme_environment_block_is_outside_every_code_fence() -> None:
+    content = README.read_text(encoding="utf-8")
+    assert _fence_problems(content, BEGIN_MARKER.decode("utf-8")) == []
+
+
+def test_the_table_and_fence_checks_reject_empty_and_wrong_input() -> None:
+    good = f"{TABLE_HEADER}\n{TABLE_SEPARATOR}\n| `A_NAME` | none | no |\n"
+    assert _table_problems(good, 1) == []
+    assert _table_problems("", 1)  # an empty block
+    assert _table_problems(f"{TABLE_HEADER}\n{TABLE_SEPARATOR}\n", 1)  # no row
+    assert _table_problems(good, 2)  # one row short
+    assert _table_problems("", 0)  # an empty contract must not pass either
+    assert _table_problems(good + "text outside the table\n", 2)
+    marker = "<!-- begin -->"
+    assert _fence_problems(f"intro\n{marker}\nrow\n", marker) == []
+    assert _fence_problems(f"```text\n{marker}\nrow\n```\n", marker)
+    assert _fence_problems(f"~~~\n{marker}\n", marker)
+    assert _fence_problems(f"```text\ncode\n```\n{marker}\n", marker) == []
+
+
+def test_main_prints_exactly_what_render_returns(
+    capsysbinary: pytest.CaptureFixture[bytes],
+) -> None:
+    renderer = _load_renderer()
+    assert renderer.main() == 0
+    printed = capsysbinary.readouterr().out
+    assert printed, "main() printed nothing"
+    assert printed == renderer.render(runtime_env_contract()).encode("utf-8")
+
+
 def test_readme_environment_block_equals_the_renderer_output_byte_for_byte(tmp_path: Path) -> None:
     expected = _run_renderer(tmp_path)
     actual = _readme_block(README.read_bytes())
