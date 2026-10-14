@@ -361,4 +361,3 @@ def test_the_readme_counts_the_fixed_names_and_the_variables_of_the_contract() -
     groups = [item for item in runtime_env_contract()["variables"] if item["aliases"]]
     assert len(groups) == 2
     assert "`init_service` reads two groups of aliases" in flat
-
