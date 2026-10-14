@@ -31,6 +31,8 @@ _AMBIENT_VARIABLES = (
     "OTEL_METRIC_EXPORT_INTERVAL",
 )
 _PROBE_ROUTES = {"/livez", "/readyz", "/health"}
+# The end of a strict error of init_service that has a way out.
+_STRICT_WAY_OUT = "; pass strict_otel=False to log the problem and start"
 
 
 @pytest.fixture(autouse=True)
@@ -808,6 +810,24 @@ def test_init_service_with_conflicting_tier_names_refuses_to_start_by_default(mo
 
 
 @pytest.mark.parametrize(
+    "environ",
+    [pytest.param({"ENVIRONMENT": "staging", "APP_ENV": "production"}, id="tier")],
+)
+def test_a_strict_conflict_keeps_its_type_and_ends_with_the_way_out(monkeypatch, environ):
+    for variable, value in environ.items():
+        monkeypatch.setenv(variable, value)
+
+    with pytest.raises(EnvironmentConflictError) as caught:
+        init_service(FastAPI(), "svc")
+
+    assert isinstance(caught.value, ValueError)
+    assert str(caught.value).endswith(_STRICT_WAY_OUT)
+    original = caught.value.__cause__
+    assert isinstance(original, EnvironmentConflictError), "the new error must chain the original"
+    assert str(caught.value) == f"{original}{_STRICT_WAY_OUT}"
+
+
+@pytest.mark.parametrize(
     "environment,level",
     [(None, logging.DEBUG), ("bogus-tier", logging.WARNING)],
     ids=["missing-tier-is-local_dev", "unknown-tier-counts-as-deployed"],
@@ -965,7 +985,7 @@ def test_strict_otel_errors_of_init_service_name_the_variable_and_the_way_out(
         init_service(FastAPI(), "svc")
 
     assert message in str(caught.value)
-    assert str(caught.value).endswith("; pass strict_otel=False to log the problem and start")
+    assert str(caught.value).endswith(_STRICT_WAY_OUT)
 
 
 def test_a_strict_error_that_is_not_a_value_error_passes_through_unchanged(monkeypatch):

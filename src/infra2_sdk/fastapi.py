@@ -100,12 +100,14 @@ def _require_known_tier() -> None:
     """Raise ``ValueError`` when the environment names no known tier.
 
     Strict mode calls this before it looks for the endpoint. A service without an endpoint
-    stops too, so a missing tier cannot hide behind missing telemetry.
+    stops too, so a missing tier cannot hide behind missing telemetry. A conflict between the
+    tier variables keeps its type and ends with the way out of strict mode.
     """
     try:
         strict_environment_from_env()
-    except EnvironmentConflictError:
-        raise  # the message already names the conflicting variables
+    except EnvironmentConflictError as exc:
+        # The message already names the conflicting variables. It needs only the way out.
+        raise _with_relax_hint(exc) from exc
     except ValueError as exc:
         spec = runtime_env_spec(RuntimeEnvKey.ENVIRONMENT)
         names = ", ".join((spec.key.value, *spec.aliases))
@@ -114,16 +116,14 @@ def _require_known_tier() -> None:
         ) from exc
 
 
-def _with_relax_hint(exc: Exception) -> Exception | None:
-    """Return the strict error with the way out appended, or ``None`` if it is not a value error.
+def _with_relax_hint(exc: ValueError) -> ValueError:
+    """Return a new strict error: the message of ``exc`` followed by the way out.
 
-    The type of an ``EnvironmentConflictError`` stays. Another error needs no hint.
+    The type of an ``EnvironmentConflictError`` stays. Another ``ValueError`` becomes a plain one.
     """
     if isinstance(exc, EnvironmentConflictError):
         return EnvironmentConflictError(f"{exc}; {_RELAX_HINT}")
-    if isinstance(exc, ValueError):
-        return ValueError(f"{exc}; {_RELAX_HINT}")
-    return None
+    return ValueError(f"{exc}; {_RELAX_HINT}")
 
 
 def _log_missing_endpoint(*, deployed: bool) -> None:
@@ -152,10 +152,9 @@ def _resolve_telemetry(name: str, *, strict: bool) -> OtelSettings | None:
         settings = OtelSettings.from_env(strict=strict, default_service_name=name)
     except Exception as exc:
         if strict:
-            hinted = _with_relax_hint(exc)
-            if hinted is None:
-                raise
-            raise hinted from exc
+            if isinstance(exc, ValueError):
+                raise _with_relax_hint(exc) from exc
+            raise  # any other error passes through unchanged
         # A failed from_env cannot tell whether an endpoint is set. Read the variable here to
         # choose the log line. Without an endpoint, telemetry is off. The missing-endpoint
         # line is then the only message.
