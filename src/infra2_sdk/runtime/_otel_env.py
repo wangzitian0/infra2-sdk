@@ -59,8 +59,13 @@ def load_resource_attributes(
     value: str,
     *,
     strict: bool,
+    stacklevel: int = 3,
 ) -> tuple[dict[str, str], str | None]:
-    """Load optional OTel attributes, discarding the whole invalid value when non-strict."""
+    """Load optional OTel attributes, discarding the whole invalid value when non-strict.
+
+    A non-strict warning names the frame ``stacklevel`` levels up. The default names the caller
+    of the function that calls this one.
+    """
 
     try:
         attributes = parse_resource_attributes(value)
@@ -72,7 +77,7 @@ def load_resource_attributes(
     except ValueError as exc:
         if strict:
             raise
-        warn(f"invalid OTEL_RESOURCE_ATTRIBUTES: {exc}", RuntimeWarning, stacklevel=3)
+        warn(f"invalid OTEL_RESOURCE_ATTRIBUTES: {exc}", RuntimeWarning, stacklevel=stacklevel)
         return {}, None
     return attributes, deployment_environment
 

@@ -11,20 +11,15 @@ from urllib.parse import urlsplit, urlunsplit
 from warnings import warn
 
 from infra2_sdk.runtime._optional import require
-from infra2_sdk.runtime._otel_env import (
-    load_resource_attributes,
-    parse_otel_boolean,
-    parse_traces_sampler,
-)
+from infra2_sdk.runtime._otel_env import parse_otel_boolean, parse_traces_sampler
 from infra2_sdk.runtime.environment import (
     RuntimeEnvironment,
     RuntimeEnvKey,
+    _resolve_service_identity,
     env_int,
-    environment_from_env,
     normalize_deployment_environment,
     resolve_environment_tier,
     resolve_runtime_env,
-    strict_environment_from_env,
 )
 from infra2_sdk.runtime.identity import RuntimeIdentity
 
@@ -93,16 +88,16 @@ class OtelSettings:
         environ: Mapping[str, str] | None = None,
         *,
         strict: bool = False,
+        default_service_name: str | None = None,
     ) -> OtelSettings:
-        runtime = strict_environment_from_env(environ) if strict else environment_from_env(environ)
-        environment_value = resolve_runtime_env(environ, RuntimeEnvKey.ENVIRONMENT).value
-        service_name = (
-            resolve_runtime_env(
-                environ,
-                RuntimeEnvKey.SERVICE_NAME,
-                default="",
-            ).value
-            or ""
+        """Build the settings from the environment.
+
+        The service name is ``OTEL_SERVICE_NAME``, then ``service.name`` in
+        ``OTEL_RESOURCE_ATTRIBUTES``, then ``default_service_name``, then ``unknown_service``.
+        """
+
+        identity = _resolve_service_identity(
+            environ, strict=strict, default_service_name=default_service_name
         )
         endpoint = resolve_runtime_env(environ, RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT).value
         try:
@@ -114,15 +109,9 @@ class OtelSettings:
                 raise
             warn(f"invalid OTEL_SDK_DISABLED: {exc}", RuntimeWarning, stacklevel=2)
             disabled = False
-        raw_attributes = (
-            resolve_runtime_env(environ, RuntimeEnvKey.OTEL_RESOURCE_ATTRIBUTES, default="").value
-            or ""
-        )
-        attributes, deployment_environment = load_resource_attributes(
-            raw_attributes,
-            strict=strict,
-        )
-        if deployment_environment and not environment_value:
+        runtime = identity.environment
+        deployment_environment = identity.deployment_environment
+        if deployment_environment and not identity.environment_is_set:
             inferred_tier = resolve_environment_tier(deployment_environment)
             runtime = RuntimeEnvironment(
                 normalize_deployment_environment(deployment_environment, inferred_tier),
@@ -143,28 +132,15 @@ class OtelSettings:
                 raise
             warn(f"invalid OTEL_TRACES_SAMPLER: {exc}", RuntimeWarning, stacklevel=2)
             sampler_name = sampler_arg = ""
-        service_name = service_name or attributes.get("service.name", "unknown_service")
-        service_version = resolve_runtime_env(
-            environ,
-            RuntimeEnvKey.SERVICE_VERSION,
-            default=attributes.get("service.version", "unknown"),
-        ).value
-        instance_id = resolve_runtime_env(
-            environ,
-            RuntimeEnvKey.INSTANCE_ID,
-            default=attributes.get("service.instance.id", ""),
-        ).value
-        if service_name is None or service_version is None:
-            raise ValueError("service_name and service_version must not be None")
         effective_endpoint = None if disabled else endpoint
         return cls(
-            service_name=service_name,
+            service_name=identity.service_name or "unknown_service",
             endpoint=effective_endpoint,
-            service_version=service_version,
+            service_version=identity.service_version,
             environment=runtime.tier.value,
             deployment_environment=deployment_environment or runtime.name,
-            instance_id=instance_id or "",
-            resource_attributes=attributes,
+            instance_id=identity.instance_id,
+            resource_attributes=identity.attributes,
             enabled=bool(effective_endpoint),
             export_interval_millis=env_int(
                 environ, RuntimeEnvKey.OTEL_METRIC_EXPORT_INTERVAL, default=60_000
