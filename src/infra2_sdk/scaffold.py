@@ -56,6 +56,7 @@ def generate_compose_yaml(
       dockerfile: Dockerfile
     container_name: {clean_service}
     restart: always
+    mem_limit: 256M
     deploy:
       resources:
         limits:
@@ -87,6 +88,7 @@ def generate_compose_yaml(
     image: hashicorp/vault:1.15
     container_name: {container_prefix}-vault-agent${{ENV_SUFFIX}}
     restart: always
+    mem_limit: 128M
     deploy:
       resources:
         limits:
@@ -147,6 +149,7 @@ def generate_compose_yaml(
       dockerfile: Dockerfile
     container_name: {container_prefix}${{ENV_SUFFIX}}
     restart: always
+    mem_limit: 256M
     deploy:
       resources:
         limits:
@@ -206,7 +209,7 @@ from __future__ import annotations
 import sys
 from invoke import task
 
-from libs.core.facets import ProbeFacet, SecretsFacet, SignalFacet
+from libs.core.facets import ProbeFacet, PublicRouteFacet, SecretsFacet, SignalFacet
 from libs.deploy.deployer import Deployer, make_tasks
 
 shared_tasks = sys.modules.get("{clean_project}.{clean_service}.shared")
@@ -215,8 +218,10 @@ shared_tasks = sys.modules.get("{clean_project}.{clean_service}.shared")
 class {class_name}(Deployer):
     service = "{clean_service}"
     project = "{clean_project}"
+    compose_path = "{clean_project}/{clean_service}/compose.yaml"
     service_port = {port}
     subdomain = "{clean_service}"
+    public_route = PublicRouteFacet()
 
     backups = ()
 

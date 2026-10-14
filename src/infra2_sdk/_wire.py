@@ -2,10 +2,27 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping
 from typing import Any
 
 JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
+
+
+def canonical_json_bytes(payload: Any) -> bytes:
+    """Serialize payload into canonical UTF-8 JSON bytes with sorted keys and ASCII escaping."""
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+
+
+def canonical_sha256(payload: Any) -> str:
+    """Return lowercase hex SHA-256 of canonical UTF-8 JSON bytes."""
+    return hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
 
 
 def require_contract_version(value: Any, expected: int, *, description: str) -> int:
@@ -65,6 +82,8 @@ def require_exact_fields(
 
 __all__ = [
     "JSON_SCHEMA_DIALECT",
+    "canonical_json_bytes",
+    "canonical_sha256",
     "parse_contract_version",
     "parse_string",
     "require_contract_version",

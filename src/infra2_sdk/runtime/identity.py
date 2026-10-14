@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from infra2_sdk._wire import JSON_SCHEMA_DIALECT, parse_string
+from infra2_sdk._wire import (
+    JSON_SCHEMA_DIALECT,
+    parse_string,
+)
+from infra2_sdk._wire import (
+    canonical_sha256 as _wire_canonical_sha256,
+)
 from infra2_sdk.runtime.environment import (
     EnvironmentTier,
     RuntimeEnvKey,
@@ -198,5 +202,4 @@ def canonical_sha256(payload: Any) -> str:
     use, so the estate has one hash for release manifests, decision records and
     configuration fingerprints — whatever a writer's JSON library defaults to).
     """
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    return _wire_canonical_sha256(payload)

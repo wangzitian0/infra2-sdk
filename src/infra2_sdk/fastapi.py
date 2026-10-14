@@ -139,7 +139,12 @@ def _log_missing_endpoint(*, deployed: bool) -> None:
     )
 
 
-def _resolve_telemetry(name: str, *, strict: bool) -> OtelSettings | None:
+def _resolve_telemetry(
+    name: str,
+    *,
+    strict: bool,
+    require_issued_identity: bool = False,
+) -> OtelSettings | None:
     """Resolve and check the telemetry settings. Return them when telemetry must start.
 
     ``init_service`` calls this before it changes the app. Strict mode raises ``ValueError``
@@ -147,13 +152,19 @@ def _resolve_telemetry(name: str, *, strict: bool) -> OtelSettings | None:
     """
     from infra2_sdk.runtime.otel import OtelSettings
 
-    if strict:
+    if strict and not require_issued_identity:
         _require_known_tier()
     try:
         # from_env is the one reader of the endpoint, the service name and the tier of the
         # settings. Two other readings of the tier exist, for a message or a log level only:
         # _require_known_tier (strict mode) and _in_deployed_tier (after a failed from_env).
-        settings = OtelSettings.from_env(strict=strict, default_service_name=name)
+        from_env_kwargs: dict[str, Any] = {
+            "strict": strict,
+            "default_service_name": name,
+        }
+        if require_issued_identity:
+            from_env_kwargs["require_issued_identity"] = True
+        settings = OtelSettings.from_env(**from_env_kwargs)
     except Exception as exc:
         if strict:
             if isinstance(exc, ValueError):
@@ -221,6 +232,7 @@ def init_service(
     db_checker: Callable[[], _CheckerResult | Awaitable[_CheckerResult]] | None = None,
     enable_otel: bool = True,
     strict_otel: bool = True,
+    require_issued_identity: bool = False,
     log_level: int | None = logging.INFO,
     check_timeout_seconds: float = 10.0,
 ) -> None:
@@ -303,7 +315,15 @@ def init_service(
         raise ValueError("name must not be blank")
     # Resolve and check the telemetry settings before the app changes. A strict problem raises
     # here, so a failed start leaves no marker and no routes, and a retry sees the real error.
-    settings = _resolve_telemetry(name, strict=strict_otel) if enable_otel else None
+    settings = (
+        _resolve_telemetry(
+            name,
+            strict=strict_otel,
+            require_issued_identity=require_issued_identity,
+        )
+        if enable_otel
+        else None
+    )
     setattr(app.state, _INITIALIZED_ATTRIBUTE, name)
 
     async def report() -> tuple[int, dict[str, Any]]:

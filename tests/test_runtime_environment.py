@@ -293,3 +293,34 @@ def test_a_sensitive_spec_serializes_its_flag() -> None:
     # The contract keeps the field although no current variable sets it.
     spec = RuntimeEnvSpec(RuntimeEnvKey.ENVIRONMENT, ("ENV",), sensitive=True)
     assert spec.to_dict() == {"name": "ENVIRONMENT", "aliases": ["ENV"], "sensitive": True}
+
+
+@pytest.mark.parametrize(
+    ("alias", "canonical"),
+    [
+        ("pr_12", "pr-12"),
+        ("branch_main", "branch-main"),
+        ("commit_1ab32d5", "commit-1ab32d5"),
+        ("tag_v1_2_3", "tag-v1-2-3"),
+        ("canary_preview", "canary-preview"),
+    ],
+)
+def test_underscore_preview_aliases_resolve_to_the_hyphen_form(alias: str, canonical: str) -> None:
+    from infra2_sdk.runtime.environment import (
+        EnvironmentTier,
+        is_preview_alias,
+        normalize_deployment_environment,
+        to_environment_tier,
+    )
+
+    assert is_preview_alias(alias)
+    assert is_preview_alias(canonical)
+    assert to_environment_tier(alias) is EnvironmentTier.PREVIEW
+    assert normalize_deployment_environment(alias, EnvironmentTier.PREVIEW) == canonical
+
+
+@pytest.mark.parametrize("value", ["staging", "production", "preview", "pr_0", "branch_", "typo"])
+def test_is_preview_alias_rejects_non_aliases(value: str) -> None:
+    from infra2_sdk.runtime.environment import is_preview_alias
+
+    assert not is_preview_alias(value)

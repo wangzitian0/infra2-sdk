@@ -5,7 +5,13 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from infra2_sdk.runtime.environment import CANARY_SLOT, EnvironmentTier, to_environment_tier
+from infra2_sdk.runtime.environment import (
+    CANARY_SLOT,
+    EnvironmentTier,
+    _canonicalize_preview_alias,
+    is_preview_alias,
+    to_environment_tier,
+)
 
 DEFAULT_BASE_DOMAIN = "zitian.party"
 
@@ -62,7 +68,7 @@ def resolve_app_hostname(
 
     SSOT Rules:
     1. Canary / Synthetic Probe:
-       - Always returns ``f"canary-preview.{base_domain}"``
+       - Returns ``f"{slug}-canary-preview.{base_domain}"``
     2. Production:
        - If ``custom_prod_domain`` is provided: returns it verbatim (e.g. "truealpha.club")
        - Otherwise: ``f"{slug}.{base_domain}"`` (e.g. "report.zitian.party")
@@ -70,7 +76,9 @@ def resolve_app_hostname(
        - ``f"{slug}-staging.{base_domain}"`` (e.g. "report-staging.zitian.party")
     4. Preview:
        - Default single slot: ``f"{slug}-preview.{base_domain}"``
-       - Dynamic slot: ``f"{slug}-preview-{slot_id}.{base_domain}"``
+       - Preview alias (``branch-*``, ``pr-*``, ``commit-*``, ``tag-v*``, or an
+         integer PR number as ``slot_id``): ``f"{slug}-{alias}.{base_domain}"``
+       - Other slot: ``f"{slug}-preview-{slot_id}.{base_domain}"``
     """
     if isinstance(slug_or_preference, AppRoutePreference):
         slug = slug_or_preference.slug
@@ -84,11 +92,15 @@ def resolve_app_hostname(
     # Check for canary
     raw_tier = str(tier).strip().lower() if not isinstance(tier, EnvironmentTier) else tier.value
     if is_canary or raw_tier in ("canary", "deploy-v2-canary"):
-        return f"{CANARY_SLOT}.{base_domain}"
+        return f"{slug}-{CANARY_SLOT}.{base_domain}"
 
     # The canary slot id maps to the canary host.
     if slot_id is not None and str(slot_id).strip().lower() == CANARY_SLOT:
-        return f"{CANARY_SLOT}.{base_domain}"
+        return f"{slug}-{CANARY_SLOT}.{base_domain}"
+
+    # A preview alias in the tier maps to ``{slug}-{alias}``.
+    if is_preview_alias(raw_tier):
+        return f"{slug}-{_canonicalize_preview_alias(raw_tier)}.{base_domain}"
 
     canonical_tier = to_environment_tier(tier)
 
@@ -103,6 +115,10 @@ def resolve_app_hostname(
     if canonical_tier is EnvironmentTier.PREVIEW:
         if slot_id is not None:
             clean_slot = str(slot_id).strip().lower()
+            if isinstance(slot_id, int):
+                clean_slot = f"pr-{clean_slot}"
+            if is_preview_alias(clean_slot):
+                return f"{slug}-{_canonicalize_preview_alias(clean_slot)}.{base_domain}"
             return f"{slug}-preview-{clean_slot}.{base_domain}"
         return f"{slug}-preview.{base_domain}"
 

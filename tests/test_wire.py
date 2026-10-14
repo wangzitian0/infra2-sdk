@@ -62,3 +62,18 @@ def test_json_schema_dialect_is_the_same_value_in_every_schema_emitter() -> None
 
 def test_json_schema_dialect_is_the_exact_2020_12_uri() -> None:
     assert _wire.JSON_SCHEMA_DIALECT == "https://json-schema.org/draft/2020-12/schema"
+
+
+def test_canonical_sha256_is_key_order_independent_and_matches_the_runtime_helpers() -> None:
+    import hashlib
+
+    from infra2_sdk._wire import canonical_json_bytes, canonical_sha256
+    from infra2_sdk.runtime import identity
+
+    left = {"b": [1, 2], "a": {"y": 1, "x": "é"}}
+    right = {"a": {"x": "é", "y": 1}, "b": [1, 2]}
+    assert canonical_json_bytes(left) == canonical_json_bytes(right)
+    assert canonical_json_bytes(left) == b'{"a":{"x":"\\u00e9","y":1},"b":[1,2]}'
+    assert canonical_sha256(left) == hashlib.sha256(canonical_json_bytes(left)).hexdigest()
+    assert identity.canonical_sha256(left) == canonical_sha256(left)
+    assert canonical_sha256({"a": 1}) != canonical_sha256({"a": 2})

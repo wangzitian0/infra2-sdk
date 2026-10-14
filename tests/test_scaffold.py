@@ -577,3 +577,36 @@ def test_generated_postgres_app_uses_a_set_database_url(tmp_path: Path, profile:
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "postgresql://u:p@db.invalid/app"
+
+
+@pytest.mark.parametrize("profile", ["infra2", "standalone"])
+def test_scaffold_compose_passes_the_sdk_memory_lint(tmp_path: Path, profile: str) -> None:
+    from infra2_sdk.rules.compose import inspect_compose
+    from infra2_sdk.scaffold import generate_compose_yaml
+
+    report = inspect_compose(generate_compose_yaml("web-app", "apps", 8000, profile=profile))
+    assert report.is_valid, report
+
+
+def test_scaffold_deploy_py_declares_compose_path_and_public_route() -> None:
+    from infra2_sdk.scaffold import generate_deploy_py
+
+    tree = ast.parse(generate_deploy_py("web-app", "apps", 8000))
+    imports = [
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "libs.core.facets"
+        for alias in node.names
+    ]
+    assert "PublicRouteFacet" in imports
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef))
+    assigned = {
+        target.id: node.value
+        for node in cls.body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    assert ast.literal_eval(assigned["compose_path"]) == "apps/web_app/compose.yaml"
+    assert isinstance(assigned["public_route"], ast.Call)
+    assert assigned["public_route"].func.id == "PublicRouteFacet"

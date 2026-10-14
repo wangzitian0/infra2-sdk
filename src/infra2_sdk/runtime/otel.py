@@ -13,10 +13,12 @@ from warnings import warn
 from infra2_sdk.runtime._optional import require
 from infra2_sdk.runtime._otel_env import parse_otel_boolean, parse_traces_sampler
 from infra2_sdk.runtime.environment import (
+    EnvironmentTier,
     RuntimeEnvironment,
     RuntimeEnvKey,
     _resolve_service_identity,
     env_int,
+    is_preview_alias,
     normalize_deployment_environment,
     resolve_environment_tier,
     resolve_runtime_env,
@@ -24,6 +26,13 @@ from infra2_sdk.runtime.environment import (
 from infra2_sdk.runtime.identity import RuntimeIdentity
 
 _INTERVAL_MESSAGE = "export_interval_millis must be positive"
+
+REQUIRED_IDENTITY_ATTRIBUTES: tuple[str, ...] = (
+    "deployment.environment.name",
+    "infra.service.id",
+    "service.version",
+    "infra.iac.ref",
+)
 
 
 @dataclass(frozen=True)
@@ -93,6 +102,7 @@ class OtelSettings:
         *,
         strict: bool = False,
         default_service_name: str | None = None,
+        require_issued_identity: bool = False,
     ) -> OtelSettings:
         """Build the settings from the environment.
 
@@ -100,9 +110,13 @@ class OtelSettings:
         ``OTEL_RESOURCE_ATTRIBUTES``, then ``default_service_name``, then ``unknown_service``.
         """
 
-        identity = _resolve_service_identity(
-            environ, strict=strict, default_service_name=default_service_name
-        )
+        resolver_kwargs: dict[str, Any] = {
+            "strict": strict,
+            "default_service_name": default_service_name,
+        }
+        if require_issued_identity:
+            resolver_kwargs["ignore_environment"] = True
+        identity = _resolve_service_identity(environ, **resolver_kwargs)
         endpoint = resolve_runtime_env(environ, RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT).value
         try:
             disabled = parse_otel_boolean(
@@ -113,15 +127,43 @@ class OtelSettings:
                 raise ValueError(f"invalid OTEL_SDK_DISABLED: {exc}") from exc
             warn(f"invalid OTEL_SDK_DISABLED: {exc}", RuntimeWarning, stacklevel=2)
             disabled = False
+        effective_endpoint = None if disabled else endpoint
+        if require_issued_identity and effective_endpoint:
+            missing_identity: list[str] = []
+            if resolve_runtime_env(environ, RuntimeEnvKey.SERVICE_NAME).value is None:
+                missing_identity.append(RuntimeEnvKey.SERVICE_NAME.value)
+            for attr in REQUIRED_IDENTITY_ATTRIBUTES:
+                if not identity.attributes.get(attr, "").strip():
+                    missing_identity.append(attr)
+            if missing_identity:
+                raise ValueError(
+                    "telemetry requires ServiceIdentity attributes when an OTLP endpoint is set; "
+                    f"missing: {', '.join(missing_identity)}"
+                )
         runtime = identity.environment
         deployment_environment = identity.deployment_environment
         try:
-            if deployment_environment and not identity.environment_is_set:
+            if deployment_environment and (
+                not identity.environment_is_set or require_issued_identity
+            ):
                 inferred_tier = resolve_environment_tier(deployment_environment)
-                runtime = RuntimeEnvironment(
-                    normalize_deployment_environment(deployment_environment, inferred_tier),
+                normalized_display = normalize_deployment_environment(
+                    deployment_environment,
                     inferred_tier,
                 )
+                runtime = RuntimeEnvironment(normalized_display, inferred_tier)
+                deployment_environment = normalized_display
+            elif (
+                deployment_environment
+                and runtime.tier is EnvironmentTier.STAGING
+                and is_preview_alias(deployment_environment)
+            ):
+                normalized_preview = normalize_deployment_environment(
+                    deployment_environment,
+                    EnvironmentTier.PREVIEW,
+                )
+                runtime = RuntimeEnvironment(normalized_preview, EnvironmentTier.PREVIEW)
+                deployment_environment = normalized_preview
             elif deployment_environment:
                 deployment_environment = normalize_deployment_environment(
                     deployment_environment,
@@ -141,7 +183,6 @@ class OtelSettings:
                 raise
             warn(f"invalid OTEL_TRACES_SAMPLER: {exc}", RuntimeWarning, stacklevel=2)
             sampler_name = sampler_arg = ""
-        effective_endpoint = None if disabled else endpoint
         try:
             return cls(
                 service_name=identity.service_name or "unknown_service",
@@ -405,6 +446,7 @@ def _validate_endpoint(value: str) -> None:
 
 __all__ = [
     "OtelSettings",
+    "REQUIRED_IDENTITY_ATTRIBUTES",
     "configure_telemetry",
     "signal_endpoint",
 ]
