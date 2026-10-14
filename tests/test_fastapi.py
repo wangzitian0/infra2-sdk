@@ -968,6 +968,21 @@ def test_strict_otel_errors_of_init_service_name_the_variable_and_the_way_out(
     assert str(caught.value).endswith("; pass strict_otel=False to log the problem and start")
 
 
+def test_a_strict_error_that_is_not_a_value_error_passes_through_unchanged(monkeypatch):
+    from infra2_sdk.runtime.otel import OtelSettings
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("broken")
+
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.setattr(OtelSettings, "from_env", broken)
+
+    with pytest.raises(RuntimeError, match="^broken$") as caught:
+        init_service(FastAPI(), "svc")
+
+    assert caught.value.__cause__ is None, "an error must not be chained to itself"
+
+
 def test_non_strict_otel_keeps_a_malformed_otel_value_to_a_warning(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "staging")
     monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", "not-a-pair")

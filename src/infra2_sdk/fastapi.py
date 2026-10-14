@@ -114,13 +114,16 @@ def _require_known_tier() -> None:
         ) from exc
 
 
-def _with_relax_hint(exc: Exception) -> Exception:
-    """Return the strict error with the way out appended. Keep the type of a ``ValueError``."""
+def _with_relax_hint(exc: Exception) -> Exception | None:
+    """Return the strict error with the way out appended, or ``None`` if it is not a value error.
+
+    The type of an ``EnvironmentConflictError`` stays. Another error needs no hint.
+    """
     if isinstance(exc, EnvironmentConflictError):
         return EnvironmentConflictError(f"{exc}; {_RELAX_HINT}")
     if isinstance(exc, ValueError):
         return ValueError(f"{exc}; {_RELAX_HINT}")
-    return exc
+    return None
 
 
 def _log_missing_endpoint(*, deployed: bool) -> None:
@@ -149,7 +152,10 @@ def _resolve_telemetry(name: str, *, strict: bool) -> OtelSettings | None:
         settings = OtelSettings.from_env(strict=strict, default_service_name=name)
     except Exception as exc:
         if strict:
-            raise _with_relax_hint(exc) from exc
+            hinted = _with_relax_hint(exc)
+            if hinted is None:
+                raise
+            raise hinted from exc
         # A failed from_env cannot tell whether an endpoint is set. Read the variable here to
         # choose the log line. Without an endpoint, telemetry is off. The missing-endpoint
         # line is then the only message.
