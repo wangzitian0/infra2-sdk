@@ -1,12 +1,24 @@
 """Guards for names and environment variables removed in 3.4.0 (issue #102).
 
-Each removed name must stay absent. A new shim with the same name fails these tests.
+A removed name must stay absent from its old module, from the two packages, and from every
+other module of the package. A shim that gives the name back under a new owner fails.
+A removed environment variable must stay out of runtime_env_contract().
+
+These tests do not check:
+
+- a renamed copy of a removed object, because the name differs;
+- a name that a module creates while it runs, for example in __getattr__;
+- a name bound only inside a function or a class body;
+- a dotted entry (a removed method) anywhere but on its old class.
 """
 
 from __future__ import annotations
 
 import importlib
 import json
+import pkgutil
+from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -119,6 +131,15 @@ EXPECTED_REMOVED_ENV_NAMES = frozenset(
 )
 
 _UNDOTTED = [pair for pair in REMOVED_NAMES if "." not in pair[1]]
+_REMOVED_SIMPLE_NAMES = frozenset(name for _, name in _UNDOTTED)
+# A removed simple name that one module may bind on purpose: (module, name) -> reason.
+# A new entry needs a review of its reason.
+ALLOWED_REUSE: dict[tuple[str, str], str] = {
+    ("infra2_sdk.secrets", "Runner"): (
+        "secrets.py defines its own type alias for subprocess.run, unrelated to the "
+        "removed alias capacity.Runner"
+    ),
+}
 # A removed module has no owner to look into. Its names are checked by the other tests.
 _LIVE_OWNER = [pair for pair in REMOVED_NAMES if pair[0] not in REMOVED_MODULES]
 
@@ -157,6 +178,77 @@ def test_removed_name_is_not_exported_by_a_package(module: str, name: str) -> No
 def test_removed_environment_member_is_not_in_runtime_env_key(member: str) -> None:
     assert member not in RuntimeEnvKey.__members__
     assert not hasattr(RuntimeEnvKey, member)
+
+
+def _package_modules() -> list[ModuleType]:
+    """The root package and every module below it, imported."""
+    modules = [infra2_sdk]
+    for info in pkgutil.walk_packages(infra2_sdk.__path__, prefix="infra2_sdk."):
+        modules.append(importlib.import_module(info.name))
+    return modules
+
+
+def _module_names_on_disk() -> set[str]:
+    root = Path(infra2_sdk.__file__).resolve().parent
+    names = set()
+    for path in root.rglob("*.py"):
+        parts = path.relative_to(root.parent).with_suffix("").parts
+        names.add(".".join(parts[:-1] if parts[-1] == "__init__" else parts))
+    return names
+
+
+def _bound_removed_names(
+    module: ModuleType, removed: frozenset[str], allowed: dict[tuple[str, str], str]
+) -> list[str]:
+    """Public names of the module, and names in its __all__, that are removed names."""
+    public = {name for name in vars(module) if not name.startswith("_")}
+    listed = set(getattr(module, "__all__", ()))
+    return sorted(
+        name for name in (public | listed) & removed if (module.__name__, name) not in allowed
+    )
+
+
+def test_the_walk_reaches_every_module_on_disk() -> None:
+    walked = {module.__name__ for module in _package_modules()}
+    assert walked == _module_names_on_disk()
+    assert len(walked) > 20, "the walk found almost no module: the next test would check nothing"
+
+
+def test_no_module_binds_a_removed_simple_name() -> None:
+    offenders = {
+        module.__name__: found
+        for module in _package_modules()
+        if (found := _bound_removed_names(module, _REMOVED_SIMPLE_NAMES, ALLOWED_REUSE))
+    }
+    assert not offenders, f"a removed name came back: {offenders}"
+
+
+def test_the_removed_name_check_rejects_a_shim_and_honors_the_allow_list() -> None:
+    shim = ModuleType("infra2_sdk.shim")
+    shim.PostgresCheck = object  # type: ignore[attr-defined]
+    shim.__all__ = ["HttpCheck", "kept"]  # type: ignore[attr-defined]
+    shim.kept = 1  # type: ignore[attr-defined]
+    shim._LEVELS = 1  # type: ignore[attr-defined]  # private: not a public name
+    removed = frozenset({"PostgresCheck", "HttpCheck", "LEVELS", "_LEVELS"})
+    assert _bound_removed_names(shim, removed, {}) == ["HttpCheck", "PostgresCheck"]
+    allowed = {("infra2_sdk.shim", "PostgresCheck"): "reason"}
+    assert _bound_removed_names(shim, removed, allowed) == ["HttpCheck"]
+    other_module = {("infra2_sdk.other", "PostgresCheck"): "reason"}
+    assert _bound_removed_names(shim, removed, other_module) == ["HttpCheck", "PostgresCheck"]
+
+
+def test_every_allowed_reuse_is_still_needed() -> None:
+    assert ALLOWED_REUSE, "the allow-list is empty: this test would check nothing"
+    for (module_name, name), reason in ALLOWED_REUSE.items():
+        assert name in _REMOVED_SIMPLE_NAMES, f"{name} is not a removed name"
+        assert name in vars(importlib.import_module(module_name)), f"{module_name}.{name} is gone"
+        assert reason.strip()
+
+
+def test_the_removed_simple_names_are_the_undotted_entries() -> None:
+    assert _REMOVED_SIMPLE_NAMES, "no removed simple name: the module check would check nothing"
+    assert all("." not in name for name in _REMOVED_SIMPLE_NAMES)
+    assert len(_REMOVED_SIMPLE_NAMES) == 34
 
 
 def _strings(value: object):
