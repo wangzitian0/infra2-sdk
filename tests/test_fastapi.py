@@ -411,6 +411,16 @@ def test_init_service_rejects_a_blank_name_before_any_side_effect(
     assert {"/livez", "/readyz", "/health"} <= {route.path for route in app.router.routes}
 
 
+def test_init_service_checks_the_name_before_it_resolves_the_telemetry():
+    # No tier is set and strict_otel is on, so the telemetry resolution raises a tier error.
+    with pytest.raises(ValueError, match="^name must not be blank$"):
+        init_service(FastAPI(), "", enable_otel=True, strict_otel=True)
+
+    # Control: with a valid name, the same environment fails on the tier.
+    with pytest.raises(ValueError, match="ENVIRONMENT"):
+        init_service(FastAPI(), "svc", enable_otel=True, strict_otel=True)
+
+
 def test_init_service_marks_only_the_app_it_ran_on():
     for app in (_app(), _app()):
         assert [route.path for route in app.router.routes].count("/livez") == 1
@@ -811,7 +821,19 @@ def test_init_service_with_conflicting_tier_names_refuses_to_start_by_default(mo
 
 @pytest.mark.parametrize(
     "environ",
-    [pytest.param({"ENVIRONMENT": "staging", "APP_ENV": "production"}, id="tier")],
+    [
+        # The tier check of init_service raises this one.
+        pytest.param({"ENVIRONMENT": "staging", "APP_ENV": "production"}, id="tier"),
+        # OtelSettings.from_env raises these two. A known tier lets the tier check pass.
+        pytest.param(
+            {"ENVIRONMENT": "staging", "SERVICE_VERSION": "a", "IMAGE_TAG": "b"},
+            id="service-version",
+        ),
+        pytest.param(
+            {"ENVIRONMENT": "staging", "OTEL_SERVICE_NAME": "a", "SERVICE_NAME": "b"},
+            id="service-name",
+        ),
+    ],
 )
 def test_a_strict_conflict_keeps_its_type_and_ends_with_the_way_out(monkeypatch, environ):
     for variable, value in environ.items():
