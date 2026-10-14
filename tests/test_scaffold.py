@@ -1,6 +1,9 @@
 """Tests for microservice scaffolder and AST facet compliance."""
 
 import ast
+import os
+import subprocess
+import sys
 from importlib.metadata import version as installed_version
 from pathlib import Path
 
@@ -362,6 +365,64 @@ def test_infra2_app_keeps_the_strict_default(tmp_path: Path, db: str):
 
     assert "strict_otel" not in {keyword.arg for keyword in _init_service_call(app_text).keywords}
     assert "strict_otel" not in app_text
+
+
+def _run_generated_app(tmp_path: Path, profile: str, code: str) -> subprocess.CompletedProcess:
+    """Scaffold an app without a database, then run ``code`` in the app directory.
+
+    The child process has no variable except PATH and the path of the SDK under test. It has
+    no tier and no network.
+    """
+    app_dir = tmp_path / profile
+    scaffold_service("demo-service", app_dir, profile=profile, db="none")
+    sdk_source = str(Path(infra2_sdk.__file__).resolve().parents[1])
+    return subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=app_dir,
+        env={"PATH": os.environ.get("PATH", ""), "PYTHONPATH": sdk_source},
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+
+def test_standalone_app_starts_and_answers_livez_without_a_tier(tmp_path: Path):
+    code = (
+        "from starlette.testclient import TestClient\n"
+        "import app\n"
+        "response = TestClient(app.app).get('/livez')\n"
+        "print(response.status_code, response.json()['service'])\n"
+    )
+
+    result = _run_generated_app(tmp_path, "standalone", code)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "200 demo_service"
+
+
+def test_infra2_app_stops_at_import_without_a_tier(tmp_path: Path):
+    result = _run_generated_app(tmp_path, "infra2", "import app")
+
+    assert result.returncode != 0
+    assert "ValueError: ENVIRONMENT is required; set one of ENVIRONMENT, ENV, APP_ENV" in (
+        result.stderr
+    )
+
+
+def test_infra2_app_starts_with_a_known_tier(tmp_path: Path):
+    code = (
+        "import os\n"
+        "os.environ['ENV'] = 'local_dev'\n"
+        "from starlette.testclient import TestClient\n"
+        "import app\n"
+        "print(TestClient(app.app).get('/livez').status_code)\n"
+    )
+
+    result = _run_generated_app(tmp_path, "infra2", code)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "200"
 
 
 def test_scaffold_manifest_declares_the_database_url_as_a_required_sensitive_human_secret():

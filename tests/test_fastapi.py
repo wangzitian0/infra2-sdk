@@ -43,6 +43,15 @@ def _sdk_records(caplog) -> list[logging.LogRecord]:
     return [record for record in caplog.records if record.name == "infra2_sdk.fastapi"]
 
 
+def _missing_endpoint_levels(caplog) -> list[int]:
+    """The levels of the missing-endpoint records of the SDK logger."""
+    return [
+        record.levelno
+        for record in _sdk_records(caplog)
+        if "OTEL_EXPORTER_OTLP_ENDPOINT is not set" in record.getMessage()
+    ]
+
+
 @contextmanager
 def _root_logger_as_found_by_a_fresh_process(*handlers: logging.Handler):
     """Give the root logger the state of a process that did not configure logging yet.
@@ -755,7 +764,7 @@ def test_sdk_disabled_without_an_endpoint_says_disabled_and_does_not_warn(monkey
     ]
 
 
-def test_strict_otel_raises_on_invalid_telemetry_settings(
+def test_strict_otel_raises_on_a_missing_tier_when_an_endpoint_is_set(
     monkeypatch, memory_otlp, clean_otel_globals
 ):
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
@@ -798,9 +807,13 @@ def test_init_service_with_conflicting_tier_names_refuses_to_start_by_default(mo
         init_service(FastAPI(), "svc")
 
 
-@pytest.mark.parametrize("environment", [None, "bogus-tier"])
+@pytest.mark.parametrize(
+    "environment,level",
+    [(None, logging.DEBUG), ("bogus-tier", logging.WARNING)],
+    ids=["missing-tier-is-local_dev", "unknown-tier-counts-as-deployed"],
+)
 def test_init_service_without_strict_otel_starts_without_a_known_tier(
-    monkeypatch, caplog, environment
+    monkeypatch, caplog, environment, level
 ):
     if environment is not None:
         monkeypatch.setenv("ENVIRONMENT", environment)
@@ -808,7 +821,7 @@ def test_init_service_without_strict_otel_starts_without_a_known_tier(
     with caplog.at_level(logging.DEBUG, logger="infra2_sdk.fastapi"):
         init_service(FastAPI(), "svc", strict_otel=False)
 
-    assert any("OTEL_EXPORTER_OTLP_ENDPOINT" in r.getMessage() for r in _sdk_records(caplog))
+    assert _missing_endpoint_levels(caplog) == [level]
 
 
 def test_init_service_checks_nothing_when_the_caller_turns_otel_off(monkeypatch, caplog):
@@ -884,9 +897,8 @@ def test_strict_otel_with_a_deployed_tier_and_no_endpoint_warns_and_starts(
     with caplog.at_level(logging.DEBUG, logger="infra2_sdk.fastapi"):
         init_service(FastAPI(), "svc", strict_otel=True)
 
-    warnings = [r for r in _sdk_records(caplog) if r.levelno == logging.WARNING]
-    assert len(warnings) == 1
-    assert "OTEL_EXPORTER_OTLP_ENDPOINT" in warnings[0].getMessage()
+    assert _missing_endpoint_levels(caplog) == [logging.WARNING]
+    assert len(_sdk_records(caplog)) == 1
 
 
 @pytest.mark.parametrize("environment", ["local_dev", "dev", "test", "github_ci"])
@@ -899,7 +911,7 @@ def test_strict_otel_with_a_local_tier_and_no_endpoint_stays_at_debug(
         init_service(FastAPI(), "svc", strict_otel=True)
 
     assert [r for r in _sdk_records(caplog) if r.levelno >= logging.WARNING] == []
-    assert any("OTEL_EXPORTER_OTLP_ENDPOINT" in r.getMessage() for r in _sdk_records(caplog))
+    assert _missing_endpoint_levels(caplog) == [logging.DEBUG]
 
 
 @pytest.mark.parametrize(
@@ -990,9 +1002,8 @@ def test_missing_endpoint_in_a_deployed_tier_logs_a_warning_naming_the_variable(
     with caplog.at_level(logging.DEBUG, logger="infra2_sdk.fastapi"):
         init_service(FastAPI(), "svc", enable_otel=True, strict_otel=False)
 
-    warnings = [r for r in _sdk_records(caplog) if r.levelno == logging.WARNING]
-    assert len(warnings) == 1
-    assert "OTEL_EXPORTER_OTLP_ENDPOINT" in warnings[0].getMessage()
+    assert _missing_endpoint_levels(caplog) == [logging.WARNING]
+    assert len(_sdk_records(caplog)) == 1
 
 
 @pytest.mark.parametrize("environment", [None, "local_dev", "dev", "test", "github_ci"])
@@ -1004,7 +1015,7 @@ def test_missing_endpoint_outside_a_deployed_tier_stays_at_debug(monkeypatch, ca
         init_service(FastAPI(), "svc", enable_otel=True, strict_otel=False)
 
     assert [r for r in _sdk_records(caplog) if r.levelno >= logging.WARNING] == []
-    assert any("OTEL_EXPORTER_OTLP_ENDPOINT" in r.getMessage() for r in _sdk_records(caplog))
+    assert _missing_endpoint_levels(caplog) == [logging.DEBUG]
 
 
 @pytest.mark.parametrize(

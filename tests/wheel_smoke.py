@@ -272,10 +272,14 @@ def smoke_fastapi() -> None:
     # Fail closed: strict_otel defaults to True, so a missing tier stops the service.
     for variable in ("ENVIRONMENT", "ENV", "APP_ENV"):
         os.environ.pop(variable, None)
+    hint = (
+        "ENVIRONMENT is required; set one of ENVIRONMENT, ENV, APP_ENV to a known tier, "
+        "or pass strict_otel=False for a local run"
+    )
     try:
         init_service(FastAPI(), name="fastapi-smoke")
     except ValueError as exc:
-        assert "ENVIRONMENT" in str(exc), exc
+        assert str(exc) == hint, exc
     else:
         raise AssertionError("init_service must refuse to start without a tier")
 
