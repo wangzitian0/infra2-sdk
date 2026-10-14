@@ -921,6 +921,27 @@ def test_a_second_strict_call_reports_the_real_error_again(monkeypatch):
             init_service(app, "svc")
 
 
+def test_a_strict_failure_while_the_providers_start_keeps_the_routes_and_blocks_a_retry(
+    monkeypatch,
+):
+    from infra2_sdk.runtime import otel as otel_module
+
+    def configure(settings, **options):
+        raise ImportError("the exporter package is not installed")
+
+    monkeypatch.setattr(otel_module, "configure_telemetry", configure)
+    monkeypatch.setenv("ENVIRONMENT", "local_dev")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
+    app = FastAPI()
+
+    with pytest.raises(ImportError, match="exporter package"):
+        init_service(app, "svc", log_level=None)
+
+    assert {route.path for route in app.router.routes} >= _PROBE_ROUTES
+    with pytest.raises(RuntimeError, match="^init_service was already called for this app$"):
+        init_service(app, "svc", log_level=None)
+
+
 @pytest.mark.parametrize("environment", [None, "bogus-tier"], ids=["missing-tier", "unknown-tier"])
 def test_strict_otel_checks_the_tier_before_it_looks_for_the_endpoint(monkeypatch, environment):
     if environment is not None:
@@ -1089,6 +1110,39 @@ def test_the_missing_endpoint_level_follows_the_tier_that_from_env_resolved(
 ):
     # No tier variable: OtelSettings.from_env infers the tier from the attribute.
     monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", f"deployment.environment.name={attribute}")
+
+    with caplog.at_level(logging.DEBUG, logger="infra2_sdk.fastapi"):
+        init_service(FastAPI(), "svc", strict_otel=False)
+
+    assert [(r.levelno, r.getMessage()) for r in _sdk_records(caplog)] == [
+        (level, "OTEL_EXPORTER_OTLP_ENDPOINT is not set; OpenTelemetry export is off")
+    ]
+
+
+@pytest.mark.parametrize(
+    "environ,level",
+    [
+        pytest.param({}, logging.WARNING, id="settings-load-so-the-attribute-counts"),
+        pytest.param(
+            {"SERVICE_VERSION": "a", "IMAGE_TAG": "b"},
+            logging.DEBUG,
+            id="settings-fail-so-the-attribute-does-not-count",
+        ),
+        pytest.param(
+            {"SERVICE_VERSION": "a", "IMAGE_TAG": "b", "ENVIRONMENT": "production"},
+            logging.WARNING,
+            id="settings-fail-but-a-tier-variable-counts",
+        ),
+    ],
+)
+def test_after_a_failed_from_env_only_the_tier_variables_set_the_missing_endpoint_level(
+    monkeypatch, caplog, environ, level
+):
+    # The attribute names a deployed tier in all three cases. In the last two cases an alias
+    # conflict makes OtelSettings.from_env fail.
+    monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment.name=production")
+    for variable, value in environ.items():
+        monkeypatch.setenv(variable, value)
 
     with caplog.at_level(logging.DEBUG, logger="infra2_sdk.fastapi"):
         init_service(FastAPI(), "svc", strict_otel=False)
