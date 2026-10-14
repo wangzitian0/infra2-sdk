@@ -6,7 +6,6 @@ import pytest
 from infra2_sdk import _wire
 from infra2_sdk._wire import (
     parse_contract_version,
-    parse_integer,
     parse_string,
     require_contract_version,
 )
@@ -39,18 +38,6 @@ def test_parse_string() -> None:
         parse_string({"key": 123}, "key")
 
 
-def test_parse_integer() -> None:
-    assert parse_integer({"count": 42}, "count") == 42
-    assert parse_integer({}, "count", required=False, default=10) == 10
-
-    with pytest.raises(ValueError, match="count is required"):
-        parse_integer({}, "count", required=True)
-    with pytest.raises(ValueError, match="count must be an integer"):
-        parse_integer({"count": "42"}, "count")
-    with pytest.raises(ValueError, match="count must be an integer"):
-        parse_integer({"count": True}, "count")
-
-
 _SRC = Path(__file__).resolve().parents[1] / "src" / "infra2_sdk"
 _DIALECT_URL = "https://json-schema.org/draft/2020-12/schema"
 
@@ -67,13 +54,10 @@ def test_json_schema_dialect_has_one_definition_in_the_source_tree() -> None:
 
 
 def test_json_schema_dialect_is_the_same_value_in_every_schema_emitter() -> None:
-    from infra2_sdk import snapshot
     from infra2_sdk.runtime import config_schema, health, identity
 
-    for module in (config_schema, health, identity, snapshot):
+    for module in (config_schema, health, identity):
         assert module.JSON_SCHEMA_DIALECT is _wire.JSON_SCHEMA_DIALECT, module.__name__
-    schema = snapshot.AnonymizedSnapshotManifest.json_schema()
-    assert schema["$schema"] == _wire.JSON_SCHEMA_DIALECT
 
 
 def test_json_schema_dialect_is_the_exact_2020_12_uri() -> None:

@@ -20,7 +20,6 @@ from infra2_sdk import (
     runtime,
     scaffold,
     secrets,
-    snapshot,
     transport,
 )
 from infra2_sdk.capacity import (
@@ -92,7 +91,6 @@ __all__ = [
     "rules",
     "runtime",
     "secrets",
-    "snapshot",
     "transport",
     # Capacity
     "CapacityReading",

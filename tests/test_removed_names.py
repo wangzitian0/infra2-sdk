@@ -11,7 +11,7 @@ import pytest
 
 # The frozen lists live in wheel_smoke.py, so the source tests and the wheel smoke test share them.
 # Do not derive them from the source tree: a derived list would shrink with the tree.
-from wheel_smoke import REMOVED_ENV_MEMBERS, REMOVED_ENV_NAMES, REMOVED_NAMES
+from wheel_smoke import REMOVED_ENV_MEMBERS, REMOVED_ENV_NAMES, REMOVED_MODULES, REMOVED_NAMES
 
 import infra2_sdk
 import infra2_sdk.runtime
@@ -45,6 +45,13 @@ EXPECTED_REMOVED_NAMES = frozenset(
         "infra2_sdk.capacity:Runner",
         "infra2_sdk.refs:ReleaseIdentity",
         "infra2_sdk.deploy:DeployStatus",
+        "infra2_sdk.snapshot:AnonymizedSnapshotManifest",
+        "infra2_sdk.snapshot:ResidualScanProof",
+        "infra2_sdk.snapshot:ResidualScanStatus",
+        "infra2_sdk.snapshot:SNAPSHOT_MANIFEST_VERSION",
+        "infra2_sdk.snapshot:SnapshotArtifact",
+        "infra2_sdk.snapshot:SnapshotArtifactFormat",
+        "infra2_sdk.snapshot:SnapshotProducer",
         "infra2_sdk.routing:DokployDomainSpec",
         "infra2_sdk.runtime.environment:env_bool",
         "infra2_sdk.runtime.environment:env_float",
@@ -110,12 +117,13 @@ EXPECTED_REMOVED_ENV_NAMES = frozenset(
     ]
 )
 
-_NAME_IDS = [f"{module}.{name}" for module, name in REMOVED_NAMES]
 _UNDOTTED = [pair for pair in REMOVED_NAMES if "." not in pair[1]]
+# A removed module has no owner to look into. Its names are checked by the other tests.
+_LIVE_OWNER = [pair for pair in REMOVED_NAMES if pair[0] not in REMOVED_MODULES]
 
 
 def test_removed_name_lists_have_unique_entries() -> None:
-    assert len(REMOVED_NAMES) == len(set(REMOVED_NAMES)) == 30
+    assert len(REMOVED_NAMES) == len(set(REMOVED_NAMES)) == 37
     assert len(REMOVED_ENV_MEMBERS) == len(set(REMOVED_ENV_MEMBERS)) == 20
     assert len(REMOVED_ENV_NAMES) == len(set(REMOVED_ENV_NAMES)) == 29
 
@@ -126,7 +134,9 @@ def test_removed_name_lists_equal_the_independent_literal_sets() -> None:
     assert set(REMOVED_ENV_NAMES) == EXPECTED_REMOVED_ENV_NAMES
 
 
-@pytest.mark.parametrize(("module", "dotted"), REMOVED_NAMES, ids=_NAME_IDS)
+@pytest.mark.parametrize(
+    ("module", "dotted"), _LIVE_OWNER, ids=[f"{m}.{n}" for m, n in _LIVE_OWNER]
+)
 def test_removed_name_is_absent_while_its_owner_still_exists(module: str, dotted: str) -> None:
     owner = importlib.import_module(module)  # the module must still import
     *parents, leaf = dotted.split(".")

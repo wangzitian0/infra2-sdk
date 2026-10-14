@@ -10,7 +10,6 @@
     "rules": "consumer: infra2",
     "runtime": "consumer: finance_report, infra2, truealpha",
     "secrets": "consumer: infra2",
-    "snapshot": "documented: README section Modules",
     "transport": "consumer: truealpha",
     "CapacityReading": "consumer: infra2",
     "cloudflare_readings": "consumer: infra2",

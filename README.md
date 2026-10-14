@@ -52,7 +52,6 @@ python -m pip install \
 | `infra2_sdk.runtime.s3` | Standard boto3 S3 client, probe, and safe bucket/object primitives |
 | `infra2_sdk.scaffold` | Zero-compromise scaffolding engine producing compose, deployer, and entrypoint assets |
 | `infra2_sdk.secrets` | Secret-store adapters (Vault KV, 1Password), manifest-driven `SecretsResolver`, and Vault template renderers |
-| `infra2_sdk.snapshot` | Versioned anonymized-snapshot manifest and residual-proof shape |
 | `infra2_sdk.transport` | Minimal injectable HTTP transport (`HttpTransport`, `HttpResponse`, `urllib_transport`) shared by adapters |
 
 ### Core runtime entrypoints
@@ -413,8 +412,11 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   - `runtime.postgres.PostgresCheck` and `runtime.s3.S3Check` (use `probe_postgres` and
     `probe_s3`);
   - `secrets.EnvBackend` and `secrets.ReadOnlyBackendError`;
-  - `snapshot.verify_snapshot_artifact` (compare the artifact bytes with `artifact.sha256` and
-    `artifact.size_bytes` of the manifest).
+  - the module `infra2_sdk.snapshot`, with `AnonymizedSnapshotManifest`, `ResidualScanProof`,
+    `ResidualScanStatus`, `SNAPSHOT_MANIFEST_VERSION`, `SnapshotArtifact`,
+    `SnapshotArtifactFormat`, `SnapshotProducer` and `verify_snapshot_artifact` (no replacement:
+    infra2 removed the last user, `tools/sync_anonymized_staging.sh`, on 2026-10-12. A project
+    that still needs the manifest shape pins `infra2-sdk<3.4`).
 - In v3.4.0, `S3Settings.from_env`, `HttpClientSettings.from_env` and `PostgresSettings.from_env`
   were removed. Build the settings with explicit values. The variables that only these methods
   read left `RuntimeEnvKey` and `runtime_env_contract()`:
@@ -438,16 +440,6 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   recorded decision holds it.
 - `to_environment_tier` and `to_deploy_type` provide canonical bridging mappings across `EnvironmentTier` and `DeployType`.
 - `CommandRunner` protocol is exported from `infra2_sdk.refs` for subprocess runner injection.
-
-### Anonymized snapshot trust boundary
-
-`infra2_sdk.snapshot` validates a closed v1 wire shape. The manifest carries the
-non-zero size and the SHA-256 digest of the artifact. The SDK does not read the
-artifact. Shape validation **does not attest** that the declared producer actually
-ran the anonymizer. Before any restore or deploy side effect, infrastructure must
-check the artifact bytes against the manifest. It must also independently authorize
-the declared repository, source SHA, workflow run, and artifact provenance. Dumping,
-anonymization, storage, Vault, host access, and deployment remain outside the SDK.
 
 ## Development
 

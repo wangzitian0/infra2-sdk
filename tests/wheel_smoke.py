@@ -12,7 +12,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
 
-# Modules removed in 3.3.0 (issue #90). One frozen list: tests/test_removed_modules.py imports it.
+# Modules removed in 3.3.0 (issue #90) and 3.4.0 (issue #102).
+# One frozen list: tests/test_removed_modules.py imports it.
 REMOVED_MODULES = (
     "infra2_sdk.deploy_health",
     "infra2_sdk.dispatch",
@@ -20,6 +21,7 @@ REMOVED_MODULES = (
     "infra2_sdk.runtime.environ",
     "infra2_sdk.runtime.dependencies",
     "infra2_sdk.runtime.probes",
+    "infra2_sdk.snapshot",  # 3.4.0: no user was left after infra2 #1206
 )
 
 # Names removed in 3.4.0 (issue #102), as (module, dotted name). A dotted name is a method.
@@ -58,6 +60,15 @@ REMOVED_NAMES = (
     ("infra2_sdk.secrets", "ReadOnlyBackendError"),
     # Found without a user by the audit of PR #104 (references inside the own body do not count).
     ("infra2_sdk.deploy", "DeployStatus"),
+    # The public names of the module infra2_sdk.snapshot (see REMOVED_MODULES). The module is
+    # gone, so the owner check does not apply to these names.
+    ("infra2_sdk.snapshot", "AnonymizedSnapshotManifest"),
+    ("infra2_sdk.snapshot", "ResidualScanProof"),
+    ("infra2_sdk.snapshot", "ResidualScanStatus"),
+    ("infra2_sdk.snapshot", "SNAPSHOT_MANIFEST_VERSION"),
+    ("infra2_sdk.snapshot", "SnapshotArtifact"),
+    ("infra2_sdk.snapshot", "SnapshotArtifactFormat"),
+    ("infra2_sdk.snapshot", "SnapshotProducer"),
 )
 
 # RuntimeEnvKey members removed in 3.4.0 (issue #102, decision 2).
@@ -120,10 +131,10 @@ REMOVED_ENV_NAMES = (
 
 
 def smoke_core() -> None:
+    from infra2_sdk.refs import classify_ref
     from infra2_sdk.runtime import environment_from_env, runtime_env_contract
-    from infra2_sdk.snapshot import SNAPSHOT_MANIFEST_VERSION
 
-    assert SNAPSHOT_MANIFEST_VERSION == 1
+    assert classify_ref("v1.2.3") == "tag"
     assert environment_from_env({}).name == "local_dev"
     assert runtime_env_contract()["contract_version"] == 1
     import infra2_sdk.rules.compose  # noqa: F401
@@ -153,14 +164,14 @@ def smoke_package_data() -> None:
         pass
     else:
         raise AssertionError("infra2_sdk.images was removed in 3.0.0 and must not be importable")
-    assert len(REMOVED_MODULES) == 6
+    assert len(REMOVED_MODULES) == 7
     for module in REMOVED_MODULES:
         try:
             importlib.import_module(module)
         except ModuleNotFoundError as exc:
             assert exc.name == module, (module, exc.name)
         else:
-            raise AssertionError(f"{module} was removed in 3.3.0 and must not be importable")
+            raise AssertionError(f"{module} was removed and must not be importable")
 
 
 def smoke_removed_names() -> None:
@@ -170,13 +181,14 @@ def smoke_removed_names() -> None:
     import infra2_sdk.runtime
     from infra2_sdk.runtime.environment import RuntimeEnvKey, runtime_env_contract
 
-    assert len(REMOVED_NAMES) == 30 and len(set(REMOVED_NAMES)) == 30
+    assert len(REMOVED_NAMES) == 37 and len(set(REMOVED_NAMES)) == 37
     for module, dotted in REMOVED_NAMES:
-        owner = importlib.import_module(module)
         *parents, leaf = dotted.split(".")
-        for part in parents:
-            owner = getattr(owner, part)  # AttributeError: the owner vanished, not the name
-        assert not hasattr(owner, leaf), f"{module}.{dotted} was removed in 3.4.0"
+        if module not in REMOVED_MODULES:  # a removed module has no owner to look into
+            owner = importlib.import_module(module)
+            for part in parents:
+                owner = getattr(owner, part)  # AttributeError: the owner vanished, not the name
+            assert not hasattr(owner, leaf), f"{module}.{dotted} was removed in 3.4.0"
         if not parents:
             for package in (infra2_sdk, infra2_sdk.runtime):
                 assert not hasattr(package, leaf), f"{package.__name__}.{leaf} was removed"

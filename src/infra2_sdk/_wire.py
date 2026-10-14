@@ -49,23 +49,6 @@ def parse_string(
     return value
 
 
-def parse_integer(
-    raw: Mapping[str, Any],
-    key: str,
-    *,
-    required: bool = True,
-    default: int = 0,
-) -> int:
-    value = raw.get(key)
-    if value is None:
-        if required:
-            raise ValueError(f"{key} is required")
-        return default
-    if type(value) is not int:
-        raise ValueError(f"{key} must be an integer")
-    return value
-
-
 def require_exact_fields(
     raw: Mapping[str, Any],
     expected: set[str],
@@ -83,7 +66,6 @@ def require_exact_fields(
 __all__ = [
     "JSON_SCHEMA_DIALECT",
     "parse_contract_version",
-    "parse_integer",
     "parse_string",
     "require_contract_version",
     "require_exact_fields",

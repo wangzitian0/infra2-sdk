@@ -37,7 +37,6 @@ def test_infra2_sdk_submodules_accessible_from_root() -> None:
         "runtime",
         "scaffold",
         "secrets",
-        "snapshot",
         "transport",
     ]
     for sub in expected_submodules:
