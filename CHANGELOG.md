@@ -4,6 +4,63 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.4.0 - 2026-10-14
+
+### Added
+
+- Add the keyword `default_service_name` to `OtelSettings.from_env`. It is the last source of the service name ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)).
+- Add the keyword-only field `sdk_disabled` to `OtelSettings`. It is true when `OTEL_SDK_DISABLED` is true, so a disabled SDK differs from a missing endpoint ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)).
+
+### Changed
+
+- Resolve the tier, the resource attributes, the service name, the service version and the instance id in one private function. `OtelSettings.from_env`, `RuntimeIdentity.from_env` and `init_service` use it ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)).
+- Set one rule for the service name: `OTEL_SERVICE_NAME`, then `service.name` in `OTEL_RESOURCE_ATTRIBUTES`, then the default name, then `unknown_service` (`OtelSettings` only). `init_service` now uses `service.name` before its `name` argument. `RuntimeIdentity.from_env` now uses `service.name` and raises `ValueError` only when no name exists ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)).
+- Count a blank or padded `service.name`, `service.version` or `service.instance.id` attribute as missing, or strip it, as for an environment variable. Before, the blank text won over the next source ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)).
+- Make `init_service` raise `ValueError("name must not be blank")` for an empty or blank name, before the app changes ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)).
+- Change the default of `strict_otel` in `init_service` from `False` to `True`. A strict `init_service` raises `ValueError` when the tier is missing, unknown or in conflict, when `OTEL_RESOURCE_ATTRIBUTES` is malformed or disagrees with the tier, when `OTEL_SDK_DISABLED`, `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` or `OTEL_METRIC_EXPORT_INTERVAL` is invalid, or when two aliases of one variable differ. Pass `strict_otel=False` for local runs and for services that must never stop on telemetry ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)).
+- Make strict `init_service` without an endpoint run the same validation as with an endpoint. Before, it logged the missing-endpoint line and returned, so a missing tier or a malformed value stayed hidden ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)).
+- Check the telemetry settings in `init_service` before the app changes. A strict error leaves no marker and no probe route, so a retry meets the real error and not `RuntimeError` ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)).
+- Name the variable at fault in the strict errors of `OtelSettings.from_env`: `invalid OTEL_SDK_DISABLED: ...`, `invalid OTEL_METRIC_EXPORT_INTERVAL: ...`, `invalid deployment.environment.name: ...`. `init_service` adds the way out, `pass strict_otel=False to log the problem and start` ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)).
+- Change non-strict `init_service`: a malformed `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_SDK_DISABLED` or sampler variable gives the Python `RuntimeWarning` also when no endpoint is set. With `OTEL_SDK_DISABLED=true` and no endpoint a deployed tier logs the disabled line at DEBUG, no longer the missing-endpoint WARNING. The level of the missing-endpoint line follows the tier that `from_env` resolved, also when it inferred the tier from `deployment.environment.name`. Every other problem stays a log record of the logger `infra2_sdk.fastapi` ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)).
+- When an environment has several faults, the fault that `OtelSettings.from_env` and `RuntimeIdentity.from_env` report first can differ from 3.3.0. An environment with one fault gives the same result ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)).
+- Generate `strict_otel=False` in the `app.py` of the `standalone` scaffold profile, with a comment that a deployment must also set a real `ENV` ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)).
+- `runtime_env_contract()` lists 14 variables (was 34) and has `contract_version` 2. A receiver that requires version 1 rejects it. `RuntimeEnvKey` has 14 members.
+- Generate the README environment table from `runtime_env_contract()` with `scripts/render_env_contract.py`. A test compares the README block and the script output byte for byte. The wheel does not ship the script.
+- Lock the exported names of `infra2_sdk` and `infra2_sdk.runtime` in `tests/surface.json`. Each name has a reason: a consumer, a README section, or a recorded decision.
+- The scaffolded `app.py` builds `PostgresSettings(dsn=...)` from `DATABASE_URL` and raises `RuntimeError: DATABASE_URL is required` when it is unset or empty.
+- `examples/runtime_check.py` uses `check_health`, a `DependencyCheck` and `probe_http`.
+
+### Fixed
+
+- Fix the fail-open start-up of `init_service`. With no tier set, a deployed service without an OTLP endpoint logged at DEBUG and started ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)).
+- Fix `init_service` ignoring `service.name` in `OTEL_RESOURCE_ATTRIBUTES` when `OTEL_SERVICE_NAME` is unset ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)).
+
+### Removed
+
+- Remove the 18 public names that no consumer uses. The census of 2026-10-13 finds no reference in infra2, finance_report or truealpha, in any file type ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)):
+  - `capacity.LEVELS` and `capacity.onepassword_capacity`;
+  - `delivery.PREVIEW_RELEVANT_STAGES`;
+  - `refs.resolve_release_identity` (use `refs.resolve_image_ref` and `refs.resolve_image_digest`) and `refs.verify_runtime_identity` (no replacement);
+  - `routing.resolve_dokploy_domains`;
+  - `runtime.config_schema.settings_json_schema`;
+  - `runtime.health.assert_required_dependencies`; use `check_health`;
+  - `runtime.http.retryable_request` and `runtime.http.parse_retry_after` (no replacement), `runtime.http.HttpCheck` (use `probe_http`);
+  - `runtime.identity.runtime_identity_fingerprint`;
+  - `runtime.otel.inject_trace_context` and `runtime.otel.extract_trace_context`; use `opentelemetry.propagate`;
+  - `runtime.postgres.PostgresCheck` and `runtime.s3.S3Check`; wrap `probe_postgres` or `probe_s3` in a `DependencyCheck`;
+  - `secrets.EnvBackend`;
+  - `snapshot.verify_snapshot_artifact`.
+- Remove the names that only the removed code used: `capacity.OnePasswordCapacityReport`, `capacity.Runner`, `refs.ReleaseIdentity` (no replacement), `routing.DokployDomainSpec`, `runtime.health.DependencyUnavailableError`, `runtime.environment.env_float`, `runtime.environment.env_bool` and `secrets.ReadOnlyBackendError` ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)).
+- Remove `deploy.DeployStatus` and the module `infra2_sdk.snapshot` with its 7 public names. No consumer uses them ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)).
+- Remove `S3Settings.from_env`, `HttpClientSettings.from_env` and `PostgresSettings.from_env`. All consumers build the settings with explicit values ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)).
+- Remove 20 members of `RuntimeEnvKey` and the 28 variable names they resolve from `runtime_env_contract()`: seven `HTTP_*` names, 18 S3 names (aliases included) and three database names ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)).
+- Remove the unused alias `SERVICE_NAME` of `OTEL_SERVICE_NAME`. The SDK no longer reads it ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)).
+- Remove 31 names from `__all__` of `infra2_sdk` (18) and `infra2_sdk.runtime` (13), and `__version__` from `infra2_sdk.__all__`. They stay defined in their modules. Remove the attributes `infra2_sdk.version` and `infra2_sdk.PackageNotFoundError` ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)).
+
+### Compatibility note
+
+Version 3.4.0 removes public names and environment variables that no known consumer uses, and changes the default of `init_service(strict_otel=...)` to `True`. The basis is a usage census of infra2, finance_report and truealpha (production and test code, all file types, 2026-10-13 and 2026-10-14). It found no use of a removed name and no reliance on the old default: infra2 `platform/12.alerting` has passed `strict_otel=False` explicitly since infra2#1240, and `platform/30.todo` passes `strict_otel=True`. The README Compatibility section states the rule. `runtime_env_contract()` has `contract_version` 2. A consumer outside the census must read the Removed list before it moves to 3.4.0.
+
 ## 3.3.0 - 2026-10-12
 
 ### Added
