@@ -1,9 +1,11 @@
 """Tests for the FastAPI integration: probe routes, health bodies and OpenTelemetry."""
 
 import asyncio
+import inspect
 import io
 import logging
 import time
+import warnings
 from contextlib import asynccontextmanager, contextmanager
 
 import httpx
@@ -12,6 +14,7 @@ from fastapi import FastAPI, Request
 from starlette.testclient import TestClient
 
 from infra2_sdk.fastapi import init_service
+from infra2_sdk.runtime.environment import EnvironmentConflictError
 
 # Every variable that selects the tier, the service identity or the OTLP endpoint.
 _AMBIENT_VARIABLES = (
@@ -384,6 +387,7 @@ def test_init_service_marks_only_the_app_it_ran_on():
 
 
 def _otel_environment(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "local_dev")  # the default strict_otel needs a tier
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
     monkeypatch.setenv("OTEL_METRIC_EXPORT_INTERVAL", "3600000")
 
@@ -519,6 +523,7 @@ def test_otel_pipeline_exports_all_signals_and_stops_with_the_app(
 def test_otel_service_name_from_the_environment_beats_the_init_argument(
     monkeypatch, memory_otlp, clean_otel_globals
 ):
+    monkeypatch.setenv("ENVIRONMENT", "local_dev")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
     monkeypatch.setenv("OTEL_SERVICE_NAME", "from-env")
     app = FastAPI()
@@ -535,6 +540,7 @@ def test_otel_service_name_from_the_environment_beats_the_init_argument(
 def test_otel_service_name_defaults_to_the_init_argument(
     monkeypatch, memory_otlp, clean_otel_globals
 ):
+    monkeypatch.setenv("ENVIRONMENT", "local_dev")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
     app = FastAPI()
 
@@ -640,6 +646,7 @@ def test_enable_otel_false_installs_nothing_even_with_an_endpoint(
 def test_sdk_disabled_flag_keeps_telemetry_off_even_with_an_endpoint(
     monkeypatch, memory_otlp, clean_otel_globals
 ):
+    monkeypatch.setenv("ENVIRONMENT", "local_dev")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
     monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
     app = FastAPI()
@@ -672,6 +679,129 @@ def test_strict_otel_raises_on_invalid_telemetry_settings(
         init_service(FastAPI(), "svc", enable_otel=True, strict_otel=True)
 
 
+# --- fail closed: strict_otel is the default and the tier is checked before the endpoint -------
+
+
+def test_strict_otel_is_the_default():
+    assert inspect.signature(init_service).parameters["strict_otel"].default is True
+
+
+@pytest.mark.parametrize("with_endpoint", [True, False], ids=["endpoint", "no-endpoint"])
+def test_init_service_without_a_tier_refuses_to_start_by_default(monkeypatch, with_endpoint):
+    if with_endpoint:
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
+
+    with pytest.raises(ValueError, match=r"ENVIRONMENT.*ENV.*APP_ENV"):
+        init_service(FastAPI(), "svc")
+
+
+@pytest.mark.parametrize("with_endpoint", [True, False], ids=["endpoint", "no-endpoint"])
+def test_init_service_with_an_unknown_tier_refuses_to_start_by_default(monkeypatch, with_endpoint):
+    monkeypatch.setenv("ENVIRONMENT", "bogus-tier")
+    if with_endpoint:
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
+
+    with pytest.raises(ValueError, match=r"bogus-tier.*ENVIRONMENT.*ENV.*APP_ENV"):
+        init_service(FastAPI(), "svc")
+
+
+def test_init_service_with_conflicting_tier_names_refuses_to_start_by_default(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.setenv("APP_ENV", "production")
+
+    with pytest.raises(EnvironmentConflictError, match="ENVIRONMENT"):
+        init_service(FastAPI(), "svc")
+
+
+@pytest.mark.parametrize("environment", [None, "bogus-tier"])
+def test_init_service_without_strict_otel_starts_without_a_known_tier(
+    monkeypatch, caplog, environment
+):
+    if environment is not None:
+        monkeypatch.setenv("ENVIRONMENT", environment)
+
+    with caplog.at_level(logging.DEBUG, logger="infra2_sdk.fastapi"):
+        init_service(FastAPI(), "svc", strict_otel=False)
+
+    assert any("OTEL_EXPORTER_OTLP_ENDPOINT" in r.getMessage() for r in _sdk_records(caplog))
+
+
+def test_init_service_checks_nothing_when_the_caller_turns_otel_off(monkeypatch, caplog):
+    monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", "not-a-pair")
+
+    with (
+        caplog.at_level(logging.DEBUG, logger="infra2_sdk.fastapi"),
+        warnings.catch_warnings(record=True) as caught,
+    ):
+        warnings.simplefilter("always")
+        init_service(FastAPI(), "svc", enable_otel=False)
+
+    assert caught == []
+    assert _sdk_records(caplog) == []
+
+
+@pytest.mark.parametrize("environment", [None, "bogus-tier"], ids=["missing-tier", "unknown-tier"])
+def test_strict_otel_checks_the_tier_before_it_looks_for_the_endpoint(monkeypatch, environment):
+    if environment is not None:
+        monkeypatch.setenv("ENVIRONMENT", environment)
+
+    with pytest.raises(ValueError, match="ENVIRONMENT"):
+        init_service(FastAPI(), "svc", strict_otel=True)
+
+
+@pytest.mark.parametrize("environment", ["staging", "production", "preview", "pr-42"])
+def test_strict_otel_with_a_deployed_tier_and_no_endpoint_warns_and_starts(
+    monkeypatch, caplog, environment
+):
+    monkeypatch.setenv("ENVIRONMENT", environment)
+
+    with caplog.at_level(logging.DEBUG, logger="infra2_sdk.fastapi"):
+        init_service(FastAPI(), "svc", strict_otel=True)
+
+    warnings = [r for r in _sdk_records(caplog) if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "OTEL_EXPORTER_OTLP_ENDPOINT" in warnings[0].getMessage()
+
+
+@pytest.mark.parametrize("environment", ["local_dev", "dev", "test", "github_ci"])
+def test_strict_otel_with_a_local_tier_and_no_endpoint_stays_at_debug(
+    monkeypatch, caplog, environment
+):
+    monkeypatch.setenv("ENVIRONMENT", environment)
+
+    with caplog.at_level(logging.DEBUG, logger="infra2_sdk.fastapi"):
+        init_service(FastAPI(), "svc", strict_otel=True)
+
+    assert [r for r in _sdk_records(caplog) if r.levelno >= logging.WARNING] == []
+    assert any("OTEL_EXPORTER_OTLP_ENDPOINT" in r.getMessage() for r in _sdk_records(caplog))
+
+
+@pytest.mark.parametrize(
+    "variable,value,message",
+    [
+        ("OTEL_RESOURCE_ATTRIBUTES", "not-a-pair", "OTEL_RESOURCE_ATTRIBUTES"),
+        ("OTEL_SDK_DISABLED", "1", "true or false"),
+        ("OTEL_TRACES_SAMPLER", "sometimes", "OTEL_TRACES_SAMPLER"),
+    ],
+)
+def test_strict_otel_refuses_a_malformed_otel_value_even_without_an_endpoint(
+    monkeypatch, variable, value, message
+):
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.setenv(variable, value)
+
+    with pytest.raises(ValueError, match=message):
+        init_service(FastAPI(), "svc")
+
+
+def test_non_strict_otel_keeps_a_malformed_otel_value_to_a_warning(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", "not-a-pair")
+
+    with pytest.warns(RuntimeWarning, match="OTEL_RESOURCE_ATTRIBUTES"):
+        init_service(FastAPI(), "svc", strict_otel=False)
+
+
 def test_lenient_otel_reports_invalid_telemetry_settings_and_keeps_serving(
     monkeypatch, memory_otlp, clean_otel_globals, caplog
 ):
@@ -680,7 +810,7 @@ def test_lenient_otel_reports_invalid_telemetry_settings_and_keeps_serving(
     app = FastAPI()
 
     with caplog.at_level(logging.WARNING, logger="infra2_sdk.fastapi"):
-        init_service(app, "svc", enable_otel=True)
+        init_service(app, "svc", enable_otel=True, strict_otel=False)
 
     assert "Could not initialize OpenTelemetry" in caplog.text
     assert memory_otlp.endpoints == []
@@ -696,7 +826,7 @@ def test_missing_endpoint_in_a_deployed_tier_logs_a_warning_naming_the_variable(
     monkeypatch.setenv("ENVIRONMENT", environment)
 
     with caplog.at_level(logging.DEBUG, logger="infra2_sdk.fastapi"):
-        init_service(FastAPI(), "svc", enable_otel=True)
+        init_service(FastAPI(), "svc", enable_otel=True, strict_otel=False)
 
     warnings = [r for r in _sdk_records(caplog) if r.levelno == logging.WARNING]
     assert len(warnings) == 1
@@ -709,7 +839,7 @@ def test_missing_endpoint_outside_a_deployed_tier_stays_at_debug(monkeypatch, ca
         monkeypatch.setenv("ENVIRONMENT", environment)
 
     with caplog.at_level(logging.DEBUG, logger="infra2_sdk.fastapi"):
-        init_service(FastAPI(), "svc", enable_otel=True)
+        init_service(FastAPI(), "svc", enable_otel=True, strict_otel=False)
 
     assert [r for r in _sdk_records(caplog) if r.levelno >= logging.WARNING] == []
     assert any("OTEL_EXPORTER_OTLP_ENDPOINT" in r.getMessage() for r in _sdk_records(caplog))
@@ -729,7 +859,7 @@ def test_conflicting_environment_aliases_do_not_raise_and_count_as_deployed(monk
     monkeypatch.setenv("APP_ENV", "production")
 
     with caplog.at_level(logging.DEBUG, logger="infra2_sdk.fastapi"):
-        init_service(FastAPI(), "svc", enable_otel=True)
+        init_service(FastAPI(), "svc", enable_otel=True, strict_otel=False)
 
     assert [r for r in _sdk_records(caplog) if r.levelno == logging.WARNING]
 
@@ -745,6 +875,7 @@ def _exported_log_bodies(memory_otlp, providers) -> list[str]:
 def test_init_service_gives_an_unconfigured_root_logger_info_level_and_a_stream_handler(
     monkeypatch, memory_otlp, clean_otel_globals
 ):
+    monkeypatch.setenv("ENVIRONMENT", "local_dev")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
     app = FastAPI()
 
@@ -768,6 +899,7 @@ def test_init_service_gives_an_unconfigured_root_logger_info_level_and_a_stream_
 def test_init_service_keeps_the_root_logger_an_application_already_configured(
     monkeypatch, memory_otlp, clean_otel_globals
 ):
+    monkeypatch.setenv("ENVIRONMENT", "local_dev")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
     app_handler = logging.StreamHandler(io.StringIO())
     app_formatter = logging.Formatter("%(message)s")
@@ -789,6 +921,7 @@ def test_init_service_keeps_the_root_logger_an_application_already_configured(
 def test_log_level_none_leaves_the_root_logger_untouched(
     monkeypatch, memory_otlp, clean_otel_globals
 ):
+    monkeypatch.setenv("ENVIRONMENT", "local_dev")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
     app = FastAPI()
 
@@ -803,6 +936,7 @@ def test_log_level_none_leaves_the_root_logger_untouched(
 
 
 def test_log_level_applies_the_requested_level(monkeypatch, memory_otlp, clean_otel_globals):
+    monkeypatch.setenv("ENVIRONMENT", "local_dev")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
     app = FastAPI()
 

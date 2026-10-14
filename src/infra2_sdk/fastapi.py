@@ -22,10 +22,13 @@ from typing import Any
 
 from infra2_sdk.runtime.environment import (
     PLATFORM_OWNED_TIERS,
+    EnvironmentConflictError,
     RuntimeEnvKey,
     UnknownEnvironmentPolicy,
     environment_from_env,
     resolve_runtime_env,
+    runtime_env_spec,
+    strict_environment_from_env,
 )
 from infra2_sdk.runtime.health import (
     HTTP_OK,
@@ -75,12 +78,33 @@ def _in_deployed_tier() -> bool:
     """Return True for preview, staging and production.
 
     An unknown or conflicting environment counts as deployed, so the caller logs more, not less.
+    A missing environment counts as ``local_dev`` in non-strict mode, so this function returns
+    False for it. Strict mode never reaches this function with a missing tier, because
+    ``_require_known_tier`` raises first.
     """
     try:
         tier = environment_from_env(unknown=UnknownEnvironmentPolicy.PRODUCTION).tier
     except ValueError:
         return True
     return tier in PLATFORM_OWNED_TIERS
+
+
+def _require_known_tier() -> None:
+    """Raise ``ValueError`` when the environment names no known tier.
+
+    Strict mode calls this before it looks for the endpoint. A service without an endpoint
+    stops too, so a missing tier cannot hide behind missing telemetry.
+    """
+    try:
+        strict_environment_from_env()
+    except EnvironmentConflictError:
+        raise  # the message already names the conflicting variables
+    except ValueError as exc:
+        spec = runtime_env_spec(RuntimeEnvKey.ENVIRONMENT)
+        names = ", ".join((spec.key.value, *spec.aliases))
+        raise ValueError(
+            f"{exc}; set one of {names} to a known tier, or pass strict_otel=False for a local run"
+        ) from exc
 
 
 def _log_missing_endpoint() -> None:
@@ -93,6 +117,8 @@ def _log_missing_endpoint() -> None:
 
 
 def _start_telemetry(app: Any, name: str, *, strict: bool, log_level: int | None) -> None:
+    if strict:
+        _require_known_tier()
     try:
         from infra2_sdk.runtime.otel import OtelSettings, configure_telemetry
 
@@ -130,8 +156,8 @@ def _start_telemetry(app: Any, name: str, *, strict: bool, log_level: int | None
         if strict:
             raise
         # A failed from_env cannot tell whether an endpoint is set. Read the variable here to
-        # choose the log line. Without an endpoint, telemetry is off and the failure needs no
-        # warning about itself.
+        # choose the log line. Without an endpoint, telemetry is off. The missing-endpoint
+        # line is then the only message.
         if resolve_runtime_env(None, RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT).value is None:
             _log_missing_endpoint()
         else:
@@ -144,7 +170,7 @@ def init_service(
     *,
     db_checker: Callable[[], _CheckerResult | Awaitable[_CheckerResult]] | None = None,
     enable_otel: bool = True,
-    strict_otel: bool = False,
+    strict_otel: bool = True,
     log_level: int | None = logging.INFO,
     check_timeout_seconds: float = 10.0,
 ) -> None:
@@ -155,14 +181,21 @@ def init_service(
 
     Parameters:
         app: The FastAPI application.
-        name: Logical service name. ``OTEL_SERVICE_NAME`` takes precedence for telemetry.
+        name: Logical service name. The telemetry service name is ``OTEL_SERVICE_NAME``, then
+            ``service.name`` in ``OTEL_RESOURCE_ATTRIBUTES``, then ``name``.
         db_checker: Optional sync or async callable. It returns ``bool`` or ``(bool, detail)``.
             A false result, an exception or a timeout makes /readyz and /health answer 503.
             A sync db_checker must set its own protocol-level timeout; a timed-out call keeps
             its thread.
         enable_otel: Start OpenTelemetry when ``OTEL_EXPORTER_OTLP_ENDPOINT`` is set. A
             deployed tier (preview, staging, production) without the endpoint logs a warning.
-        strict_otel: Raise on invalid telemetry settings instead of logging a warning.
+            With ``enable_otel=False`` nothing is checked.
+        strict_otel: Fail closed. A missing or unknown tier (``ENVIRONMENT``, or its aliases
+            ``ENV`` and ``APP_ENV``) and a malformed ``OTEL_*`` value raise ``ValueError``
+            at start-up. The check runs before the endpoint check, so it also runs when no
+            endpoint is set. Pass ``strict_otel=False`` for local runs and for services that
+            must never stop on telemetry, such as a pager bridge. A missing tier then counts
+            as ``local_dev``, and a malformed ``OTEL_*`` value gives a warning.
         log_level: Level for the ``logging.basicConfig`` call that runs before OpenTelemetry
             attaches its handler. The call changes nothing when the root logger already has a
             handler, so an application that configured logging keeps its level. An application

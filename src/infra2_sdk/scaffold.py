@@ -384,9 +384,21 @@ def generate_env_example(service_name: str, port: int, db: str = "postgres") -> 
     return "\n".join(lines) + "\n"
 
 
-def generate_fastapi_app(service_name: str, db: str = "postgres") -> str:
-    """Generate starter FastAPI application with 1-liner init_service."""
+def generate_fastapi_app(service_name: str, db: str = "postgres", profile: str = "infra2") -> str:
+    """Generate starter FastAPI application with 1-liner init_service.
+
+    The infra2 profile keeps the default ``strict_otel=True``: its compose file sets ``ENV``.
+    The standalone profile passes ``strict_otel=False``, because a laptop sets no tier.
+    """
     clean_service = _clean_ident(service_name)
+    if profile == "standalone":
+        strict_note = (
+            "# A laptop sets no ENVIRONMENT, so strict_otel=False lets the service start.\n"
+            "# Remove it for a deployed service.\n"
+        )
+        strict_option = ", strict_otel=False"
+    else:
+        strict_note = strict_option = ""
     if db == "postgres":
         return f'''"""Application entry point for {clean_service}."""
 
@@ -407,7 +419,7 @@ def check_db() -> tuple[bool, str]:
 
 # Registers /livez, /readyz and /health.
 # Starts OpenTelemetry when OTEL_EXPORTER_OTLP_ENDPOINT is set.
-init_service(app, name="{clean_service}", db_checker=check_db)
+{strict_note}init_service(app, name="{clean_service}", db_checker=check_db{strict_option})
 
 
 @app.get("/")
@@ -424,7 +436,7 @@ app = FastAPI(title="{clean_service}")
 
 # Registers /livez, /readyz and /health.
 # Starts OpenTelemetry when OTEL_EXPORTER_OTLP_ENDPOINT is set.
-init_service(app, name="{clean_service}")
+{strict_note}init_service(app, name="{clean_service}"{strict_option})
 
 
 @app.get("/")
@@ -508,7 +520,7 @@ def scaffold_service(
         "entrypoint.sh": generate_entrypoint_sh(port, profile=profile),
         "Dockerfile": generate_dockerfile(port),
         "requirements.txt": generate_requirements_txt(template=template, db=db),
-        "app.py": generate_fastapi_app(name, db=db),
+        "app.py": generate_fastapi_app(name, db=db, profile=profile),
     }
 
     if profile == "infra2":

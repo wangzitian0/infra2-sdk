@@ -269,6 +269,16 @@ def smoke_fastapi() -> None:
     status, health = asyncio.run(_asgi_get(failing, "/health"))
     assert status == 503 and health["status"] == "unhealthy", (status, health)
 
+    # Fail closed: strict_otel defaults to True, so a missing tier stops the service.
+    for variable in ("ENVIRONMENT", "ENV", "APP_ENV"):
+        os.environ.pop(variable, None)
+    try:
+        init_service(FastAPI(), name="fastapi-smoke")
+    except ValueError as exc:
+        assert "ENVIRONMENT" in str(exc), exc
+    else:
+        raise AssertionError("init_service must refuse to start without a tier")
+
     smoke_fastapi_otel()
 
 

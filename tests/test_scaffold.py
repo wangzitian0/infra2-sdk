@@ -328,6 +328,39 @@ def test_scaffolded_app_promises_only_what_init_service_does(tmp_path: Path, db:
         assert unkept_promise not in app_text
 
 
+def _init_service_call(app_text: str) -> ast.Call:
+    calls = [
+        node
+        for node in ast.walk(ast.parse(app_text))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "init_service"
+    ]
+    assert len(calls) == 1, "the generated app must call init_service exactly once"
+    return calls[0]
+
+
+@pytest.mark.parametrize("db", ["postgres", "none"])
+def test_standalone_app_passes_strict_otel_false_and_says_why(tmp_path: Path, db: str):
+    scaffold_service("demo-service", tmp_path / "app", profile="standalone", db=db)
+
+    app_text = (tmp_path / "app" / "app.py").read_text(encoding="utf-8")
+
+    options = {keyword.arg: keyword.value for keyword in _init_service_call(app_text).keywords}
+    assert ast.literal_eval(options["strict_otel"]) is False
+    assert "# A laptop sets no ENVIRONMENT, so strict_otel=False lets" in app_text
+
+
+@pytest.mark.parametrize("db", ["postgres", "none"])
+def test_infra2_app_keeps_the_strict_default(tmp_path: Path, db: str):
+    scaffold_service("demo-service", tmp_path / "app", profile="infra2", db=db)
+
+    app_text = (tmp_path / "app" / "app.py").read_text(encoding="utf-8")
+
+    assert "strict_otel" not in {keyword.arg for keyword in _init_service_call(app_text).keywords}
+    assert "strict_otel" not in app_text
+
+
 def test_scaffold_manifest_declares_the_database_url_as_a_required_sensitive_human_secret():
     # The Vault renderers ignore `sensitive`. The flag changes the JSON schema and how
     # validate_environment compares values, so those are the observable outputs.
