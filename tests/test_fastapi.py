@@ -547,6 +547,84 @@ def test_otel_service_name_defaults_to_the_init_argument(
         app.state.telemetry_providers.shutdown()
 
 
+def _exported_service_name(monkeypatch, environ: dict[str, str]) -> str:
+    """Start ``init_service("from-argument")`` with ``environ`` and return the exported name."""
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
+    monkeypatch.setenv("ENVIRONMENT", "local_dev")
+    for variable, value in environ.items():
+        monkeypatch.setenv(variable, value)
+    app = FastAPI()
+
+    init_service(app, "from-argument", enable_otel=True)
+
+    providers = app.state.telemetry_providers
+    try:
+        return providers.tracer_provider.resource.attributes["service.name"]
+    finally:
+        providers.shutdown()
+
+
+@pytest.mark.parametrize(
+    "environ,expected",
+    [
+        pytest.param(
+            {
+                "OTEL_SERVICE_NAME": "from-env",
+                "OTEL_RESOURCE_ATTRIBUTES": "service.name=from-attribute",
+            },
+            "from-env",
+            id="env-beats-attribute-and-argument",
+        ),
+        pytest.param(
+            {"OTEL_RESOURCE_ATTRIBUTES": "service.name=from-attribute"},
+            "from-attribute",
+            id="attribute-beats-argument",
+        ),
+        pytest.param({}, "from-argument", id="argument-alone"),
+    ],
+)
+def test_init_service_exports_the_service_name_by_the_one_precedence_rule(
+    monkeypatch, memory_otlp, clean_otel_globals, environ, expected
+):
+    assert _exported_service_name(monkeypatch, environ) == expected
+
+
+# --- one resolution: init_service reads each fact once, through OtelSettings.from_env ----------
+
+
+@pytest.mark.parametrize("strict", [True, False])
+@pytest.mark.parametrize("with_endpoint", [True, False], ids=["endpoint", "no-endpoint"])
+def test_init_service_resolves_the_service_identity_once(
+    monkeypatch, memory_otlp, clean_otel_globals, resolver_calls, strict, with_endpoint
+):
+    monkeypatch.setenv("ENVIRONMENT", "local_dev")
+    if with_endpoint:
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
+    app = FastAPI()
+
+    init_service(app, "svc", enable_otel=True, strict_otel=strict)
+
+    if with_endpoint:
+        app.state.telemetry_providers.shutdown()
+    assert len(resolver_calls) == 1
+    assert resolver_calls[0]["strict"] is strict
+    assert resolver_calls[0]["default_service_name"] == "svc"
+
+
+def test_init_service_reads_the_endpoint_and_the_service_name_once(
+    monkeypatch, memory_otlp, clean_otel_globals, environment_reads
+):
+    monkeypatch.setenv("ENVIRONMENT", "local_dev")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
+    app = FastAPI()
+
+    init_service(app, "svc", enable_otel=True)
+
+    app.state.telemetry_providers.shutdown()
+    assert environment_reads.count("OTEL_EXPORTER_OTLP_ENDPOINT") == 1
+    assert environment_reads.count("OTEL_SERVICE_NAME") == 1
+
+
 def test_enable_otel_false_installs_nothing_even_with_an_endpoint(
     monkeypatch, memory_otlp, clean_otel_globals
 ):
@@ -570,6 +648,19 @@ def test_sdk_disabled_flag_keeps_telemetry_off_even_with_an_endpoint(
 
     assert not hasattr(app.state, "telemetry_providers")
     assert memory_otlp.endpoints == []
+
+
+def test_sdk_disabled_without_an_endpoint_says_disabled_and_does_not_warn(monkeypatch, caplog):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+
+    with caplog.at_level(logging.DEBUG, logger="infra2_sdk.fastapi"):
+        init_service(FastAPI(), "svc", enable_otel=True)
+
+    records = _sdk_records(caplog)
+    assert [(r.levelno, r.getMessage()) for r in records] == [
+        (logging.DEBUG, "OpenTelemetry is disabled by the environment")
+    ]
 
 
 def test_strict_otel_raises_on_invalid_telemetry_settings(

@@ -18,7 +18,6 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
-from dataclasses import replace
 from typing import Any
 
 from infra2_sdk.runtime.environment import (
@@ -84,22 +83,27 @@ def _in_deployed_tier() -> bool:
     return tier in PLATFORM_OWNED_TIERS
 
 
-def _start_telemetry(app: Any, name: str, *, strict: bool, log_level: int | None) -> None:
-    endpoint_variable = RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT
-    if resolve_runtime_env(None, endpoint_variable).value is None:
-        level = logging.WARNING if _in_deployed_tier() else logging.DEBUG
-        logger.log(level, "%s is not set; OpenTelemetry export is off", endpoint_variable.value)
-        return
+def _log_missing_endpoint() -> None:
+    level = logging.WARNING if _in_deployed_tier() else logging.DEBUG
+    logger.log(
+        level,
+        "%s is not set; OpenTelemetry export is off",
+        RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT.value,
+    )
 
+
+def _start_telemetry(app: Any, name: str, *, strict: bool, log_level: int | None) -> None:
     try:
         from infra2_sdk.runtime.otel import OtelSettings, configure_telemetry
 
-        settings = OtelSettings.from_env(strict=strict)
-        if not settings.enabled:
+        # The one resolution: the endpoint, the tier and the service name come from here.
+        settings = OtelSettings.from_env(strict=strict, default_service_name=name)
+        if settings.sdk_disabled:
             logger.debug("OpenTelemetry is disabled by the environment")
             return
-        service_name = resolve_runtime_env(None, RuntimeEnvKey.SERVICE_NAME, default=name).value
-        settings = replace(settings, service_name=service_name or name)
+        if settings.endpoint is None:
+            _log_missing_endpoint()
+            return
         if log_level is not None:
             # basicConfig does nothing when the root logger already has a handler. Without
             # this call the OpenTelemetry handler would make a later basicConfig a no-op and
@@ -125,7 +129,13 @@ def _start_telemetry(app: Any, name: str, *, strict: bool, log_level: int | None
     except Exception as exc:
         if strict:
             raise
-        logger.warning("Could not initialize OpenTelemetry: %s", exc)
+        # A failed from_env cannot tell whether an endpoint is set. Read the variable here to
+        # choose the log line. Without an endpoint, telemetry is off and the failure needs no
+        # warning about itself.
+        if resolve_runtime_env(None, RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT).value is None:
+            _log_missing_endpoint()
+        else:
+            logger.warning("Could not initialize OpenTelemetry: %s", exc)
 
 
 def init_service(

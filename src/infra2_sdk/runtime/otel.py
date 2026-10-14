@@ -37,6 +37,8 @@ class OtelSettings:
     export_interval_millis: int = 60_000
     traces_sampler: str = field(default="", kw_only=True)
     traces_sampler_arg: str = field(default="", kw_only=True)
+    #: True when ``OTEL_SDK_DISABLED`` is true. ``from_env`` then sets ``endpoint`` to ``None``.
+    sdk_disabled: bool = field(default=False, kw_only=True)
 
     def __post_init__(self) -> None:
         tier = resolve_environment_tier(self.environment)
@@ -147,6 +149,7 @@ class OtelSettings:
             ),
             traces_sampler=sampler_name,
             traces_sampler_arg=sampler_arg,
+            sdk_disabled=disabled,
         )
 
 

@@ -80,6 +80,23 @@ def resolver_calls(monkeypatch) -> list[dict]:
 
 
 @pytest.fixture
+def environment_reads(monkeypatch) -> list[str]:
+    """The canonical name of every ``resolve_runtime_env`` read, in call order."""
+    from infra2_sdk.runtime import environment as environment_module
+
+    real = environment_module.resolve_runtime_env
+    reads: list[str] = []
+
+    def recording(environ, key, **kwargs):
+        reads.append(str(environment_module.RuntimeEnvKey(key)))
+        return real(environ, key, **kwargs)
+
+    holders = _patch_everywhere(monkeypatch, "resolve_runtime_env", recording)
+    assert holders >= 3, "no module holds resolve_runtime_env: nothing is counted"
+    return reads
+
+
+@pytest.fixture
 def memory_otlp(monkeypatch):
     import opentelemetry.exporter.otlp.proto.http._log_exporter as log_exporter
     import opentelemetry.exporter.otlp.proto.http.metric_exporter as metric_exporter

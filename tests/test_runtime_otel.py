@@ -81,6 +81,35 @@ def test_otel_is_transparently_disabled_without_endpoint_or_by_standard_flag() -
     assert disabled.endpoint is None
 
 
+def test_sdk_disabled_tells_a_disabled_sdk_from_a_missing_endpoint() -> None:
+    endpoint = {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318"}
+
+    disabled = OtelSettings.from_env({**endpoint, "OTEL_SDK_DISABLED": "true"})
+    no_endpoint = OtelSettings.from_env({})
+    enabled = OtelSettings.from_env(endpoint)
+
+    assert (disabled.enabled, disabled.endpoint, disabled.sdk_disabled) == (False, None, True)
+    assert (no_endpoint.enabled, no_endpoint.sdk_disabled) == (False, False)
+    assert (enabled.enabled, enabled.sdk_disabled) == (True, False)
+
+
+def test_an_invalid_sdk_disabled_value_does_not_disable_the_sdk() -> None:
+    environ = {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318", "OTEL_SDK_DISABLED": "1"}
+
+    with pytest.warns(RuntimeWarning, match="OTEL_SDK_DISABLED"):
+        settings = OtelSettings.from_env(environ)
+
+    assert (settings.enabled, settings.sdk_disabled) == (True, False)
+
+
+def test_sdk_disabled_is_a_keyword_only_field_that_defaults_to_false() -> None:
+    parameter = signature(OtelSettings).parameters["sdk_disabled"]
+
+    assert parameter.kind is Parameter.KEYWORD_ONLY
+    assert parameter.default is False
+    assert OtelSettings(service_name="api", enabled=False).sdk_disabled is False
+
+
 def test_disabled_flag_takes_precedence_over_invalid_endpoint() -> None:
     settings = OtelSettings.from_env(
         {
