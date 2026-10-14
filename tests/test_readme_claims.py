@@ -251,3 +251,7 @@ def test_the_readme_counts_the_fixed_names_and_the_variables_of_the_contract() -
     assert version_note and int(version_note.group(1)) == len(runtime_env_contract()["variables"])
     lost = re.search(r"lost the (\d+) variables above", README)
     assert lost and int(lost.group(1)) == len(REMOVED_ENV_MEMBERS) == 20
+
+    groups = [item for item in runtime_env_contract()["variables"] if item["aliases"]]
+    assert len(groups) == 2
+    assert "`init_service` reads two groups of aliases" in README

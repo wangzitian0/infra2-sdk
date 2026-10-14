@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from infra2_sdk.runtime._otel_env import load_resource_attributes
+
 
 class RuntimeEnvKey(StrEnum):
     """Canonical environment variables owned by the portable runtime contract."""
@@ -322,6 +324,80 @@ def strict_environment_from_env(
         required=True,
         github_actions=github_actions,
         unknown=unknown,
+    )
+
+
+#: The resource attributes that name a service. A blank one is missing, like a blank variable.
+_IDENTITY_ATTRIBUTES = ("service.name", "service.version", "service.instance.id")
+
+
+@dataclass(frozen=True)
+class _ServiceIdentity:
+    """What one environment says about one service. ``_resolve_service_identity`` builds it.
+
+    ``environment_is_set`` is true when ``ENVIRONMENT`` or one of its aliases is set. When it is
+    false in non-strict mode, the tier is the ``local_dev`` default.
+    """
+
+    environment: RuntimeEnvironment
+    environment_is_set: bool
+    attributes: dict[str, str]
+    deployment_environment: str | None
+    service_name: str | None
+    service_version: str
+    instance_id: str
+
+
+def _resolve_service_identity(
+    environ: Mapping[str, str] | None,
+    *,
+    strict: bool,
+    default_service_name: str | None = None,
+) -> _ServiceIdentity:
+    """Resolve the tier and the service coordinates of one environment.
+
+    This function is the one reader of these facts. ``OtelSettings.from_env``,
+    ``RuntimeIdentity.from_env`` and ``init_service`` all get them from here.
+
+    - Tier: ``environment_from_env``, or ``strict_environment_from_env`` when ``strict`` is true.
+    - Resource attributes: ``OTEL_RESOURCE_ATTRIBUTES``. A malformed value raises ``ValueError``
+      when ``strict`` is true. Otherwise it gives a ``RuntimeWarning`` and no attributes.
+      The values of ``service.name``, ``service.version`` and ``service.instance.id`` lose their
+      blank padding. A blank one counts as missing, as a blank variable does, and the key is
+      dropped. The next source of the chain applies.
+    - Service name: ``OTEL_SERVICE_NAME``, then ``service.name`` in the attributes, then
+      ``default_service_name``. The result is ``None`` when all three are missing.
+    - Service version: ``SERVICE_VERSION``, then ``service.version``, then ``unknown``.
+    - Instance id: ``INSTANCE_ID``, then ``service.instance.id``, then an empty string.
+    """
+
+    runtime = strict_environment_from_env(environ) if strict else environment_from_env(environ)
+    environment_is_set = resolve_runtime_env(environ, RuntimeEnvKey.ENVIRONMENT).value is not None
+    named = resolve_runtime_env(environ, RuntimeEnvKey.SERVICE_NAME).value
+    attributes, deployment_environment = load_resource_attributes(
+        resolve_runtime_env(environ, RuntimeEnvKey.OTEL_RESOURCE_ATTRIBUTES, default="").value
+        or "",
+        strict=strict,
+        # Frames: 1 load_resource_attributes, 2 this function, 3 from_env, 4 the caller of
+        # from_env. The warning names the caller of from_env.
+        stacklevel=4,
+    )
+    for key in _IDENTITY_ATTRIBUTES:
+        if key in attributes:
+            if attributes[key].strip():
+                attributes[key] = attributes[key].strip()
+            else:
+                del attributes[key]
+    version = resolve_runtime_env(environ, RuntimeEnvKey.SERVICE_VERSION).value
+    instance = resolve_runtime_env(environ, RuntimeEnvKey.INSTANCE_ID).value
+    return _ServiceIdentity(
+        environment=runtime,
+        environment_is_set=environment_is_set,
+        attributes=attributes,
+        deployment_environment=deployment_environment,
+        service_name=named or attributes.get("service.name") or default_service_name or None,
+        service_version=version or attributes.get("service.version", "unknown"),
+        instance_id=instance or attributes.get("service.instance.id", ""),
     )
 
 
