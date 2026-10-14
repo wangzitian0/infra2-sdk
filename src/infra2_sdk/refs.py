@@ -6,7 +6,7 @@ import json
 import re
 import subprocess
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import urlencode
 
@@ -186,24 +186,6 @@ class ReleaseError(RuntimeError):
     pass
 
 
-@dataclass(frozen=True)
-class ReleaseIdentity:
-    tag: str
-    commit_sha: str
-    registry: str
-    image: str
-    image_digest: str
-
-    @property
-    def image_ref(self) -> str:
-        return f"{self.registry}/{self.image}@{self.image_digest}"
-
-    def to_dict(self) -> dict[str, str]:
-        data = asdict(self)
-        data["image_ref"] = self.image_ref
-        return data
-
-
 def resolve_image_digest(
     *,
     image: str,
@@ -291,7 +273,6 @@ def _bearer_token(send: HttpTransport, challenge: str) -> str:
 __all__ = [
     "CommandRunner",
     "ReleaseError",
-    "ReleaseIdentity",
     "ResolvedRef",
     "classify_ref",
     "ls_remote_rows",

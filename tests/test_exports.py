@@ -106,14 +106,13 @@ def test_infra2_sdk_unknown_attribute_raises() -> None:
 def test_consolidated_secondary_modules() -> None:
     """Verify that secondary modules provide their consolidated capabilities."""
     from infra2_sdk.deploy import dispatch_and_wait, poll_until_healthy
-    from infra2_sdk.refs import ReleaseIdentity, resolve_image_digest
+    from infra2_sdk.refs import resolve_image_digest
     from infra2_sdk.runtime.environment import RuntimeEnvKey, runtime_env_contract
     from infra2_sdk.runtime.health import DependencyManifest, check_health
 
     # Each capability is defined in its canonical module, not in a removed shim.
     assert dispatch_and_wait.__module__ == "infra2_sdk.deploy"
     assert poll_until_healthy.__module__ == "infra2_sdk.deploy"
-    assert ReleaseIdentity.__module__ == "infra2_sdk.refs"
     assert resolve_image_digest.__module__ == "infra2_sdk.refs"
     assert RuntimeEnvKey.__module__ == "infra2_sdk.runtime.environment"
     assert RuntimeEnvKey.ENVIRONMENT == "ENVIRONMENT"

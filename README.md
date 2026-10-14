@@ -39,7 +39,7 @@ python -m pip install \
 | `infra2_sdk.deploy` | Deploy lifecycle wire contracts, dispatch client, health poller, and production evidence policies; CLI at `python -m infra2_sdk.deploy` |
 | `infra2_sdk.fastapi` | `init_service`: /livez, /readyz and /health routes for a FastAPI app, plus OTLP telemetry bootstrap |
 | `infra2_sdk.manifests` | Settings manifest driver (`--write`, `--check`, `--validate-env`) wrapping application configuration models |
-| `infra2_sdk.refs` | Git ref resolution, PR heads, registry image digests, the `ReleaseIdentity` record, remote ref queries, and credential redaction |
+| `infra2_sdk.refs` | Git ref resolution, PR heads, registry image digests, remote ref queries, and credential redaction |
 | `infra2_sdk.routing` | Canonical domain and routing SSOT: `AppRoutePreference`, hostname resolution, and service URL resolution |
 | `infra2_sdk.rules.compose` | Pure compose-file rules (memory ceilings, bare `:latest` image refs); CLI at `python -m infra2_sdk.rules` |
 | `infra2_sdk.runtime.config_schema` | JSON Schema 2020-12 and environment injection manifests |
@@ -397,6 +397,7 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   - `delivery.PREVIEW_RELEVANT_STAGES`;
   - `refs.resolve_release_identity` and `refs.verify_runtime_identity` (use
     `refs.resolve_image_ref` and `refs.resolve_image_digest`);
+  - `refs.ReleaseIdentity` (no replacement: build the record you need in your own code);
   - `routing.resolve_dokploy_domains` and `routing.DokployDomainSpec`;
   - `runtime.config_schema.settings_json_schema`;
   - `runtime.environment.env_float` and `runtime.environment.env_bool`;

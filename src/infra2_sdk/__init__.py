@@ -54,7 +54,6 @@ from infra2_sdk.manifests import (
 from infra2_sdk.refs import (
     CommandRunner,
     ReleaseError,
-    ReleaseIdentity,
     ResolvedRef,
     classify_ref,
     ls_remote_rows,
@@ -129,9 +128,8 @@ __all__ = [
     "resolve_image_ref",
     "resolve_pr",
     "resolve_to_sha",
-    # Release identity
+    # Release errors
     "ReleaseError",
-    "ReleaseIdentity",
     # Routing
     "AppRoutePreference",
     "CANARY_SLOT",

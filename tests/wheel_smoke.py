@@ -50,6 +50,7 @@ REMOVED_NAMES = (
     # Names that only the removed code used.
     ("infra2_sdk.capacity", "OnePasswordCapacityReport"),
     ("infra2_sdk.capacity", "Runner"),
+    ("infra2_sdk.refs", "ReleaseIdentity"),
     ("infra2_sdk.routing", "DokployDomainSpec"),
     ("infra2_sdk.runtime.environment", "env_bool"),
     ("infra2_sdk.runtime.environment", "env_float"),
@@ -167,7 +168,7 @@ def smoke_removed_names() -> None:
     import infra2_sdk.runtime
     from infra2_sdk.runtime.environment import RuntimeEnvKey, runtime_env_contract
 
-    assert len(REMOVED_NAMES) == 28 and len(set(REMOVED_NAMES)) == 28
+    assert len(REMOVED_NAMES) == 29 and len(set(REMOVED_NAMES)) == 29
     for module, dotted in REMOVED_NAMES:
         owner = importlib.import_module(module)
         *parents, leaf = dotted.split(".")

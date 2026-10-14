@@ -39,7 +39,6 @@
     "resolve_pr": "consumer: infra2",
     "resolve_to_sha": "consumer: infra2",
     "ReleaseError": "consumer: infra2, truealpha",
-    "ReleaseIdentity": "documented: README section Modules",
     "AppRoutePreference": "documented: README section Modules",
     "CANARY_SLOT": "consumer: infra2",
     "resolve_app_hostname": "consumer: infra2",

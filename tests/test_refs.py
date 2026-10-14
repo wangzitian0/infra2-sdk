@@ -6,7 +6,6 @@ import pytest
 
 from infra2_sdk.refs import (
     ReleaseError,
-    ReleaseIdentity,
     classify_ref,
     ls_remote_rows,
     redact_repo,
@@ -181,9 +180,8 @@ def test_redact_repo_is_public_and_strips_url_credentials(value: str, expected: 
     assert redact_repo(value) == expected
 
 
-# --- Registry digest resolution and the ReleaseIdentity record ----------------
+# --- Registry digest resolution ------------------------------------------------
 
-RELEASE_SHA = "0123456789abcdef0123456789abcdef01234567"
 RELEASE_DIGEST = "sha256:" + "f" * 64
 
 
@@ -198,19 +196,6 @@ class FakeRegistry:
         if "/token?" in url:
             return HttpResponse(self.token_status, {}, json.dumps({"token": "anon"}).encode())
         return HttpResponse(self.manifest_status, {"docker-content-digest": RELEASE_DIGEST}, b"")
-
-
-def test_release_identity_record_derives_the_image_reference() -> None:
-    identity = ReleaseIdentity("v0.0.45", RELEASE_SHA, "ghcr.io", "owner/app", RELEASE_DIGEST)
-    assert identity.image_ref == f"ghcr.io/owner/app@{RELEASE_DIGEST}"
-    assert identity.to_dict() == {
-        "tag": "v0.0.45",
-        "commit_sha": RELEASE_SHA,
-        "registry": "ghcr.io",
-        "image": "owner/app",
-        "image_digest": RELEASE_DIGEST,
-        "image_ref": f"ghcr.io/owner/app@{RELEASE_DIGEST}",
-    }
 
 
 def test_resolve_image_digest_uses_the_anonymous_pull_token() -> None:
