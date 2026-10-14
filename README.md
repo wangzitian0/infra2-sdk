@@ -388,6 +388,49 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
 - In v3.3.0, `routing.LEGACY_CANARY_PR` and its `999` and `pr-999` slot mapping were removed.
   Those slot ids now resolve as ordinary preview slots. For the canary host, pass `tier="canary"`,
   `is_canary=True`, or `slot_id=CANARY_SLOT`.
+- In v3.4.0, the SDK removed public names that no consumer uses. The basis is the same as in
+  v3.3.0: a census of infra2, finance_report and truealpha found no use of them. Replacements
+  are in brackets.
+  - `capacity.LEVELS`, `capacity.onepassword_capacity` and `capacity.OnePasswordCapacityReport`;
+  - `delivery.PREVIEW_RELEVANT_STAGES`;
+  - `refs.resolve_release_identity` and `refs.verify_runtime_identity` (use
+    `refs.resolve_image_ref` and `refs.resolve_image_digest`);
+  - `routing.resolve_dokploy_domains` and `routing.DokployDomainSpec`;
+  - `runtime.config_schema.settings_json_schema`;
+  - `runtime.environment.env_float` and `runtime.environment.env_bool`;
+  - `runtime.health.assert_required_dependencies` and `runtime.health.DependencyUnavailableError`
+    (use `check_health`);
+  - `runtime.http.retryable_request`, `runtime.http.parse_retry_after` and
+    `runtime.http.HttpCheck` (use `probe_http`);
+  - `runtime.identity.runtime_identity_fingerprint`;
+  - `runtime.otel.inject_trace_context` and `runtime.otel.extract_trace_context` (use
+    `opentelemetry.propagate.inject` and `extract`);
+  - `runtime.postgres.PostgresCheck` and `runtime.s3.S3Check` (use `probe_postgres` and
+    `probe_s3`);
+  - `secrets.EnvBackend` and `secrets.ReadOnlyBackendError`;
+  - `snapshot.verify_snapshot_artifact` (compare the artifact bytes with `artifact.sha256` and
+    `artifact.size_bytes` of the manifest).
+- In v3.4.0, `S3Settings.from_env`, `HttpClientSettings.from_env` and `PostgresSettings.from_env`
+  were removed. Build the settings with explicit values. The variables that only these methods
+  read left `RuntimeEnvKey` and `runtime_env_contract()`:
+  - HTTP: `HTTP_TIMEOUT_SECONDS`, `HTTP_CONNECT_TIMEOUT_SECONDS`, `HTTP_MAX_CONNECTIONS`,
+    `HTTP_MAX_KEEPALIVE_CONNECTIONS`, `HTTP_CONNECT_RETRIES`, `HTTP_USER_AGENT`,
+    `HTTP_FOLLOW_REDIRECTS`;
+  - S3: `OBJECT_STORAGE_PROTOCOL` (alias `OBJECT_STORAGE_DRIVER`), `S3_BUCKET`,
+    `AWS_ENDPOINT_URL_S3` (aliases `S3_ENDPOINT_URL`, `S3_ENDPOINT`), `AWS_REGION` (aliases
+    `AWS_DEFAULT_REGION`, `S3_REGION`), `AWS_ACCESS_KEY_ID` (alias `S3_ACCESS_KEY`),
+    `AWS_SECRET_ACCESS_KEY` (alias `S3_SECRET_KEY`), `AWS_SESSION_TOKEN` (alias
+    `S3_SESSION_TOKEN`), `S3_CONNECT_TIMEOUT_SECONDS`, `S3_READ_TIMEOUT_SECONDS`,
+    `S3_ADDRESSING_STYLE`;
+  - database: `DATABASE_URL`, `DATABASE_CONNECT_TIMEOUT_SECONDS`,
+    `DATABASE_STATEMENT_TIMEOUT_SECONDS`.
+- In v3.4.0, the SDK no longer reads `SERVICE_NAME`, the unused alias of `OTEL_SERVICE_NAME`.
+  `ENV`, `APP_ENV` and `IMAGE_TAG` stay.
+- In v3.4.0, names that no consumer imports and no recorded decision holds left `__all__` of
+  `infra2_sdk` and `infra2_sdk.runtime`. They stay defined in their modules. Import them from the
+  module, for example `from infra2_sdk.deploy import DeployState`. `tests/surface.json` records
+  the reason for each remaining export: a consumer imports it, the README documents it, or a
+  recorded decision holds it.
 - `to_environment_tier` and `to_deploy_type` provide canonical bridging mappings across `EnvironmentTier` and `DeployType`.
 - `CommandRunner` protocol is exported from `infra2_sdk.refs` for subprocess runner injection.
 
