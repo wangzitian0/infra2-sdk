@@ -82,12 +82,16 @@ class _DatabaseCheck:
 
 
 def _in_deployed_tier() -> bool:
-    """Return True for preview, staging and production.
+    """Return True when the tier variables name preview, staging or production.
 
-    Non-strict mode calls this after a failed ``OtelSettings.from_env``, because the failure
-    hides the tier. Strict mode never calls it. An unknown or conflicting environment counts as
-    deployed, so the caller logs more, not less. A missing environment counts as ``local_dev``,
-    so this function returns False for it.
+    Non-strict mode calls this function after a failed ``OtelSettings.from_env``. The failed
+    call gives no settings, so ``deployment.environment.name`` does not count. Only the tier
+    variables count. A problem in the settings can therefore lower the level of the
+    missing-endpoint line to DEBUG, also when the attribute names a deployed tier.
+
+    An unknown or conflicting tier also returns True, so the caller logs more, not less.
+    A missing tier counts as ``local_dev``, so the function returns False for it.
+    Strict mode never calls this function.
     """
     try:
         tier = environment_from_env(unknown=UnknownEnvironmentPolicy.PRODUCTION).tier
@@ -227,6 +231,10 @@ def init_service(
     name, for ``check_timeout_seconds`` or for a failed strict check leaves the app unchanged,
     so a retry meets the real error and not ``RuntimeError``.
 
+    One strict failure is different: a failure while the providers start, for example when the
+    exporter package is not installed. It happens after the probe routes exist. A retry on the
+    same app raises ``RuntimeError: init_service was already called for this app``.
+
     Parameters:
         app: The FastAPI application.
         name: Logical service name. It must not be blank: a blank name raises ``ValueError``
@@ -239,26 +247,29 @@ def init_service(
             its thread.
         enable_otel: Start OpenTelemetry when ``OTEL_EXPORTER_OTLP_ENDPOINT`` is set. A
             deployed tier (preview, staging, production) without the endpoint logs a warning,
-            unless ``OTEL_SDK_DISABLED=true``. With ``enable_otel=False`` nothing is checked.
+            unless ``OTEL_SDK_DISABLED=true``. ``enable_otel=False`` skips every telemetry
+            check. The blank-name check always runs.
         strict_otel: Fail closed. The default is True. A strict start raises ``ValueError``,
             before the app changes, when:
 
-            - the tier is missing, unknown or in conflict (``ENVIRONMENT``, ``ENV`` and
-              ``APP_ENV`` hold different values);
+            - the tier is missing or unknown;
             - ``OTEL_RESOURCE_ATTRIBUTES`` is malformed, or its ``deployment.environment.name``
               disagrees with the tier;
             - ``OTEL_SDK_DISABLED``, ``OTEL_TRACES_SAMPLER``, ``OTEL_TRACES_SAMPLER_ARG`` or
               ``OTEL_METRIC_EXPORT_INTERVAL`` is invalid (the sampler argument counts only for
               a ratio sampler);
-            - two aliases of one variable hold different values (for example
-              ``SERVICE_VERSION`` and ``IMAGE_TAG``).
+            - two aliases of one variable hold different values. ``init_service`` reads three
+              groups of aliases: the tier variables (``ENVIRONMENT``, ``ENV``, ``APP_ENV``),
+              ``OTEL_SERVICE_NAME`` with ``SERVICE_NAME``, and ``SERVICE_VERSION`` with
+              ``IMAGE_TAG``. It reads no other alias pair of the contract.
 
-            An ``OTEL_EXPORTER_OTLP_ENDPOINT`` that is not an http(s) URL also stops the start,
-            unless ``OTEL_SDK_DISABLED=true``. The checks run with or without an endpoint.
-            ``OTEL_SDK_DISABLED=true`` does not skip the four checks above. Only
-            ``enable_otel=False`` skips every check. The SDK does not read
-            ``OTEL_EXPORTER_OTLP_TIMEOUT``, ``OTEL_EXPORTER_OTLP_HEADERS``, ``OTEL_BSP_*`` or
-            ``OTEL_EXPORTER_OTLP_PROTOCOL``, so it never checks them.
+            An ``OTEL_EXPORTER_OTLP_ENDPOINT`` that is not a valid http(s) URL also stops the
+            start, unless ``OTEL_SDK_DISABLED=true``. The checks run with or without an
+            endpoint. ``OTEL_SDK_DISABLED=true`` does not skip the four checks above.
+            ``enable_otel=False`` skips every telemetry check; the blank-name check always
+            runs. The SDK does not read ``OTEL_EXPORTER_OTLP_TIMEOUT``,
+            ``OTEL_EXPORTER_OTLP_HEADERS``, ``OTEL_BSP_*`` or ``OTEL_EXPORTER_OTLP_PROTOCOL``,
+            so it never checks them.
 
             Pass ``strict_otel=False`` for a laptop and for services that must never stop on
             telemetry, such as a pager bridge. A missing tier then counts as ``local_dev``.
@@ -266,8 +277,12 @@ def init_service(
             invalid sampler variable give a Python ``RuntimeWarning``, also when no endpoint is
             set. Every other problem is a log record of the logger ``infra2_sdk.fastapi``. With
             an endpoint, it is ``Could not initialize OpenTelemetry: ...`` at WARNING. Without
-            an endpoint, the only record is the missing-endpoint line: WARNING in a deployed
-            tier (an unknown or conflicting tier counts as deployed), DEBUG elsewhere. With
+            an endpoint, the only record is the missing-endpoint line. Its level is WARNING in
+            a deployed tier and DEBUG elsewhere. An unknown or conflicting tier counts as
+            deployed. The tier comes from the tier variables. When no tier variable is set and
+            ``OtelSettings.from_env`` succeeds, it comes from ``deployment.environment.name``.
+            After a failed ``OtelSettings.from_env``, only the tier variables count, so a
+            problem in the settings can lower the level to DEBUG. With
             ``OTEL_SDK_DISABLED=true`` and no other problem, the record is "OpenTelemetry is
             disabled by the environment" at DEBUG.
         log_level: Level for the ``logging.basicConfig`` call that runs before OpenTelemetry

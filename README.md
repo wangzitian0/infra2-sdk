@@ -253,17 +253,19 @@ This single call registers three standardized endpoints and starts telemetry
 
 `strict_otel` defaults to `True`, so `init_service` fails closed. A deployed service needs `ENVIRONMENT` (or `ENV`, `APP_ENV`). A laptop sets `ENVIRONMENT=local_dev` or passes `strict_otel=False`. In strict mode `init_service` raises `ValueError`, before it changes the app, when:
 
-- the tier is missing, unknown or in conflict (`ENVIRONMENT`, `ENV` and `APP_ENV` hold different values);
+- the tier is missing or unknown;
 - `OTEL_RESOURCE_ATTRIBUTES` is malformed, or its `deployment.environment.name` disagrees with the tier;
 - `OTEL_SDK_DISABLED`, `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` or `OTEL_METRIC_EXPORT_INTERVAL` is invalid (the sampler argument counts only for a ratio sampler);
-- two aliases of one variable hold different values (for example `SERVICE_VERSION` and `IMAGE_TAG`).
+- two aliases of one variable hold different values. `init_service` reads three groups of aliases: the tier variables (`ENVIRONMENT`, `ENV`, `APP_ENV`), `OTEL_SERVICE_NAME` with `SERVICE_NAME`, and `SERVICE_VERSION` with `IMAGE_TAG`. It reads no other alias pair of the contract.
 
-An `OTEL_EXPORTER_OTLP_ENDPOINT` that is not an http(s) URL also stops the start, unless `OTEL_SDK_DISABLED=true`. These checks run with or without an endpoint. `OTEL_SDK_DISABLED=true` does not skip the four checks above. Only `enable_otel=False` skips every check. The SDK does not read `OTEL_EXPORTER_OTLP_TIMEOUT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_BSP_*` or `OTEL_EXPORTER_OTLP_PROTOCOL`, so it never checks them.
+An `OTEL_EXPORTER_OTLP_ENDPOINT` that is not a valid http(s) URL also stops the start, unless `OTEL_SDK_DISABLED=true`. These checks run with or without an endpoint. `OTEL_SDK_DISABLED=true` does not skip the four checks above. `enable_otel=False` skips every telemetry check; the blank-name check always runs. The SDK does not read `OTEL_EXPORTER_OTLP_TIMEOUT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_BSP_*` or `OTEL_EXPORTER_OTLP_PROTOCOL`, so it never checks them.
+
+One strict failure is different: a failure while the providers start, for example when the exporter package is not installed. It happens after the probe routes exist. A retry on the same app raises `RuntimeError: init_service was already called for this app`.
 
 With `strict_otel=False`, a telemetry problem never stops the service. A missing tier counts as `local_dev`. A problem is reported in one of two ways:
 
 - A Python `RuntimeWarning` reports a malformed `OTEL_RESOURCE_ATTRIBUTES` (the SDK discards the attributes), an invalid `OTEL_SDK_DISABLED` (it counts as false) and an invalid `OTEL_TRACES_SAMPLER` or `OTEL_TRACES_SAMPLER_ARG` (the default sampler applies). The warning also appears when no endpoint is set.
-- A log record of the logger `infra2_sdk.fastapi` reports every other problem. With an endpoint, the record is `Could not initialize OpenTelemetry: ...` at WARNING, and telemetry stays off. Without an endpoint, the only record is `OTEL_EXPORTER_OTLP_ENDPOINT is not set; OpenTelemetry export is off`. Its level is WARNING in a deployed tier (an unknown or conflicting tier counts as deployed) and DEBUG elsewhere. With `OTEL_SDK_DISABLED=true` and no other problem, the record is `OpenTelemetry is disabled by the environment` at DEBUG, with or without an endpoint. An explicit off switch is not a misconfiguration.
+- A log record of the logger `infra2_sdk.fastapi` reports every other problem. With an endpoint, the record is `Could not initialize OpenTelemetry: ...` at WARNING, and telemetry stays off. Without an endpoint, the only record is `OTEL_EXPORTER_OTLP_ENDPOINT is not set; OpenTelemetry export is off`. Its level is WARNING in a deployed tier and DEBUG elsewhere. An unknown or conflicting tier counts as deployed. The tier comes from the tier variables. When no tier variable is set and `OtelSettings.from_env` succeeds, it comes from `deployment.environment.name`. After a failed `OtelSettings.from_env`, only the tier variables count, so a problem in the settings can lower the level to DEBUG. With `OTEL_SDK_DISABLED=true` and no other problem, the record is `OpenTelemetry is disabled by the environment` at DEBUG, with or without an endpoint. An explicit off switch is not a misconfiguration.
 
 Before OpenTelemetry attaches its logging handler, `init_service` calls `logging.basicConfig(level=log_level)` (default `INFO`). The call changes nothing when the root logger already has a handler. Pass `log_level=None` to skip it. The SDK serves no `/metrics` endpoint.
 
