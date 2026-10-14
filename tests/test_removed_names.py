@@ -238,12 +238,48 @@ def test_the_removed_name_check_rejects_a_shim_and_honors_the_allow_list() -> No
     assert _bound_removed_names(shim, removed, other_module) == ["HttpCheck", "PostgresCheck"]
 
 
+def _stale_allowed_reuse(
+    allowed: dict[tuple[str, str], str], modules: dict[str, ModuleType]
+) -> list[str]:
+    """Problems of the entries of the allow-list. An entry that no module needs is stale."""
+    problems = []
+    for (module_name, name), reason in allowed.items():
+        if name not in _REMOVED_SIMPLE_NAMES:
+            problems.append(f"{name} is not a removed name")
+        module = modules.get(module_name)
+        if module is None or name not in vars(module):
+            problems.append(f"{module_name}.{name} is gone: remove the entry")
+        if not reason.strip():
+            problems.append(f"{module_name}.{name}: the entry has no reason")
+    return problems
+
+
 def test_every_allowed_reuse_is_still_needed() -> None:
-    assert ALLOWED_REUSE, "the allow-list is empty: this test would check nothing"
-    for (module_name, name), reason in ALLOWED_REUSE.items():
-        assert name in _REMOVED_SIMPLE_NAMES, f"{name} is not a removed name"
-        assert name in vars(importlib.import_module(module_name)), f"{module_name}.{name} is gone"
-        assert reason.strip()
+    # An empty allow-list is the state to aim for. Then the check has no entry to read.
+    modules = {module.__name__: module for module in _package_modules()}
+    assert _stale_allowed_reuse(ALLOWED_REUSE, modules) == []
+
+
+def test_the_stale_reuse_check_reports_each_kind_of_problem() -> None:
+    shim = ModuleType("infra2_sdk.shim")
+    shim.PostgresCheck = object  # type: ignore[attr-defined]
+    modules = {"infra2_sdk.shim": shim}
+    allowed = {
+        ("infra2_sdk.shim", "PostgresCheck"): "reason",
+        ("infra2_sdk.shim", "HttpCheck"): "the name is gone",
+        ("infra2_sdk.gone", "PostgresCheck"): "the module is gone",
+        ("infra2_sdk.shim", "kept"): "not a removed name",
+        ("infra2_sdk.shim", "LEVELS"): " ",
+    }
+    assert _stale_allowed_reuse(allowed, modules) == [
+        "infra2_sdk.shim.HttpCheck is gone: remove the entry",
+        "infra2_sdk.gone.PostgresCheck is gone: remove the entry",
+        "kept is not a removed name",
+        "infra2_sdk.shim.kept is gone: remove the entry",
+        "infra2_sdk.shim.LEVELS is gone: remove the entry",
+        "infra2_sdk.shim.LEVELS: the entry has no reason",
+    ]
+    assert _stale_allowed_reuse({}, modules) == []
 
 
 def test_the_removed_simple_names_are_the_undotted_entries() -> None:
