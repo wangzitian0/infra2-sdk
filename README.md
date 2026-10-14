@@ -505,9 +505,11 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   `resolve_runtime_env(env, "DATABASE_URL")`, `runtime_env_spec("S3_BUCKET")` and
   `RuntimeEnvKey("AWS_REGION")`. Before 3.4.0, each of them returned a value.
 - In v3.4.0, 31 names left `__all__` of `infra2_sdk` and `infra2_sdk.runtime` and are no longer
-  attributes of these packages. No consumer imports them and no recorded decision holds them.
-  They stay defined in their modules. Import them from the module, for example
-  `from infra2_sdk.deploy import DeployState`:
+  attributes of these packages. No consumer imports them from the package, and no recorded
+  decision holds them. Four of them (`DeployState`, `DisagreementKind`, `PipelineStage` and
+  `validate_gate`) are imported from their module in the test code of infra2. That import
+  works as before. All 31 stay defined in their modules. Import them from the module, for
+  example `from infra2_sdk.deploy import DeployState`:
   - in `infra2_sdk`:
     - `capacity`: `CapacityLimit`;
     - `ci`: `validate_gate`;
