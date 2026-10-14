@@ -5,53 +5,17 @@ import pytest
 from infra2_sdk.routing import (
     CANARY_SLOT,
     DEFAULT_BASE_DOMAIN,
-    AppRoutePreference,
-    RouteEndpoint,
     resolve_app_hostname,
     resolve_service_url,
 )
 from infra2_sdk.runtime.environment import EnvironmentTier
 
 
-def test_route_endpoint_validation():
-    endpoint = RouteEndpoint(port=3000, path="/", service_name="web")
-    assert endpoint.port == 3000
-    assert endpoint.path == "/"
-    assert endpoint.service_name == "web"
-
-    with pytest.raises(ValueError, match="port must be between"):
-        RouteEndpoint(port=70000)
-
-    with pytest.raises(ValueError, match="path must start with"):
-        RouteEndpoint(port=80, path="api")
-
-
-def test_app_route_preference_validation():
-    pref = AppRoutePreference(
-        slug="report",
-        endpoints=(
-            RouteEndpoint(port=3000, path="/", service_name="frontend"),
-            RouteEndpoint(port=8000, path="/api", service_name="backend"),
-        ),
-    )
-    assert pref.slug == "report"
-    assert len(pref.endpoints) == 2
-
-    # custom prod domain
-    pref_custom = AppRoutePreference(
-        slug="truealpha",
-        endpoints=(RouteEndpoint(port=3000),),
-        custom_prod_domain="truealpha.club",
-    )
-    assert pref_custom.custom_prod_domain == "truealpha.club"
-
-    # invalid slug
+def test_resolve_app_hostname_rejects_invalid_slug() -> None:
     with pytest.raises(ValueError, match="invalid slug"):
-        AppRoutePreference(slug="Report_Invalid")
-
-    # invalid custom domain
-    with pytest.raises(ValueError, match="invalid custom_prod_domain"):
-        AppRoutePreference(slug="ok", custom_prod_domain="bad domain")
+        resolve_app_hostname("bad slug!", EnvironmentTier.STAGING)
+    with pytest.raises(ValueError, match="invalid slug"):
+        resolve_app_hostname("", EnvironmentTier.STAGING)
 
 
 def test_resolve_app_hostname_standards():

@@ -392,7 +392,7 @@ class HealthStatus(StrEnum):
     UNHEALTHY = "unhealthy"
 
 
-def health_response(
+def _health_response(
     results: Iterable[ProbeResult],
     *,
     required: Iterable[str],
@@ -471,7 +471,7 @@ async def check_health(
     else:
         required_names = frozenset(check.name for check in values)
     results = await run_probes(values, timeout_seconds=timeout_seconds)
-    return health_response(results, required=required_names)
+    return _health_response(results, required=required_names)
 
 
 __all__ = [
@@ -487,6 +487,5 @@ __all__ = [
     "HealthStatus",
     "ProbeResult",
     "check_health",
-    "health_response",
     "run_probes",
 ]

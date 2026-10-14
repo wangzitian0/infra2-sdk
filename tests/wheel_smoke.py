@@ -512,7 +512,7 @@ def smoke_all() -> None:
     import opentelemetry.sdk.trace  # noqa: F401
     import psycopg  # noqa: F401
 
-    from infra2_sdk.runtime import RuntimeIdentity
+    from infra2_sdk.runtime.identity import RuntimeIdentity
 
     assert RuntimeIdentity.from_env({"OTEL_SERVICE_NAME": "all-smoke"}).service_name == "all-smoke"
 

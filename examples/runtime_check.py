@@ -13,11 +13,11 @@ from infra2_sdk.runtime import (
     DependencyManifest,
     EnvironmentTier,
     ProbeResult,
-    RuntimeIdentity,
     check_health,
     environment_from_env,
 )
 from infra2_sdk.runtime.http import probe_http
+from infra2_sdk.runtime.identity import RuntimeIdentity
 
 # This is application policy: name the dependency and the tiers that require it.
 # Keep this declaration in your app; the SDK owns validation and probe execution.

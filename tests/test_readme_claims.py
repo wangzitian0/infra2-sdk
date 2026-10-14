@@ -154,7 +154,7 @@ def test_a_string_lookup_of_a_current_variable_still_works(lookup: str) -> None:
 # --- The names that left the packages ----------------------------------------------------------
 
 # Independent oracle: base (3.3.0) __all__ minus the current __all__, for the names that stay
-# defined in their module. Names deleted outright are in REMOVED_NAMES.
+# defined in their module. Names deleted outright are in REMOVED_NAMES or REMOVED_IN_3_5_1.
 LEFT_THE_PACKAGES = {
     "infra2_sdk": {
         "capacity": ["CapacityLimit"],
@@ -166,17 +166,14 @@ LEFT_THE_PACKAGES = {
             "DeployState",
             "HealthCheckResult",
             "ProductionEvidencePolicy",
-            "build_deploy_request",
-            "derive_release_evidence",
             "fetch_production_evidence_policy",
         ],
-        "routing": ["DEFAULT_BASE_DOMAIN", "RouteEndpoint"],
+        "routing": ["DEFAULT_BASE_DOMAIN"],
         "secrets": ["SecretsBackend", "TokenStatus"],
     },
     "infra2_sdk.runtime": {
         "config_schema": ["EnvironmentValidation", "validate_environment"],
         "environment": [
-            "APP_OWNED_TIERS",
             "EnvironmentConflictError",
             "PLATFORM_OWNED_TIERS",
             "ResolvedEnvValue",
@@ -186,7 +183,8 @@ LEFT_THE_PACKAGES = {
             "resolve_env",
             "strict_environment_from_env",
         ],
-        "health": ["HealthStatus", "health_response"],
+        "health": ["HealthStatus"],
+        "identity": ["RuntimeIdentity"],
     },
 }
 _LEFT = [
@@ -195,6 +193,20 @@ _LEFT = [
     for module, names in modules.items()
     for name in names
 ]
+
+REMOVED_IN_3_5_1 = (
+    ("infra2_sdk.deploy", "build_deploy_request"),
+    ("infra2_sdk.deploy", "derive_release_evidence"),
+    ("infra2_sdk.deploy", "main"),
+    ("infra2_sdk.deploy", "dispatch_main"),
+    ("infra2_sdk.deploy", "deploy_health_main"),
+    ("infra2_sdk.routing", "RouteEndpoint"),
+    ("infra2_sdk.routing", "AppRoutePreference"),
+    ("infra2_sdk.runtime.environment", "to_deploy_type"),
+    ("infra2_sdk.runtime.environment", "APP_OWNED_TIERS"),
+    ("infra2_sdk.runtime.health", "health_response"),
+    ("infra2_sdk.runtime.otel", "OtelSettings.from_identity"),
+)
 
 
 def _readme_left_the_packages() -> tuple[int, dict[str, dict[str, list[str]]]]:
@@ -219,7 +231,7 @@ def test_the_readme_lists_the_names_that_left_the_packages_by_module() -> None:
     count, grouped = _readme_left_the_packages()
 
     assert grouped == LEFT_THE_PACKAGES
-    assert count == len(_LEFT) == 31
+    assert count == len(_LEFT) == 27
 
 
 @pytest.mark.parametrize(
@@ -234,6 +246,99 @@ def test_a_name_that_left_stays_in_its_module_and_is_not_in_the_package(
     assert name in vars(owner), f"{package}.{module}.{name} is gone"
     assert not hasattr(root, name), f"{package}.{name} is still an attribute"
     assert name not in root.__all__, f"{package}.__all__ still lists {name}"
+
+
+@pytest.mark.parametrize(
+    ("module", "dotted"), REMOVED_IN_3_5_1, ids=[f"{m}.{n}" for m, n in REMOVED_IN_3_5_1]
+)
+def test_symbols_removed_in_3_5_1_are_absent_from_modules_and_packages(
+    module: str, dotted: str
+) -> None:
+    import infra2_sdk
+
+    owner = importlib.import_module(module)
+    *parents, leaf = dotted.split(".")
+    for part in parents:
+        owner = getattr(owner, part)
+    assert not hasattr(owner, leaf), f"{module}.{dotted} was removed in 3.5.1"
+    if not parents:
+        for package in (infra2_sdk, infra2_sdk.runtime):
+            assert not hasattr(package, leaf), f"{package.__name__}.{leaf} was removed in 3.5.1"
+            assert leaf not in package.__all__, f"{package.__name__}.__all__ still lists {leaf}"
+
+
+def test_cli_scaffold_module_removed_in_3_5_1_is_unimportable() -> None:
+    import infra2_sdk
+
+    importlib.invalidate_caches()
+    for mod_name in ("infra2_sdk.cli", "infra2_sdk.cli.scaffold"):
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(mod_name)
+    assert not hasattr(infra2_sdk, "cli")
+    assert "cli" not in infra2_sdk.__all__
+
+
+# --- The require_issued_identity documentation claim -------------------------------------------
+
+
+def test_readme_documents_require_issued_identity_and_behavior_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi import FastAPI
+
+    from infra2_sdk.fastapi import init_service
+    from infra2_sdk.runtime.otel import REQUIRED_IDENTITY_ATTRIBUTES
+
+    parts = re.split(r"^#{2,3} (.+)$", README, flags=re.MULTILINE)
+    sections = dict(zip(parts[1::2], parts[2::2], strict=True))
+    for section_title in ("Runtime extras", "Turnkey FastAPI integration"):
+        section_flat = " ".join(sections[section_title].split())
+        assert "`require_issued_identity=True`" in section_flat
+        assert "`OTEL_SERVICE_NAME`" in section_flat
+        assert "`REQUIRED_IDENTITY_ATTRIBUTES`" in section_flat
+        for attr in REQUIRED_IDENTITY_ATTRIBUTES:
+            assert f"`{attr}`" in section_flat, (
+                f"README section {section_title!r} does not name {attr}"
+            )
+
+    # 1. With an active OTLP endpoint, missing issued identity attributes fail closed.
+    with pytest.raises(
+        ValueError,
+        match="telemetry requires ServiceIdentity attributes when an OTLP endpoint is set",
+    ):
+        OtelSettings.from_env(
+            {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318"},
+            require_issued_identity=True,
+        )
+
+    # 2. Ignores ENVIRONMENT/ENV/APP_ENV and derives the tier from deployment.environment.name.
+    issued_env = {
+        "ENVIRONMENT": "not-a-valid-tier",
+        "ENV": "conflicting-tier",
+        "OTEL_SERVICE_NAME": "billing-api",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318",
+        "OTEL_RESOURCE_ATTRIBUTES": (
+            "deployment.environment.name=staging,"
+            "infra.service.id=apps/billing-api,"
+            "service.version=v1.2.3,"
+            "infra.iac.ref=deadbeef"
+        ),
+    }
+    settings = OtelSettings.from_env(issued_env, strict=True, require_issued_identity=True)
+    assert settings.environment == "staging"
+    assert settings.deployment_environment == "staging"
+    assert settings.service_name == "billing-api"
+
+    # 3. init_service(require_issued_identity=True) enforces the same contract before mutating app.
+    for key in tuple(issued_env) + ("APP_ENV", "OTEL_SDK_DISABLED"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
+    app = FastAPI()
+    with pytest.raises(
+        ValueError,
+        match="telemetry requires ServiceIdentity attributes when an OTLP endpoint is set",
+    ):
+        init_service(app, name="billing-api", require_issued_identity=True)
 
 
 # --- The counts that the README states ---------------------------------------------------------
@@ -256,3 +361,4 @@ def test_the_readme_counts_the_fixed_names_and_the_variables_of_the_contract() -
     groups = [item for item in runtime_env_contract()["variables"] if item["aliases"]]
     assert len(groups) == 2
     assert "`init_service` reads two groups of aliases" in flat
+

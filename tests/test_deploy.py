@@ -1,7 +1,6 @@
 import base64
 import io
 import json
-import sys
 import zipfile
 from dataclasses import replace
 from urllib.error import HTTPError, URLError
@@ -18,7 +17,6 @@ from infra2_sdk.deploy import (
     DeployType,
     HealthCheckResult,
     ProductionEvidencePolicy,
-    ReceiverRun,
     RunEvidenceExpectation,
     _run_id,
     _verify_reviewed_pull,
@@ -26,16 +24,10 @@ from infra2_sdk.deploy import (
     _workflow_runs,
     default_github_json_fetcher,
     default_http_get,
-    deploy_health_main,
-    derive_release_evidence,
     dispatch_and_wait,
-    dispatch_main,
     github_api_client,
     poll_until_healthy,
     validate_wire_shape,
-)
-from infra2_sdk.deploy import (
-    main as deploy_main,
 )
 
 SHA = "a" * 40
@@ -297,30 +289,6 @@ def test_expectation_rejects_a_non_boolean_require_head_sha() -> None:
         RunEvidenceExpectation.from_dict(raw)
 
 
-def test_build_deploy_request_constructs_valid_request() -> None:
-    from infra2_sdk.deploy import DeployOperation, DeployType, build_deploy_request
-
-    req = build_deploy_request(
-        service="finance_report/app",
-        deploy_type=DeployType.STAGING,
-        version_ref="v1.2.3",
-        source_repository="wangzitian0/finance_report",
-        source_sha="a" * 40,
-        source_run_url="https://github.com/wangzitian0/finance_report/actions/runs/1",
-    )
-    assert req.service == "finance_report/app"
-    assert req.deploy_type == DeployType.STAGING
-    assert req.operation == DeployOperation.DEPLOY
-    assert req.version_ref == "v1.2.3"
-    assert req.source_repository == "wangzitian0/finance_report"
-    assert req.source_sha == "a" * 40
-    assert (
-        req.evidence.source_run_url
-        == "https://github.com/wangzitian0/finance_report/actions/runs/1"
-    )
-    assert req.request_id.startswith("req-")
-
-
 def sample_policy() -> ProductionEvidencePolicy:
     return ProductionEvidencePolicy(
         service="finance_report/app",
@@ -524,103 +492,7 @@ def test_verify_production_evidence_rejected_when_changes_requested() -> None:
         verify_production_evidence(req, policy=sample_policy(), fetch_json=responses.__getitem__)
 
 
-def test_derive_release_evidence_staging_and_prod() -> None:
-    from infra2_sdk.deploy import derive_release_evidence
-
-    responses = {
-        "/repos/wangzitian0/finance_report/actions/runs?event=push&branch=v1.2.3": {
-            "workflow_runs": [
-                {
-                    "id": 100,
-                    "html_url": "https://github.com/wangzitian0/finance_report/actions/runs/100",
-                    "head_sha": SHA,
-                    "conclusion": "success",
-                    "path": ".github/workflows/deploy.yml",
-                    "display_title": "Release Images v1.2.3",
-                }
-            ]
-        },
-        "/repos/wangzitian0/finance_report/actions/runs?event=workflow_dispatch": {
-            "workflow_runs": [
-                {
-                    "id": 101,
-                    "conclusion": "success",
-                    "path": ".github/workflows/deploy.yml",
-                    "display_title": "Deploy Staging v1.2.3",
-                }
-            ]
-        },
-        f"/repos/wangzitian0/finance_report/commits/{SHA}/pulls": [
-            {
-                "number": 10,
-                "merged_at": "2026-10-05T00:00:00Z",
-                "merge_commit_sha": SHA,
-                "base": {"ref": "main"},
-            }
-        ],
-    }
-
-    ev_staging = derive_release_evidence(
-        repository="wangzitian0/finance_report",
-        version_ref="v1.2.3",
-        deploy_type=DeployType.STAGING,
-        tag_sha=SHA,
-        policy=sample_policy(),
-        fetch_json=responses.__getitem__,
-    )
-    assert ev_staging.source_run_id == "100"
-    assert (
-        ev_staging.source_run_url
-        == "https://github.com/wangzitian0/finance_report/actions/runs/100"
-    )
-    assert ev_staging.staging_run_url == ""
-    assert ev_staging.reviewed_change_url == ""
-
-    ev_prod = derive_release_evidence(
-        repository="wangzitian0/finance_report",
-        version_ref="v1.2.3",
-        deploy_type=DeployType.PRODUCTION,
-        tag_sha=SHA,
-        policy=sample_policy(),
-        fetch_json=responses.__getitem__,
-    )
-    assert ev_prod.source_run_id == "100"
-    assert (
-        ev_prod.staging_run_url == "https://github.com/wangzitian0/finance_report/actions/runs/101"
-    )
-    assert ev_prod.reviewed_change_url == "https://github.com/wangzitian0/finance_report/pull/10"
-
-
-def test_deploy_cli_build_request(tmp_path) -> None:
-    from infra2_sdk.deploy import main as deploy_main
-
-    out_file = tmp_path / "request.json"
-    rc = deploy_main(
-        [
-            "build-request",
-            "--service",
-            "finance_report/app",
-            "--source-repo",
-            "wangzitian0/finance_report",
-            "--source-sha",
-            SHA,
-            "--version-ref",
-            "v1.2.3",
-            "--source-run-url",
-            "https://github.com/wangzitian0/finance_report/actions/runs/100",
-            "--source-run-id",
-            "100",
-            "--output",
-            str(out_file),
-        ]
-    )
-    assert rc == 0
-    loaded = json.loads(out_file.read_text(encoding="utf-8"))
-    assert loaded["service"] == "finance_report/app"
-    assert loaded["evidence"]["source_run_id"] == "100"
-
-
-# --- poll_until_healthy & deploy_health_main tests ---
+# --- poll_until_healthy tests ---
 
 
 def _health_responses(*pairs: tuple[int, str]):
@@ -791,39 +663,7 @@ def test_version_mismatch_streak_resets_when_the_reported_version_changes() -> N
     assert result.attempts == 3
 
 
-def test_deploy_health_main_cli_success(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(
-        "infra2_sdk.deploy.default_http_get",
-        lambda timeout: lambda url: (200, json.dumps({"status": "ok", "version": "v1.0.0"})),
-    )
-    rc = deploy_health_main(
-        [
-            "https://example.test/health",
-            "--expected-version",
-            "v1.0.0",
-            "--require-status",
-            "ok",
-        ]
-    )
-    assert rc == 0
-    captured = capsys.readouterr()
-    assert "[OK] Health check passed" in captured.out
-
-
-def test_deploy_health_main_cli_failure(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(
-        "infra2_sdk.deploy.default_http_get",
-        lambda timeout: lambda url: (500, "error"),
-    )
-    rc = deploy_health_main(
-        ["https://example.test/health", "--max-attempts", "2", "--interval", "0.01"]
-    )
-    assert rc == 1
-    captured = capsys.readouterr()
-    assert "[FAIL] Health check failed" in captured.err
-
-
-# --- dispatch_and_wait & dispatch_main tests ---
+# --- dispatch_and_wait tests ---
 
 DISPATCH_TITLE = "Deploy finance_report/app staging v2.3.4 abc123 [finance-report-run-12345678]"
 
@@ -1145,8 +985,8 @@ def test_github_api_client_close_releases_underlying_client() -> None:
     assert api.client.is_closed
 
 
-def test_derive_release_evidence_raises_on_malformed_policy_file() -> None:
-    from infra2_sdk.deploy import derive_release_evidence
+def test_fetch_production_evidence_policy_raises_on_malformed_policy_file() -> None:
+    from infra2_sdk.deploy import fetch_production_evidence_policy
 
     def fetch_json(url: str):
         if "contents" in url:
@@ -1154,48 +994,7 @@ def test_derive_release_evidence_raises_on_malformed_policy_file() -> None:
         return {}
 
     with pytest.raises(ValueError, match="not valid JSON"):
-        derive_release_evidence(
-            "wangzitian0/finance_report",
-            "v1.0.0",
-            DeployType.PRODUCTION,
-            tag_sha="a" * 40,
-            fetch_json=fetch_json,
-        )
-
-
-def test_dispatch_main_cli_requires_token(monkeypatch) -> None:
-    monkeypatch.delenv("INFRA2_PAT", raising=False)
-    rc = dispatch_main(["--request", "{}"])
-    assert rc == 1
-
-
-def test_dispatch_main_cli_success(monkeypatch, tmp_path, capsys) -> None:
-    monkeypatch.setenv("INFRA2_PAT", "fake-token")
-    req = _dispatch_request()
-    req_file = tmp_path / "req.json"
-    req_file.write_text(json.dumps(req.to_dict()), encoding="utf-8")
-
-    fake_run = ReceiverRun(
-        run_id=999,
-        url="https://github.com/wangzitian0/infra2/actions/runs/999",
-    )
-    monkeypatch.setattr(
-        "infra2_sdk.deploy.github_api_client",
-        lambda **kwargs: (lambda m, p, b: None, lambda r: b""),
-    )
-    monkeypatch.setattr(
-        "infra2_sdk.deploy.dispatch_and_wait",
-        lambda *args, **kwargs: fake_run,
-    )
-
-    rc = dispatch_main(["--request", str(req_file)])
-    assert rc == 0
-    captured = capsys.readouterr()
-    assert '"receiver_run_id": 999' in captured.out
-    assert (
-        '"receiver_run_url": "https://github.com/wangzitian0/infra2/actions/runs/999"'
-        in captured.out
-    )
+        fetch_production_evidence_policy(prod_request(), fetch_json=fetch_json)
 
 
 # --- Coverage hardening tests for issue #76 ---
@@ -1311,157 +1110,6 @@ def test_default_http_get_network_error(monkeypatch) -> None:
     status, body = default_http_get(timeout=1.0)("http://localhost:1234/health")
     assert status == 0
     assert "connection refused" in body
-
-
-def test_deploy_main_cli_build_request(tmp_path, capsys) -> None:
-    # stdout output
-    rc = deploy_main(
-        [
-            "build-request",
-            "--service",
-            "finance_report/app",
-            "--deploy-type",
-            "staging",
-            "--version-ref",
-            "v1.2.3",
-            "--source-repo",
-            "wangzitian0/finance_report",
-            "--source-sha",
-            SHA,
-            "--source-run-url",
-            "https://github.com/wangzitian0/finance_report/actions/runs/1",
-        ]
-    )
-    assert rc == 0
-    captured = capsys.readouterr()
-    assert "finance_report/app" in captured.out
-
-    # file output
-    out_file = tmp_path / "req.json"
-    rc = deploy_main(
-        [
-            "build-request",
-            "--service",
-            "finance_report/app",
-            "--deploy-type",
-            "staging",
-            "--version-ref",
-            "v1.2.3",
-            "--source-repo",
-            "wangzitian0/finance_report",
-            "--source-sha",
-            SHA,
-            "--source-run-url",
-            "https://github.com/wangzitian0/finance_report/actions/runs/1",
-            "--output",
-            str(out_file),
-        ]
-    )
-    assert rc == 0
-    assert out_file.exists()
-    assert "finance_report/app" in out_file.read_text(encoding="utf-8")
-
-
-def test_deploy_main_cli_derive_and_verify_evidence(tmp_path, monkeypatch, capsys) -> None:
-    out_file = tmp_path / "evidence.json"
-    evidence_req = request(
-        deploy_type=DeployType.STAGING,
-        evidence=DeployEvidence(
-            source_run_url="https://github.com/wangzitian0/finance_report/actions/runs/1",
-            source_run_id="1",
-        ),
-    )
-
-    # Mock fetch_json in derive_release_evidence
-    monkeypatch.setattr(
-        "infra2_sdk.deploy.default_github_json_fetcher",
-        lambda **kwargs: (
-            lambda path: {
-                "workflow_runs": [
-                    {
-                        "id": 1,
-                        "head_sha": SHA,
-                        "conclusion": "success",
-                        "html_url": "https://github.com/wangzitian0/finance_report/actions/runs/1",
-                    }
-                ]
-            }
-        ),
-    )
-
-    rc = deploy_main(
-        [
-            "derive-evidence",
-            "--repo",
-            "wangzitian0/finance_report",
-            "--version-ref",
-            "v1.2.3",
-            "--deploy-type",
-            "staging",
-            "--tag-sha",
-            SHA,
-            "--source-run-url",
-            "https://github.com/wangzitian0/finance_report/actions/runs/1",
-            "--source-run-id",
-            "1",
-            "--output",
-            str(out_file),
-        ]
-    )
-    assert rc == 0
-    assert out_file.exists()
-
-    # verify-evidence success
-    req_file = tmp_path / "deploy_req.json"
-    req_file.write_text(json.dumps(evidence_req.to_dict()), encoding="utf-8")
-
-    monkeypatch.setattr(
-        "infra2_sdk.deploy.verify_production_evidence",
-        lambda *args, **kwargs: None,
-    )
-
-    rc = deploy_main(
-        [
-            "verify-evidence",
-            "--request",
-            str(req_file),
-        ]
-    )
-    assert rc == 0
-
-    # verify-evidence invalid json error path
-    rc = deploy_main(
-        [
-            "verify-evidence",
-            "--request",
-            "{invalid-json",
-        ]
-    )
-    assert rc == 1
-
-
-def test_deploy_health_main_cli_validation(capsys) -> None:
-    # max_attempts <= 0
-    rc = deploy_health_main(
-        ["http://localhost:8080/health", "--max-attempts", "0", "--interval", "1"]
-    )
-    assert rc == 1
-    captured = capsys.readouterr()
-    assert "error: max-attempts and interval must be positive" in captured.err
-
-
-def test_deploy_health_main_cli_reports_a_failed_connection(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(
-        "infra2_sdk.deploy.default_http_get",
-        lambda timeout: lambda url: (0, "connection failed"),
-    )
-    rc = deploy_health_main(
-        ["http://localhost:8080/health", "--max-attempts", "1", "--interval", "0.01"]
-    )
-    assert rc == 1
-    captured = capsys.readouterr()
-    assert "[WARNING] Connection failed (attempt 1/1)" in captured.err
-    assert "[FAIL] Health check failed" in captured.err
 
 
 def test_verify_workflow_run_and_reviewed_pull_edge_cases() -> None:
@@ -1586,255 +1234,11 @@ def test_verify_workflow_run_and_reviewed_pull_edge_cases() -> None:
         )
 
 
-def test_derive_release_evidence_policy_and_candidate_branches() -> None:
-    # 1. Fetch policy fails gracefully when not found
-    def fetch_policy_fails(url: str):
-        if "contents" in url:
-            raise RuntimeError("404 not found")
-        if "event=workflow_dispatch" in url:
-            return {
-                "workflow_runs": [
-                    {
-                        "id": 200,
-                        "head_sha": SHA,
-                        "conclusion": "success",
-                        "display_title": "Deploy staging v1.0.0",
-                        "html_url": "https://github.com/wangzitian0/finance_report/actions/runs/200",
-                    }
-                ]
-            }
-        if "actions/runs" in url:
-            return {
-                "workflow_runs": [
-                    {
-                        "id": 100,
-                        "head_sha": SHA,
-                        "conclusion": "success",
-                        "html_url": "https://github.com/wangzitian0/finance_report/actions/runs/100",
-                    }
-                ]
-            }
-        if "pulls" in url:
-            return [
-                {
-                    "number": 1,
-                    "html_url": "https://github.com/wangzitian0/finance_report/pull/1",
-                    "merged_at": "2026-09-20T00:00:00Z",
-                    "merge_commit_sha": SHA,
-                    "base": {"repo": {"full_name": "wangzitian0/finance_report"}, "ref": "main"},
-                }
-            ]
-        return {}
-
-    ev = derive_release_evidence(
-        repository="wangzitian0/finance_report",
-        version_ref="v1.0.0",
-        deploy_type=DeployType.PRODUCTION,
-        tag_sha=SHA,
-        fetch_json=fetch_policy_fails,
-    )
-    assert ev.source_run_id == "100"
-    assert ev.source_run_url == "https://github.com/wangzitian0/finance_report/actions/runs/100"
-    assert ev.reviewed_change_url == "https://github.com/wangzitian0/finance_report/pull/1"
-    assert ev.staging_run_url == "https://github.com/wangzitian0/finance_report/actions/runs/200"
-
-    # 2. Could not derive source run raises ValueError
-    def fetch_empty_runs(url: str):
-        return {"workflow_runs": []}
-
-    with pytest.raises(ValueError, match="could not derive source run"):
-        derive_release_evidence(
-            repository="wangzitian0/finance_report",
-            version_ref="v1.0.0",
-            deploy_type=DeployType.STAGING,
-            tag_sha=SHA,
-            fetch_json=fetch_empty_runs,
-        )
-
-    # 3. Source URL without source ID derives ID from URL
-    ev3 = derive_release_evidence(
-        repository="wangzitian0/finance_report",
-        version_ref="v1.0.0",
-        deploy_type=DeployType.STAGING,
-        tag_sha=SHA,
-        source_run_url="https://github.com/wangzitian0/finance_report/actions/runs/555",
-        fetch_json=lambda url: {},
-    )
-    assert ev3.source_run_id == "555"
-
-
-def test_dispatch_main_closer_and_exception(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("INFRA2_PAT", "fake-token")
-    req = _dispatch_request()
-    req_file = tmp_path / "req.json"
-    req_file.write_text(json.dumps(req.to_dict()), encoding="utf-8")
-
-    closed = False
-
-    class Closer:
-        def close(self):
-            nonlocal closed
-            closed = True
-
-    closer_obj = Closer()
-    monkeypatch.setattr(
-        "infra2_sdk.deploy.github_api_client",
-        lambda **kwargs: (closer_obj, closer_obj),
-    )
-
-    def raise_err(*args, **kwargs):
-        raise RuntimeError("dispatch failed")
-
-    monkeypatch.setattr(
-        "infra2_sdk.deploy.dispatch_and_wait",
-        raise_err,
-    )
-    rc = dispatch_main(["--request", str(req_file)])
-    assert rc == 1
-    assert closed is True
-
-
-def test_main_dispatch_subcommand_runs_the_dispatch_cli(monkeypatch, tmp_path, capsys) -> None:
-    monkeypatch.setenv("INFRA2_PAT", "fake-token")
-    req_file = tmp_path / "req.json"
-    req_file.write_text(json.dumps(_dispatch_request().to_dict()), encoding="utf-8")
-    fake_run = ReceiverRun(
-        run_id=4242,
-        url="https://github.com/wangzitian0/infra2/actions/runs/4242",
-    )
-    monkeypatch.setattr(
-        "infra2_sdk.deploy.github_api_client",
-        lambda **kwargs: (lambda m, p, b: None, lambda r: b""),
-    )
-    monkeypatch.setattr("infra2_sdk.deploy.dispatch_and_wait", lambda *a, **kw: fake_run)
-
-    rc = deploy_main(["dispatch", "--request", str(req_file)])
-
-    assert rc == 0
-    assert '"receiver_run_id": 4242' in capsys.readouterr().out
-
-
-def test_main_deploy_health_subcommand_runs_the_health_cli(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(
-        "infra2_sdk.deploy.default_http_get",
-        lambda timeout: lambda url: (200, json.dumps({"status": "ok", "version": "v1.0.0"})),
-    )
-    rc = deploy_main(
-        [
-            "deploy-health",
-            "https://example.test/health",
-            "--expected-version",
-            "v1.0.0",
-            "--require-status",
-            "ok",
-        ]
-    )
-    assert rc == 0
-    assert "[OK] Health check passed at https://example.test/health" in capsys.readouterr().out
-
-
-def test_main_reads_sys_argv_when_argv_is_none_for_deploy_health(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(sys, "argv", ["deploy", "deploy-health"])
-    with pytest.raises(SystemExit) as exit_info:
-        deploy_main()
-    assert exit_info.value.code == 2
-    err = capsys.readouterr().err
-    assert "usage: python -m infra2_sdk.deploy deploy-health" in err
-    assert "the following arguments are required: url" in err
-
-
-def test_main_reads_sys_argv_when_argv_is_none_for_dispatch(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(sys, "argv", ["deploy", "dispatch"])
-    monkeypatch.delenv("INFRA2_PAT", raising=False)
-    assert deploy_main() == 1
-    assert "error: INFRA2_PAT environment variable is required" in capsys.readouterr().err
-
-
-def test_main_without_a_subcommand_exits_2(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(sys, "argv", ["deploy"])
-    with pytest.raises(SystemExit) as exit_info:
-        deploy_main()
-    assert exit_info.value.code == 2
-    assert "the following arguments are required: command" in capsys.readouterr().err
-
-
-@pytest.mark.parametrize("command", ["dispatch", "deploy-health"])
-def test_delegated_subcommand_help_names_the_deploy_module(command: str, capsys) -> None:
-    with pytest.raises(SystemExit) as exit_info:
-        deploy_main([command, "--help"])
-    assert exit_info.value.code == 0
-    assert f"usage: python -m infra2_sdk.deploy {command}" in capsys.readouterr().out
-
-
-def test_main_help_lists_every_subcommand(capsys) -> None:
-    with pytest.raises(SystemExit) as exit_info:
-        deploy_main(["--help"])
-    assert exit_info.value.code == 0
-    out = capsys.readouterr().out
-    for command in (
-        "build-request",
-        "derive-evidence",
-        "verify-evidence",
-        "dispatch",
-        "deploy-health",
-    ):
-        assert command in out
-
-
 def test_version_prefix_matches() -> None:
     from infra2_sdk.deploy import _version_prefix_matches
 
     assert _version_prefix_matches("", "v1.0") is False
     assert _version_prefix_matches("v1.0.0", "v1.0") is True
-
-
-def test_deploy_main_cli_derive_evidence_stdout(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(
-        "infra2_sdk.deploy.default_github_json_fetcher",
-        lambda **kwargs: (
-            lambda path: {
-                "workflow_runs": [
-                    {
-                        "id": 1,
-                        "head_sha": SHA,
-                        "conclusion": "success",
-                        "html_url": "https://github.com/wangzitian0/finance_report/actions/runs/1",
-                    }
-                ]
-            }
-        ),
-    )
-    rc = deploy_main(
-        [
-            "derive-evidence",
-            "--repo",
-            "wangzitian0/finance_report",
-            "--version-ref",
-            "v1.2.3",
-            "--deploy-type",
-            "staging",
-            "--tag-sha",
-            SHA,
-            "--source-run-url",
-            "https://github.com/wangzitian0/finance_report/actions/runs/1",
-            "--source-run-id",
-            "1",
-        ]
-    )
-    assert rc == 0
-    captured = capsys.readouterr()
-    assert "source_run_url" in captured.out
-
-
-def test_deploy_main_cli_verify_evidence_non_mapping() -> None:
-    rc = deploy_main(
-        [
-            "verify-evidence",
-            "--request",
-            '["not", "an", "object"]',
-        ]
-    )
-    assert rc == 1
 
 
 def test_validate_evidence_urls_is_public_and_accepts_canonical_urls() -> None:

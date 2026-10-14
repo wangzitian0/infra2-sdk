@@ -23,7 +23,6 @@ from infra2_sdk.runtime.environment import (
     resolve_environment_tier,
     resolve_runtime_env,
 )
-from infra2_sdk.runtime.identity import RuntimeIdentity
 
 _INTERVAL_MESSAGE = "export_interval_millis must be positive"
 
@@ -72,28 +71,6 @@ class OtelSettings:
             for key, value in self.resource_attributes.items()
         ):
             raise ValueError("resource attributes must have non-empty string keys and values")
-
-    @classmethod
-    def from_identity(
-        cls,
-        identity: RuntimeIdentity,
-        *,
-        endpoint: str | None,
-        enabled: bool = True,
-        resource_attributes: dict[str, str] | None = None,
-    ) -> OtelSettings:
-        attributes = dict(resource_attributes or {})
-        attributes.update(identity.to_standard_otel_resource_attributes())
-        return cls(
-            service_name=identity.service_name,
-            service_version=identity.service_version,
-            environment=identity.environment.value,
-            deployment_environment=identity.deployment_environment,
-            instance_id=identity.instance_id,
-            endpoint=endpoint,
-            enabled=enabled,
-            resource_attributes=attributes,
-        )
 
     @classmethod
     def from_env(

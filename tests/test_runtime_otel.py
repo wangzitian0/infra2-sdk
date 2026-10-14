@@ -6,8 +6,6 @@ import pytest
 
 from infra2_sdk.runtime import otel as otel_module
 from infra2_sdk.runtime._otel_env import parse_traces_sampler
-from infra2_sdk.runtime.environment import EnvironmentTier
-from infra2_sdk.runtime.identity import RuntimeIdentity
 from infra2_sdk.runtime.otel import (
     OtelSettings,
     configure_telemetry,
@@ -294,27 +292,6 @@ def test_otel_resource_attributes_decode_keys_and_reject_bad_percent_escapes() -
             },
             strict=True,
         )
-
-
-def test_identity_populates_standard_resource_attributes() -> None:
-    identity = RuntimeIdentity(
-        service_name="api",
-        service_version="1.2.3",
-        environment=EnvironmentTier.STAGING,
-        commit_sha="a" * 40,
-        instance_id="pod-1",
-    )
-    settings = OtelSettings.from_identity(
-        identity,
-        endpoint="http://collector:4318",
-        resource_attributes={"team.name": "finance"},
-    )
-    attributes = resource_attributes(settings)
-    assert attributes["service.name"] == "api"
-    assert attributes["service.instance.id"] == "pod-1"
-    assert attributes["vcs.ref.head.revision"] == "a" * 40
-    assert attributes["team.name"] == "finance"
-    assert attributes["service.name"] == "api"
 
 
 def test_enabled_bootstrap_constructs_all_otlp_signal_providers() -> None:

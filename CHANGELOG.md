@@ -4,6 +4,27 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.5.1 - 2026-10-14
+
+### Changed
+
+- Document `require_issued_identity` on `OtelSettings.from_env` and `init_service` in the README ([#108](https://github.com/wangzitian0/infra2-sdk/issues/108)).
+
+### Fixed
+
+- Replace the wall-clock `elapsed < 0.1` check in `test_sync_probe_timeout_does_not_delay_cli_event_loop_shutdown` with deterministic `threading.Event` coordination ([#99](https://github.com/wangzitian0/infra2-sdk/issues/99)).
+
+### Removed
+
+- Remove 12 public symbols with zero production and test callers across `infra2`, `finance_report`, and `truealpha` ([#108](https://github.com/wangzitian0/infra2-sdk/issues/108)):
+  - `cli.scaffold.main`, the `infra2_sdk.cli` package, and the `infra2-scaffold` / `infra2-sdk` console script entry points;
+  - `deploy.build_deploy_request`, `deploy.derive_release_evidence`, `deploy.main`, `deploy.dispatch_main`, and `deploy.deploy_health_main`;
+  - `routing.RouteEndpoint` and `routing.AppRoutePreference`;
+  - `runtime.environment.to_deploy_type` and `runtime.environment.APP_OWNED_TIERS`;
+  - `runtime.health.health_response`;
+  - `runtime.otel.OtelSettings.from_identity`.
+- Remove `RuntimeIdentity` from `infra2_sdk.runtime.__all__`; `infra2_sdk.runtime.identity.RuntimeIdentity` remains the canonical symbol ([#108](https://github.com/wangzitian0/infra2-sdk/issues/108)).
+
 ## 3.5.0 - 2026-10-14
 
 ### Added

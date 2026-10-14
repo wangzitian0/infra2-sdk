@@ -296,6 +296,12 @@ def init_service(
             problem in the settings can lower the level to DEBUG. With
             ``OTEL_SDK_DISABLED=true`` and no other problem, the record is "OpenTelemetry is
             disabled by the environment" at DEBUG.
+        require_issued_identity: When True, ignore ``ENVIRONMENT``, ``ENV``, and ``APP_ENV``
+            and derive the runtime tier from ``deployment.environment.name`` in
+            ``OTEL_RESOURCE_ATTRIBUTES``. When an OTLP endpoint is active, require
+            ``OTEL_SERVICE_NAME`` and the four ``REQUIRED_IDENTITY_ATTRIBUTES``
+            (``deployment.environment.name``, ``infra.service.id``, ``service.version``,
+            ``infra.iac.ref``).
         log_level: Level for the ``logging.basicConfig`` call that runs before OpenTelemetry
             attaches its handler. The call changes nothing when the root logger already has a
             handler, so an application that configured logging keeps its level. An application

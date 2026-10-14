@@ -64,7 +64,6 @@ from infra2_sdk.refs import (
 )
 from infra2_sdk.routing import (
     CANARY_SLOT,
-    AppRoutePreference,
     resolve_app_hostname,
     resolve_service_url,
 )
@@ -130,7 +129,6 @@ __all__ = [
     # Release errors
     "ReleaseError",
     # Routing
-    "AppRoutePreference",
     "CANARY_SLOT",
     "resolve_app_hostname",
     "resolve_service_url",
