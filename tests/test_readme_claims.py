@@ -240,18 +240,19 @@ def test_a_name_that_left_stays_in_its_module_and_is_not_in_the_package(
 
 
 def test_the_readme_counts_the_fixed_names_and_the_variables_of_the_contract() -> None:
-    fixed = re.search(r"(\w+) more fixed names exist outside\s+the table\.", README)
+    flat = " ".join(README.split())  # a line break in the README must not change the result
+    fixed = re.search(r"(\w+) more fixed names exist outside the table\.", flat)
     assert fixed and fixed.group(1) == "Five"
     assert len(FIXED_READS) == 5
-    paragraph = README[fixed.start() : fixed.start() + 500]
+    paragraph = flat[fixed.start() : fixed.start() + 500]
     for name in FIXED_READS:
         assert f"`{name}`" in paragraph, f"the README paragraph does not name {name}"
 
-    version_note = re.search(r"Version 2 lists (\d+) variables", README)
+    version_note = re.search(r"Version 2 lists (\d+) variables", flat)
     assert version_note and int(version_note.group(1)) == len(runtime_env_contract()["variables"])
-    lost = re.search(r"lost the (\d+) variables above", README)
+    lost = re.search(r"lost the (\d+) variables above", flat)
     assert lost and int(lost.group(1)) == len(REMOVED_ENV_MEMBERS) == 20
 
     groups = [item for item in runtime_env_contract()["variables"] if item["aliases"]]
     assert len(groups) == 2
-    assert "`init_service` reads two groups of aliases" in README
+    assert "`init_service` reads two groups of aliases" in flat
