@@ -575,8 +575,8 @@ def test_otel_service_name_defaults_to_the_init_argument(
         app.state.telemetry_providers.shutdown()
 
 
-def _exported_service_name(monkeypatch, environ: dict[str, str]) -> str:
-    """Start ``init_service("from-argument")`` with ``environ`` and return the exported name."""
+def _exported_attributes(monkeypatch, environ: dict[str, str]) -> dict:
+    """Start ``init_service("from-argument")`` with ``environ`` and return the exported resource."""
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
     monkeypatch.setenv("ENVIRONMENT", "local_dev")
     for variable, value in environ.items():
@@ -587,9 +587,13 @@ def _exported_service_name(monkeypatch, environ: dict[str, str]) -> str:
 
     providers = app.state.telemetry_providers
     try:
-        return providers.tracer_provider.resource.attributes["service.name"]
+        return dict(providers.tracer_provider.resource.attributes)
     finally:
         providers.shutdown()
+
+
+def _exported_service_name(monkeypatch, environ: dict[str, str]) -> str:
+    return _exported_attributes(monkeypatch, environ)["service.name"]
 
 
 @pytest.mark.parametrize(
@@ -615,6 +619,65 @@ def test_init_service_exports_the_service_name_by_the_one_precedence_rule(
     monkeypatch, memory_otlp, clean_otel_globals, environ, expected
 ):
     assert _exported_service_name(monkeypatch, environ) == expected
+
+
+def _settings_passed_to_telemetry(monkeypatch, environ: dict[str, str]):
+    """Start ``init_service("from-argument")`` with ``environ``; return the settings it hands over.
+
+    The OpenTelemetry SDK also reads ``OTEL_RESOURCE_ATTRIBUTES`` from the process environment
+    when it builds a resource. The settings show what ``init_service`` decides, free of that.
+    """
+    from infra2_sdk.runtime import otel as otel_module
+
+    handed_over = []
+
+    def configure(settings, **options):
+        handed_over.append(settings)
+        return otel_module.TelemetryProviders()
+
+    monkeypatch.setattr(otel_module, "configure_telemetry", configure)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
+    monkeypatch.setenv("ENVIRONMENT", "local_dev")
+    for variable, value in environ.items():
+        monkeypatch.setenv(variable, value)
+
+    init_service(FastAPI(), "from-argument", enable_otel=True)
+
+    (settings,) = handed_over
+    return settings
+
+
+@pytest.mark.parametrize(
+    "raw,stripped",
+    [("%20", None), ("%09", None), ("%20x%20", "x")],
+    ids=["space", "tab", "padded"],
+)
+@pytest.mark.parametrize(
+    "attribute,field,missing",
+    [
+        ("service.name", "service_name", "from-argument"),
+        ("service.version", "service_version", "unknown"),
+        ("service.instance.id", "instance_id", ""),
+    ],
+)
+def test_init_service_reads_a_blank_or_padded_attribute_as_missing_or_stripped(
+    monkeypatch, attribute, field, missing, raw, stripped
+):
+    environ = {"OTEL_RESOURCE_ATTRIBUTES": f"{attribute}={raw}"}
+
+    settings = _settings_passed_to_telemetry(monkeypatch, environ)
+
+    assert getattr(settings, field) == (missing if stripped is None else stripped)
+    assert (attribute in settings.resource_attributes) is (stripped is not None)
+
+
+@pytest.mark.parametrize("raw", ["%20", "%09"])
+def test_init_service_exports_its_name_for_a_blank_service_name_attribute(
+    monkeypatch, memory_otlp, clean_otel_globals, raw
+):
+    environ = {"OTEL_RESOURCE_ATTRIBUTES": f"service.name={raw}"}
+
+    assert _exported_attributes(monkeypatch, environ)["service.name"] == "from-argument"
 
 
 # --- one resolution: init_service reads each fact once, through OtelSettings.from_env ----------

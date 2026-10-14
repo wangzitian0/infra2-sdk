@@ -94,6 +94,71 @@ def test_otel_settings_and_identity_agree_on_version_and_instance_id() -> None:
         assert (source.service_version, source.instance_id) == ("unknown", "")
 
 
+# --- a blank or padded attribute is missing or stripped, like an environment variable ----------
+
+# attribute -> (field of the settings and of the identity, the value when the attribute is missing)
+_IDENTITY_ATTRIBUTES = {
+    "service.name": ("service_name", "unknown_service"),
+    "service.version": ("service_version", "unknown"),
+    "service.instance.id": ("instance_id", ""),
+}
+_BLANK_OR_PADDED = [
+    pytest.param("%20", None, id="space"),
+    pytest.param("%09", None, id="tab"),
+    pytest.param("%20x%20", "x", id="padded"),
+]
+
+
+@pytest.mark.parametrize("raw,stripped", _BLANK_OR_PADDED)
+@pytest.mark.parametrize("attribute", list(_IDENTITY_ATTRIBUTES))
+def test_otel_settings_reads_a_blank_or_padded_attribute_as_missing_or_stripped(
+    attribute, raw, stripped
+) -> None:
+    field, missing = _IDENTITY_ATTRIBUTES[attribute]
+
+    settings = OtelSettings.from_env({"OTEL_RESOURCE_ATTRIBUTES": f"{attribute}={raw}"})
+
+    assert getattr(settings, field) == (missing if stripped is None else stripped)
+    if stripped is None:
+        assert attribute not in settings.resource_attributes
+    else:
+        assert settings.resource_attributes[attribute] == stripped
+
+
+@pytest.mark.parametrize("raw", ["%20", "%09"])
+def test_a_blank_service_name_attribute_lets_the_default_name_apply(raw) -> None:
+    environ = {"OTEL_RESOURCE_ATTRIBUTES": f"service.name={raw}"}
+
+    settings = OtelSettings.from_env(environ, default_service_name="from-default")
+
+    assert settings.service_name == "from-default"
+
+
+@pytest.mark.parametrize("raw,stripped", _BLANK_OR_PADDED)
+@pytest.mark.parametrize("attribute", ["service.version", "service.instance.id"])
+def test_runtime_identity_reads_a_blank_or_padded_attribute_as_missing_or_stripped(
+    attribute, raw, stripped
+) -> None:
+    field, missing = _IDENTITY_ATTRIBUTES[attribute]
+    environ = {"OTEL_SERVICE_NAME": "api", "OTEL_RESOURCE_ATTRIBUTES": f"{attribute}={raw}"}
+
+    identity = RuntimeIdentity.from_env(environ)
+
+    assert getattr(identity, field) == (missing if stripped is None else stripped)
+
+
+@pytest.mark.parametrize("raw", ["%20", "%09"])
+def test_runtime_identity_reads_a_blank_service_name_attribute_as_a_missing_name(raw) -> None:
+    with pytest.raises(ValueError, match="OTEL_SERVICE_NAME is required"):
+        RuntimeIdentity.from_env({"OTEL_RESOURCE_ATTRIBUTES": f"service.name={raw}"})
+
+
+def test_runtime_identity_strips_a_padded_service_name_attribute() -> None:
+    identity = RuntimeIdentity.from_env({"OTEL_RESOURCE_ATTRIBUTES": "service.name=%20x%20"})
+
+    assert identity.service_name == "x"
+
+
 # --- a warning names the caller of from_env, not a line inside the SDK --------------------------
 
 
