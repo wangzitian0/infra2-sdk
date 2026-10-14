@@ -44,6 +44,7 @@ EXPECTED_REMOVED_NAMES = frozenset(
         "infra2_sdk.capacity:OnePasswordCapacityReport",
         "infra2_sdk.capacity:Runner",
         "infra2_sdk.refs:ReleaseIdentity",
+        "infra2_sdk.deploy:DeployStatus",
         "infra2_sdk.routing:DokployDomainSpec",
         "infra2_sdk.runtime.environment:env_bool",
         "infra2_sdk.runtime.environment:env_float",
@@ -114,7 +115,7 @@ _UNDOTTED = [pair for pair in REMOVED_NAMES if "." not in pair[1]]
 
 
 def test_removed_name_lists_have_unique_entries() -> None:
-    assert len(REMOVED_NAMES) == len(set(REMOVED_NAMES)) == 29
+    assert len(REMOVED_NAMES) == len(set(REMOVED_NAMES)) == 30
     assert len(REMOVED_ENV_MEMBERS) == len(set(REMOVED_ENV_MEMBERS)) == 20
     assert len(REMOVED_ENV_NAMES) == len(set(REMOVED_ENV_NAMES)) == 29
 

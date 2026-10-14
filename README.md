@@ -395,6 +395,8 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   are in brackets.
   - `capacity.LEVELS`, `capacity.onepassword_capacity` and `capacity.OnePasswordCapacityReport`;
   - `delivery.PREVIEW_RELEVANT_STAGES`;
+  - `deploy.DeployStatus` (no replacement: build the record you need in your own code;
+    `DeployState` stays);
   - `refs.resolve_release_identity` and `refs.verify_runtime_identity` (use
     `refs.resolve_image_ref` and `refs.resolve_image_digest`);
   - `refs.ReleaseIdentity` (no replacement: build the record you need in your own code);

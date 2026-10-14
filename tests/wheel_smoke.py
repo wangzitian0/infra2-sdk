@@ -56,6 +56,8 @@ REMOVED_NAMES = (
     ("infra2_sdk.runtime.environment", "env_float"),
     ("infra2_sdk.runtime.health", "DependencyUnavailableError"),
     ("infra2_sdk.secrets", "ReadOnlyBackendError"),
+    # Found without a user by the audit of PR #104 (references inside the own body do not count).
+    ("infra2_sdk.deploy", "DeployStatus"),
 )
 
 # RuntimeEnvKey members removed in 3.4.0 (issue #102, decision 2).
@@ -168,7 +170,7 @@ def smoke_removed_names() -> None:
     import infra2_sdk.runtime
     from infra2_sdk.runtime.environment import RuntimeEnvKey, runtime_env_contract
 
-    assert len(REMOVED_NAMES) == 29 and len(set(REMOVED_NAMES)) == 29
+    assert len(REMOVED_NAMES) == 30 and len(set(REMOVED_NAMES)) == 30
     for module, dotted in REMOVED_NAMES:
         owner = importlib.import_module(module)
         *parents, leaf = dotted.split(".")

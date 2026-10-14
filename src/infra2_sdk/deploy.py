@@ -119,50 +119,6 @@ class DeployRequest:
         )
 
 
-@dataclass(frozen=True)
-class DeployStatus:
-    request_id: str
-    state: DeployState
-    detail: str = ""
-    evidence_url: str = ""
-    deployed_version: str = ""
-    contract_version: int = CONTRACT_VERSION
-
-    def __post_init__(self) -> None:
-        require_contract_version(
-            self.contract_version,
-            CONTRACT_VERSION,
-            description="contract_version",
-        )
-        if not _REQUEST_ID_RE.match(self.request_id):
-            raise ValueError("invalid request_id")
-        if self.state == DeployState.SUCCEEDED and not self.evidence_url:
-            raise ValueError("successful deploy status requires evidence_url")
-        if self.state in {DeployState.FAILED, DeployState.REJECTED} and not self.detail:
-            raise ValueError("failed or rejected deploy status requires detail")
-
-    def to_dict(self) -> dict[str, object]:
-        data = asdict(self)
-        data["state"] = self.state.value
-        return data
-
-    @classmethod
-    def from_dict(cls, raw: Mapping[str, Any]) -> DeployStatus:
-        contract_version = parse_contract_version(
-            raw,
-            CONTRACT_VERSION,
-            description="contract_version",
-        )
-        return cls(
-            contract_version=contract_version,
-            request_id=parse_string(raw, "request_id"),
-            state=DeployState(parse_string(raw, "state")),
-            detail=parse_string(raw, "detail", required=False),
-            evidence_url=parse_string(raw, "evidence_url", required=False),
-            deployed_version=parse_string(raw, "deployed_version", required=False),
-        )
-
-
 def validate_deploy_request(request: DeployRequest) -> None:
     require_contract_version(
         request.contract_version,
@@ -1434,7 +1390,6 @@ __all__ = [
     "DeployOperation",
     "DeployRequest",
     "DeployState",
-    "DeployStatus",
     "DeployType",
     "EVIDENCE_POLICY_CONTRACT_VERSION",
     "HealthCheckResult",
