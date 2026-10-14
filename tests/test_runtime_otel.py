@@ -163,6 +163,77 @@ def test_otel_strict_mode_and_boolean_grammar_fail_closed() -> None:
         )
 
 
+_STRICT_AT_FAULT = [
+    pytest.param(
+        {"OTEL_SDK_DISABLED": "junk"},
+        "invalid OTEL_SDK_DISABLED: "
+        "OpenTelemetry boolean environment variables must be true or false",
+        id="sdk-disabled",
+    ),
+    pytest.param(
+        {"OTEL_METRIC_EXPORT_INTERVAL": "0"},
+        "invalid OTEL_METRIC_EXPORT_INTERVAL: export_interval_millis must be positive",
+        id="interval-zero",
+    ),
+    pytest.param(
+        {"OTEL_METRIC_EXPORT_INTERVAL": "-5"},
+        "invalid OTEL_METRIC_EXPORT_INTERVAL: export_interval_millis must be positive",
+        id="interval-negative",
+    ),
+    pytest.param(
+        {"OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=production"},
+        "invalid deployment.environment.name: "
+        "deployment_environment disagrees with environment tier",
+        id="attribute-disagrees-with-the-tier",
+    ),
+    pytest.param(
+        {"OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=bogus"},
+        "invalid deployment.environment.name: unknown environment: 'bogus'",
+        id="attribute-is-not-a-tier",
+    ),
+]
+
+
+@pytest.mark.parametrize("extra,message", _STRICT_AT_FAULT)
+def test_otel_strict_errors_name_the_variable_at_fault(extra, message) -> None:
+    environ = {"ENVIRONMENT": "staging", "OTEL_SERVICE_NAME": "api", **extra}
+
+    with pytest.raises(ValueError) as caught:
+        OtelSettings.from_env(environ, strict=True)
+
+    assert str(caught.value) == message
+    assert "strict_otel" not in str(caught.value), "the hint belongs to init_service only"
+
+
+@pytest.mark.parametrize(
+    "extra,message",
+    [
+        pytest.param(
+            {"OTEL_METRIC_EXPORT_INTERVAL": "0"},
+            "export_interval_millis must be positive",
+            id="interval-zero",
+        ),
+        pytest.param(
+            {"OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=production"},
+            "deployment_environment disagrees with environment tier",
+            id="attribute-disagrees-with-the-tier",
+        ),
+        pytest.param(
+            {"OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=bogus"},
+            "unknown environment: 'bogus'",
+            id="attribute-is-not-a-tier",
+        ),
+    ],
+)
+def test_otel_non_strict_errors_keep_their_text(extra, message) -> None:
+    environ = {"ENVIRONMENT": "staging", "OTEL_SERVICE_NAME": "api", **extra}
+
+    with pytest.raises(ValueError) as caught:
+        OtelSettings.from_env(environ)
+
+    assert str(caught.value) == message
+
+
 def test_otel_non_strict_mode_reports_and_discards_invalid_standard_values() -> None:
     with pytest.warns(RuntimeWarning, match="OTEL_SDK_DISABLED"):
         settings = OtelSettings.from_env({"OTEL_SDK_DISABLED": "1"})

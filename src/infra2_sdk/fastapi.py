@@ -48,6 +48,9 @@ _INITIALIZED_ATTRIBUTE = "infra2_service_name"
 
 _CheckerResult = bool | tuple[bool, str]
 
+# strict_otel is a parameter of init_service only. The messages of from_env cannot name it.
+_RELAX_HINT = "pass strict_otel=False to log the problem and start"
+
 
 class _DatabaseCheck:
     """Adapt ``db_checker`` to the ``DependencyCheck`` protocol of ``runtime.health``."""
@@ -110,6 +113,15 @@ def _require_known_tier() -> None:
         ) from exc
 
 
+def _with_relax_hint(exc: Exception) -> Exception:
+    """Return the strict error with the way out appended. Keep the type of a ``ValueError``."""
+    if isinstance(exc, EnvironmentConflictError):
+        return EnvironmentConflictError(f"{exc}; {_RELAX_HINT}")
+    if isinstance(exc, ValueError):
+        return ValueError(f"{exc}; {_RELAX_HINT}")
+    return exc
+
+
 def _log_missing_endpoint() -> None:
     level = logging.WARNING if _in_deployed_tier() else logging.DEBUG
     logger.log(
@@ -133,7 +145,7 @@ def _resolve_telemetry(name: str, *, strict: bool) -> OtelSettings | None:
         settings = OtelSettings.from_env(strict=strict, default_service_name=name)
     except Exception as exc:
         if strict:
-            raise
+            raise _with_relax_hint(exc) from exc
         # A failed from_env cannot tell whether an endpoint is set. Read the variable here to
         # choose the log line. Without an endpoint, telemetry is off. The missing-endpoint
         # line is then the only message.

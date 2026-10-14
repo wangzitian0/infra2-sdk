@@ -906,7 +906,7 @@ def test_strict_otel_with_a_local_tier_and_no_endpoint_stays_at_debug(
     "variable,value,message",
     [
         ("OTEL_RESOURCE_ATTRIBUTES", "not-a-pair", "OTEL_RESOURCE_ATTRIBUTES"),
-        ("OTEL_SDK_DISABLED", "1", "true or false"),
+        ("OTEL_SDK_DISABLED", "1", "invalid OTEL_SDK_DISABLED: .*true or false"),
         ("OTEL_TRACES_SAMPLER", "sometimes", "OTEL_TRACES_SAMPLER"),
     ],
 )
@@ -918,6 +918,42 @@ def test_strict_otel_refuses_a_malformed_otel_value_even_without_an_endpoint(
 
     with pytest.raises(ValueError, match=message):
         init_service(FastAPI(), "svc")
+
+
+@pytest.mark.parametrize(
+    "environ,message",
+    [
+        pytest.param({"OTEL_SDK_DISABLED": "junk"}, "invalid OTEL_SDK_DISABLED: ", id="flag"),
+        pytest.param(
+            {"OTEL_METRIC_EXPORT_INTERVAL": "0"},
+            "invalid OTEL_METRIC_EXPORT_INTERVAL: ",
+            id="interval",
+        ),
+        pytest.param(
+            {"OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=production"},
+            "invalid deployment.environment.name: ",
+            id="attribute-disagrees",
+        ),
+        pytest.param(
+            {"OTEL_RESOURCE_ATTRIBUTES": "not-a-pair"}, "OTEL_RESOURCE_ATTRIBUTES", id="attributes"
+        ),
+        pytest.param(
+            {"SERVICE_VERSION": "a", "IMAGE_TAG": "b"}, "SERVICE_VERSION, IMAGE_TAG", id="aliases"
+        ),
+    ],
+)
+def test_strict_otel_errors_of_init_service_name_the_variable_and_the_way_out(
+    monkeypatch, environ, message
+):
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    for variable, value in environ.items():
+        monkeypatch.setenv(variable, value)
+
+    with pytest.raises(ValueError) as caught:
+        init_service(FastAPI(), "svc")
+
+    assert message in str(caught.value)
+    assert str(caught.value).endswith("; pass strict_otel=False to log the problem and start")
 
 
 def test_non_strict_otel_keeps_a_malformed_otel_value_to_a_warning(monkeypatch):
