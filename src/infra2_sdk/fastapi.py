@@ -18,7 +18,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from infra2_sdk.runtime.environment import (
     PLATFORM_OWNED_TIERS,
@@ -37,6 +37,9 @@ from infra2_sdk.runtime.health import (
     ProbeResult,
     check_health,
 )
+
+if TYPE_CHECKING:
+    from infra2_sdk.runtime.otel import OtelSettings
 
 logger = logging.getLogger("infra2_sdk.fastapi")
 
@@ -116,20 +119,44 @@ def _log_missing_endpoint() -> None:
     )
 
 
-def _start_telemetry(app: Any, name: str, *, strict: bool, log_level: int | None) -> None:
+def _resolve_telemetry(name: str, *, strict: bool) -> OtelSettings | None:
+    """Resolve and check the telemetry settings. Return them when telemetry must start.
+
+    ``init_service`` calls this before it changes the app. Strict mode raises ``ValueError``
+    for a problem. Non-strict mode logs the problem, never stops, and returns ``None``.
+    """
+    from infra2_sdk.runtime.otel import OtelSettings
+
     if strict:
         _require_known_tier()
     try:
-        from infra2_sdk.runtime.otel import OtelSettings, configure_telemetry
-
-        # The one resolution: the endpoint, the tier and the service name come from here.
         settings = OtelSettings.from_env(strict=strict, default_service_name=name)
-        if settings.sdk_disabled:
-            logger.debug("OpenTelemetry is disabled by the environment")
-            return
-        if settings.endpoint is None:
+    except Exception as exc:
+        if strict:
+            raise
+        # A failed from_env cannot tell whether an endpoint is set. Read the variable here to
+        # choose the log line. Without an endpoint, telemetry is off. The missing-endpoint
+        # line is then the only message.
+        if resolve_runtime_env(None, RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT).value is None:
             _log_missing_endpoint()
-            return
+        else:
+            logger.warning("Could not initialize OpenTelemetry: %s", exc)
+        return None
+    if settings.sdk_disabled:
+        logger.debug("OpenTelemetry is disabled by the environment")
+        return None
+    if settings.endpoint is None:
+        _log_missing_endpoint()
+        return None
+    return settings
+
+
+def _start_telemetry(
+    app: Any, settings: OtelSettings, *, strict: bool, log_level: int | None
+) -> None:
+    try:
+        from infra2_sdk.runtime.otel import configure_telemetry
+
         if log_level is not None:
             # basicConfig does nothing when the root logger already has a handler. Without
             # this call the OpenTelemetry handler would make a later basicConfig a no-op and
@@ -155,13 +182,7 @@ def _start_telemetry(app: Any, name: str, *, strict: bool, log_level: int | None
     except Exception as exc:
         if strict:
             raise
-        # A failed from_env cannot tell whether an endpoint is set. Read the variable here to
-        # choose the log line. Without an endpoint, telemetry is off. The missing-endpoint
-        # line is then the only message.
-        if resolve_runtime_env(None, RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT).value is None:
-            _log_missing_endpoint()
-        else:
-            logger.warning("Could not initialize OpenTelemetry: %s", exc)
+        logger.warning("Could not initialize OpenTelemetry: %s", exc)
 
 
 def init_service(
@@ -177,7 +198,9 @@ def init_service(
     """Register /livez, /readyz and /health on a FastAPI app and start OpenTelemetry.
 
     Call it once per app: a second call raises ``RuntimeError``. Call it after you set the
-    app lifespan; a lifespan set later replaces the SDK shutdown.
+    app lifespan; a lifespan set later replaces the SDK shutdown. A call that raises for the
+    name, for ``check_timeout_seconds`` or for a strict telemetry problem leaves the app
+    unchanged, so a retry meets the real error and not ``RuntimeError``.
 
     Parameters:
         app: The FastAPI application.
@@ -214,6 +237,9 @@ def init_service(
         raise ValueError("check_timeout_seconds must be positive")
     if not isinstance(name, str) or not name.strip():
         raise ValueError("name must not be blank")
+    # Resolve and check the telemetry settings before the app changes. A strict problem raises
+    # here, so a failed start leaves no marker and no routes, and a retry sees the real error.
+    settings = _resolve_telemetry(name, strict=strict_otel) if enable_otel else None
     setattr(app.state, _INITIALIZED_ATTRIBUTE, name)
 
     async def report() -> tuple[int, dict[str, Any]]:
@@ -247,5 +273,5 @@ def init_service(
         status_code, body = await report()
         return JSONResponse(status_code=status_code, content={**body, "service": name})
 
-    if enable_otel:
-        _start_telemetry(app, name, strict=strict_otel, log_level=log_level)
+    if settings is not None:
+        _start_telemetry(app, settings, strict=strict_otel, log_level=log_level)

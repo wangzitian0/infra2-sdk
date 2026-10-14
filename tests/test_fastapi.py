@@ -825,6 +825,47 @@ def test_init_service_checks_nothing_when_the_caller_turns_otel_off(monkeypatch,
     assert _sdk_records(caplog) == []
 
 
+@pytest.mark.parametrize(
+    "environ",
+    [
+        pytest.param({}, id="missing-tier"),
+        pytest.param({"ENVIRONMENT": "bogus-tier"}, id="unknown-tier"),
+        pytest.param(
+            {"ENVIRONMENT": "staging", "OTEL_RESOURCE_ATTRIBUTES": "not-a-pair"},
+            id="malformed-attribute",
+        ),
+        pytest.param(
+            {"ENVIRONMENT": "staging", "OTEL_SDK_DISABLED": "junk"}, id="invalid-disabled-flag"
+        ),
+    ],
+)
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")  # the non-strict retry warns, then starts
+def test_a_strict_error_leaves_the_app_untouched_and_a_retry_shows_no_other_error(
+    monkeypatch, environ
+):
+    for variable, value in environ.items():
+        monkeypatch.setenv(variable, value)
+    app = FastAPI()
+    routes_before = list(app.router.routes)
+
+    with pytest.raises(ValueError):
+        init_service(app, "svc")
+
+    assert app.router.routes == routes_before
+    assert _PROBE_ROUTES.isdisjoint({route.path for route in app.router.routes})
+    assert not hasattr(app.state, _INITIALIZED_ATTRIBUTE)
+    init_service(app, "svc", strict_otel=False)  # the retry meets no "already called" error
+    assert {route.path for route in app.router.routes} >= _PROBE_ROUTES
+
+
+def test_a_second_strict_call_reports_the_real_error_again(monkeypatch):
+    app = FastAPI()
+
+    for _ in range(2):
+        with pytest.raises(ValueError, match="ENVIRONMENT is required"):
+            init_service(app, "svc")
+
+
 @pytest.mark.parametrize("environment", [None, "bogus-tier"], ids=["missing-tier", "unknown-tier"])
 def test_strict_otel_checks_the_tier_before_it_looks_for_the_endpoint(monkeypatch, environment):
     if environment is not None:
