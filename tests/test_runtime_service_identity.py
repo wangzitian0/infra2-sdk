@@ -7,10 +7,12 @@ count the calls of the private resolver. A second copy of the resolution fails a
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 import pytest
 
+from infra2_sdk.runtime._otel_env import load_resource_attributes
 from infra2_sdk.runtime.identity import RuntimeIdentity
 from infra2_sdk.runtime.otel import OtelSettings
 
@@ -172,6 +174,23 @@ def test_resource_attribute_warning_names_the_caller_of_from_env() -> None:
 
     for caught in (from_otel, from_identity):
         assert [Path(warning.filename).name for warning in caught] == [Path(__file__).name]
+
+
+def test_load_resource_attributes_has_no_default_stack_level() -> None:
+    parameter = inspect.signature(load_resource_attributes).parameters["stacklevel"]
+
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameter.default is inspect.Parameter.empty, "each caller counts its own frames"
+
+
+def test_load_resource_attributes_gives_the_stack_level_to_warn() -> None:
+    with pytest.warns(RuntimeWarning, match="OTEL_RESOURCE_ATTRIBUTES") as level_one:
+        load_resource_attributes("broken", strict=False, stacklevel=1)
+    with pytest.warns(RuntimeWarning, match="OTEL_RESOURCE_ATTRIBUTES") as level_two:
+        load_resource_attributes("broken", strict=False, stacklevel=2)
+
+    assert [Path(w.filename).name for w in level_one] == ["_otel_env.py"]
+    assert [Path(w.filename).name for w in level_two] == [Path(__file__).name]
 
 
 # --- one resolver: a second copy of the resolution changes a count -------------------------------

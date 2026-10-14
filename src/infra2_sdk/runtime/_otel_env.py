@@ -59,12 +59,12 @@ def load_resource_attributes(
     value: str,
     *,
     strict: bool,
-    stacklevel: int = 3,
+    stacklevel: int,
 ) -> tuple[dict[str, str], str | None]:
     """Load optional OTel attributes, discarding the whole invalid value when non-strict.
 
-    A non-strict warning names the frame ``stacklevel`` levels up. The default names the caller
-    of the function that calls this one.
+    ``stacklevel`` is the argument of ``warnings.warn`` for the non-strict warning. Level 1 names
+    this function, level 2 its caller, and so on. The caller counts its own frames.
     """
 
     try:

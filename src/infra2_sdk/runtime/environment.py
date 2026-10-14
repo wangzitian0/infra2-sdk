@@ -456,7 +456,9 @@ def _resolve_service_identity(
         resolve_runtime_env(environ, RuntimeEnvKey.OTEL_RESOURCE_ATTRIBUTES, default="").value
         or "",
         strict=strict,
-        stacklevel=4,  # warn is level 1; this function is 2, from_env 3, the caller of from_env 4
+        # Frames: 1 load_resource_attributes, 2 this function, 3 from_env, 4 the caller of
+        # from_env. The warning names the caller of from_env.
+        stacklevel=4,
     )
     for key in _IDENTITY_ATTRIBUTES:
         if key in attributes:
