@@ -26,9 +26,7 @@ from infra2_sdk import (
 from infra2_sdk.capacity import (
     CapacityLimit,
     CapacityReading,
-    OnePasswordCapacityReport,
     cloudflare_readings,
-    onepassword_capacity,
 )
 from infra2_sdk.ci import (
     load_delivery_stages,
@@ -78,22 +76,17 @@ from infra2_sdk.refs import (
     redact_repo,
     resolve_image_ref,
     resolve_pr,
-    resolve_release_identity,
     resolve_to_sha,
-    verify_runtime_identity,
 )
 from infra2_sdk.routing import (
     CANARY_SLOT,
     DEFAULT_BASE_DOMAIN,
     AppRoutePreference,
-    DokployDomainSpec,
     RouteEndpoint,
     resolve_app_hostname,
-    resolve_dokploy_domains,
     resolve_service_url,
 )
 from infra2_sdk.secrets import (
-    EnvBackend,
     OnePasswordBackend,
     SecretsBackend,
     SecretsResolver,
@@ -106,7 +99,6 @@ from infra2_sdk.snapshot import (
     ResidualScanProof,
     ResidualScanStatus,
     SnapshotArtifact,
-    verify_snapshot_artifact,
 )
 from infra2_sdk.transport import (
     HttpResponse,
@@ -133,9 +125,7 @@ __all__ = [
     # Capacity
     "CapacityLimit",
     "CapacityReading",
-    "OnePasswordCapacityReport",
     "cloudflare_readings",
-    "onepassword_capacity",
     # CI
     "load_delivery_stages",
     "validate_gate",
@@ -184,19 +174,14 @@ __all__ = [
     # Release identity
     "ReleaseError",
     "ReleaseIdentity",
-    "resolve_release_identity",
-    "verify_runtime_identity",
     # Routing
     "AppRoutePreference",
     "CANARY_SLOT",
     "DEFAULT_BASE_DOMAIN",
-    "DokployDomainSpec",
     "RouteEndpoint",
     "resolve_app_hostname",
-    "resolve_dokploy_domains",
     "resolve_service_url",
     # Secrets
-    "EnvBackend",
     "OnePasswordBackend",
     "SecretsBackend",
     "SecretsResolver",
@@ -208,7 +193,6 @@ __all__ = [
     "ResidualScanProof",
     "ResidualScanStatus",
     "SnapshotArtifact",
-    "verify_snapshot_artifact",
     # Transport
     "HttpResponse",
     "HttpTransport",

@@ -3,7 +3,7 @@ from inspect import Parameter, signature
 import pytest
 
 from infra2_sdk.runtime.environment import EnvironmentTier
-from infra2_sdk.runtime.identity import RuntimeIdentity, runtime_identity_fingerprint
+from infra2_sdk.runtime.identity import RuntimeIdentity
 
 SHA = "a" * 40
 DIGEST = "sha256:" + "b" * 64
@@ -185,15 +185,6 @@ def test_identity_rejects_invalid_coordinates(changes, message) -> None:
         identity(**changes)
 
 
-def test_runtime_identity_fingerprint_is_order_independent_and_framed() -> None:
-    first = runtime_identity_fingerprint({"a": "bc", "ab": b"c"})
-    second = runtime_identity_fingerprint({"ab": b"c", "a": "bc"})
-    assert first == second
-    assert first != runtime_identity_fingerprint({"a": "b", "cab": "c"})
-    with pytest.raises(TypeError, match="str or bytes"):
-        runtime_identity_fingerprint({"bad": 1})  # type: ignore[dict-item]
-
-
 def test_canonical_sha256_is_formatting_blind_and_matches_the_estate() -> None:
     from infra2_sdk.runtime.identity import canonical_sha256
 
@@ -211,17 +202,6 @@ def test_canonical_sha256_is_formatting_blind_and_matches_the_estate() -> None:
         json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
     ).hexdigest()
     assert canonical_sha256(payload) == expected
-
-
-def test_runtime_identity_fingerprint_is_canonical() -> None:
-    from infra2_sdk.runtime import runtime_identity_fingerprint as imported_fp
-    from infra2_sdk.runtime.identity import runtime_identity_fingerprint
-
-    assert imported_fp is runtime_identity_fingerprint
-    data = {"key": "value"}
-    res = runtime_identity_fingerprint(data)
-    assert len(res) == 64
-    assert imported_fp(data) == res
 
 
 def test_runtime_identity_json_schema_declares_the_exact_2020_12_dialect() -> None:

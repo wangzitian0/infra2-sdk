@@ -1,10 +1,9 @@
-"""Canonical domain, routing and Dokploy domain specifications SSOT."""
+"""Canonical domain and routing SSOT."""
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
 
 from infra2_sdk.runtime.environment import CANARY_SLOT, EnvironmentTier, to_environment_tier
 
@@ -48,28 +47,6 @@ class AppRoutePreference:
             cleaned = self.custom_prod_domain.strip().lower()
             if not _HOSTNAME_RE.match(cleaned):
                 raise ValueError(f"invalid custom_prod_domain {self.custom_prod_domain!r}")
-
-
-@dataclass(frozen=True)
-class DokployDomainSpec:
-    """A concrete domain specification ready for Dokploy ensure_domains / domain.create."""
-
-    host: str
-    port: int
-    path: str = "/"
-    service_name: str | None = None
-    https: bool = True
-
-    def to_dict(self) -> dict[str, Any]:
-        result: dict[str, Any] = {
-            "host": self.host,
-            "port": self.port,
-            "path": self.path,
-            "https": self.https,
-        }
-        if self.service_name:
-            result["serviceName"] = self.service_name
-        return result
 
 
 def resolve_app_hostname(
@@ -131,37 +108,6 @@ def resolve_app_hostname(
 
     # Local / test tiers
     return f"{slug}-{canonical_tier.value.replace('_', '-')}.{base_domain}"
-
-
-def resolve_dokploy_domains(
-    preference: AppRoutePreference,
-    tier: EnvironmentTier | str,
-    *,
-    base_domain: str = DEFAULT_BASE_DOMAIN,
-    slot_id: str | int | None = None,
-    is_canary: bool = False,
-    https: bool = True,
-) -> list[DokployDomainSpec]:
-    """Compute concrete Dokploy domain specifications from app preference and environment."""
-    host = resolve_app_hostname(
-        preference,
-        tier,
-        base_domain=base_domain,
-        slot_id=slot_id,
-        is_canary=is_canary,
-    )
-    specs: list[DokployDomainSpec] = []
-    for endpoint in preference.endpoints:
-        specs.append(
-            DokployDomainSpec(
-                host=host,
-                port=endpoint.port,
-                path=endpoint.path,
-                service_name=endpoint.service_name,
-                https=https,
-            )
-        )
-    return specs
 
 
 def resolve_service_url(

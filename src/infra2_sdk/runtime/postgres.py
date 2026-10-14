@@ -109,22 +109,6 @@ def probe_postgres(
                 target.close()
 
 
-class PostgresCheck:
-    name = "database"
-
-    def __init__(
-        self,
-        settings: PostgresSettings,
-        *,
-        connector: Callable[..., Any] | None = None,
-    ) -> None:
-        self.settings = settings
-        self.connector = connector
-
-    def probe(self) -> ProbeResult:
-        return probe_postgres(self.settings, connector=self.connector)
-
-
 def _elapsed(started: float) -> float:
     return (time.perf_counter() - started) * 1000
 
@@ -146,7 +130,6 @@ def redact_postgres_error(detail: str, settings: PostgresSettings) -> str:
 
 
 __all__ = [
-    "PostgresCheck",
     "PostgresSettings",
     "normalize_postgres_dsn",
     "probe_postgres",

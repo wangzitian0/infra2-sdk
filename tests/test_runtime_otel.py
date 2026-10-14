@@ -11,8 +11,6 @@ from infra2_sdk.runtime.identity import RuntimeIdentity
 from infra2_sdk.runtime.otel import (
     OtelSettings,
     configure_telemetry,
-    extract_trace_context,
-    inject_trace_context,
     resource_attributes,
     signal_endpoint,
 )
@@ -217,10 +215,6 @@ def test_identity_populates_standard_resource_attributes() -> None:
     assert attributes["vcs.ref.head.revision"] == "a" * 40
     assert attributes["team.name"] == "finance"
     assert attributes["service.name"] == "api"
-
-
-def test_w3c_trace_context_injection_preserves_headers() -> None:
-    assert inject_trace_context({"X-Test": "1"})["X-Test"] == "1"
 
 
 def test_enabled_bootstrap_constructs_all_otlp_signal_providers() -> None:
@@ -457,93 +451,11 @@ UNSAMPLED_PARENT = {"traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b71
 def test_parent_based_samplers_follow_the_extracted_inbound_decision(
     memory_otlp, sampler, parent, sampled
 ) -> None:
+    from opentelemetry.propagate import extract
+
     settings = _settings(traces_sampler=sampler, traces_sampler_arg="1")
-    context = extract_trace_context(parent)
+    context = extract(parent)
     assert _sampled_span_count(settings, memory_otlp, context=context) == (1 if sampled else 0)
-
-
-# --- W3C trace context: extract / inject -----------------------------------------------------
-
-
-@pytest.fixture
-def tracer():
-    """A recording tracer on a private provider: no global state, no exporter."""
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.sampling import ALWAYS_ON
-
-    return TracerProvider(sampler=ALWAYS_ON).get_tracer("trace-context-test")
-
-
-def test_inject_writes_a_valid_traceparent_for_the_active_span(tracer) -> None:
-    with tracer.start_as_current_span("outbound") as span:
-        headers = inject_trace_context({"X-Test": "1"})
-        context = span.get_span_context()
-    assert headers["X-Test"] == "1"
-    # Newer SDKs also set the W3C "random trace id" flag, so compare the full flags byte.
-    flags = f"{int(context.trace_flags):02x}"
-    assert headers["traceparent"] == f"00-{context.trace_id:032x}-{context.span_id:016x}-{flags}"
-    assert int(flags, 16) & 0x01, "the sampled bit must be set for a sampled span"
-
-
-def test_inject_writes_nothing_without_an_active_span_and_does_not_mutate_the_input() -> None:
-    original = {"X-Test": "1"}
-    assert inject_trace_context(original) == {"X-Test": "1"}
-    assert original == {"X-Test": "1"}
-    assert "traceparent" not in inject_trace_context()
-
-
-def test_extract_then_inject_keeps_the_trace_id_under_a_new_span_id(tracer) -> None:
-    inbound = {"Traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"}
-    context = extract_trace_context(inbound)
-    with tracer.start_as_current_span("server", context=context) as span:
-        outbound = inject_trace_context({})
-        assert span.get_span_context().trace_id == int("0af7651916cd43dd8448eb211c80319c", 16)
-    version, trace_id, span_id, flags = outbound["traceparent"].split("-")
-    assert (version, trace_id) == ("00", "0af7651916cd43dd8448eb211c80319c")
-    assert int(flags, 16) & 0x01, "the inbound sampled decision must be propagated"
-    assert span_id == f"{span.get_span_context().span_id:016x}"
-    assert span_id != "b7ad6b7169203331"
-
-
-def test_extract_matches_header_names_case_insensitively(tracer) -> None:
-    inbound = {"TRACEPARENT": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"}
-    with tracer.start_as_current_span("server", context=extract_trace_context(inbound)) as span:
-        assert span.get_span_context().trace_id == int("0af7651916cd43dd8448eb211c80319c", 16)
-
-
-def test_extract_ignores_non_string_header_values_instead_of_raising(tracer) -> None:
-    # Raw ASGI/WSGI carriers can hold bytes; the W3C propagator would raise TypeError on them.
-    inbound = {
-        "traceparent": b"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
-        "tracestate": 5,
-        b"x-bytes-name": "ignored",
-    }
-    with tracer.start_as_current_span("server", context=extract_trace_context(inbound)) as span:
-        assert span.parent is None
-
-
-def test_inject_with_an_explicit_context_passes_the_inbound_parent_through() -> None:
-    context = extract_trace_context(
-        {**SAMPLED_PARENT, "tracestate": "vendor=opaque"},
-    )
-    carried = inject_trace_context({}, context=context)
-    assert carried["traceparent"] == SAMPLED_PARENT["traceparent"]
-    assert carried["tracestate"] == "vendor=opaque"
-
-
-@pytest.mark.parametrize(
-    "inbound",
-    [
-        None,
-        {},
-        {"traceparent": "garbage"},
-        {"traceparent": "00-" + "0" * 32 + "-" + "0" * 16 + "-01"},
-    ],
-)
-def test_missing_or_malformed_inbound_context_starts_a_new_root_trace(tracer, inbound) -> None:
-    with tracer.start_as_current_span("server", context=extract_trace_context(inbound)) as span:
-        assert span.parent is None
-        assert span.get_span_context().is_valid
 
 
 # --- set_global=True: providers, handler, idempotence ----------------------------------------

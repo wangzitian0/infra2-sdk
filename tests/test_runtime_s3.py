@@ -4,7 +4,6 @@ import pytest
 
 from infra2_sdk.runtime.health import DependencyStatus
 from infra2_sdk.runtime.s3 import (
-    S3Check,
     S3Settings,
     create_s3_client,
     ensure_bucket,
@@ -148,9 +147,9 @@ def test_s3_from_env_rejects_invalid_configuration(environ, message) -> None:
 def test_probe_and_bucket_primitives() -> None:
     settings = S3Settings(bucket="runtime-canary", region_name="ap-southeast-1")
     healthy = Client()
-    assert S3Check(settings, client=healthy).probe().status is DependencyStatus.PRESENT
+    assert probe_s3(settings, client=healthy).status is DependencyStatus.PRESENT
     missing = Client(error=NotFound())
-    assert S3Check(settings, client=missing).probe().status is DependencyStatus.ABSENT
+    assert probe_s3(settings, client=missing).status is DependencyStatus.ABSENT
     ensure_bucket(settings, client=missing, allow_create=True)
     assert missing.created == {
         "Bucket": "runtime-canary",

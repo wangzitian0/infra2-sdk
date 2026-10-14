@@ -2,7 +2,6 @@ import pytest
 
 from infra2_sdk.runtime.health import DependencyStatus, run_probes
 from infra2_sdk.runtime.postgres import (
-    PostgresCheck,
     PostgresSettings,
     normalize_postgres_dsn,
     probe_postgres,
@@ -70,17 +69,22 @@ def test_postgres_from_env_requires_dsn_and_integer_timeout() -> None:
         )
 
 
-async def test_async_check_and_failure_evidence() -> None:
+async def test_a_probe_failure_is_evidence_when_run_through_the_probe_runner() -> None:
     settings = PostgresSettings("postgresql://db/app")
-    check = PostgresCheck(
-        settings,
-        connector=lambda *_args, **_kwargs: Connection(error=OSError("down")),
-    )
-    result = check.probe()
-    assert result.status is DependencyStatus.ABSENT
-    assert "OSError: down" in result.detail
 
-    probe_results = await run_probes([check])
+    class DatabaseCheck:
+        name = "database"
+
+        def probe(self):
+            return probe_postgres(
+                settings, connector=lambda *_args, **_kwargs: Connection(error=OSError("down"))
+            )
+
+    direct = DatabaseCheck().probe()
+    assert direct.status is DependencyStatus.ABSENT
+    assert "OSError: down" in direct.detail
+
+    probe_results = await run_probes([DatabaseCheck()])
     assert len(probe_results) == 1
     assert probe_results[0].status is DependencyStatus.ABSENT
     assert "OSError: down" in probe_results[0].detail

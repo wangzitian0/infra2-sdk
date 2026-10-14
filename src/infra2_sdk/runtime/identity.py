@@ -223,20 +223,3 @@ def canonical_sha256(payload: Any) -> str:
     """
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-
-
-def runtime_identity_fingerprint(parts: Mapping[str, str | bytes]) -> str:
-    """Hash named configuration inputs with unambiguous length framing."""
-
-    digest = hashlib.sha256()
-    for name in sorted(parts):
-        value = parts[name]
-        encoded = value.encode("utf-8") if isinstance(value, str) else value
-        if not isinstance(encoded, bytes):
-            raise TypeError("configuration values must be str or bytes")
-        name_bytes = name.encode("utf-8")
-        digest.update(len(name_bytes).to_bytes(4, "big"))
-        digest.update(name_bytes)
-        digest.update(len(encoded).to_bytes(8, "big"))
-        digest.update(encoded)
-    return digest.hexdigest()

@@ -1,20 +1,19 @@
 """Versioned wire contract for an anonymized production snapshot.
 
-This module validates manifest shape and binds a manifest to exact artifact
-bytes. It deliberately does not authorize the producer or perform snapshot,
-storage, host, Vault, or deployment operations. A consumer such as infra2
-must independently authorize the declared producer run before side effects.
+This module validates manifest shape. The manifest carries the SHA-256 digest and the size
+of the artifact. The module does not read the artifact. It deliberately does not authorize
+the producer or perform snapshot, storage, host, Vault, or deployment operations. A consumer
+such as infra2 must independently authorize the declared producer run, and check the
+artifact bytes against the manifest, before side effects.
 """
 
 from __future__ import annotations
 
-import hashlib
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from pathlib import Path
 from typing import Any
 
 from infra2_sdk._wire import (
@@ -320,30 +319,6 @@ class AnonymizedSnapshotManifest:
         }
 
 
-def verify_snapshot_artifact(
-    manifest: AnonymizedSnapshotManifest,
-    path: str | Path,
-) -> None:
-    """Fail closed unless ``path`` is the exact artifact bound by ``manifest``."""
-    artifact_path = Path(path)
-    try:
-        size = artifact_path.stat().st_size
-    except OSError as exc:
-        raise ValueError("snapshot artifact is unavailable") from exc
-    if size != manifest.artifact.size_bytes:
-        raise ValueError("snapshot artifact size mismatch")
-
-    digest = hashlib.sha256()
-    try:
-        with artifact_path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-    except OSError as exc:
-        raise ValueError("snapshot artifact is unavailable") from exc
-    if digest.hexdigest() != manifest.artifact.sha256:
-        raise ValueError("snapshot artifact sha256 mismatch")
-
-
 def _mapping(raw: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     value = raw.get(key)
     if not isinstance(value, Mapping):
@@ -373,5 +348,4 @@ __all__ = [
     "SnapshotArtifact",
     "SnapshotArtifactFormat",
     "SnapshotProducer",
-    "verify_snapshot_artifact",
 ]

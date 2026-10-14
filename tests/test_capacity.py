@@ -1,5 +1,4 @@
 import json
-import subprocess
 from datetime import date
 
 import pytest
@@ -10,7 +9,6 @@ from infra2_sdk.capacity import (
     CapacityReading,
     cloudflare_readings,
     evaluate,
-    onepassword_capacity,
 )
 from infra2_sdk.transport import HttpResponse
 
@@ -92,67 +90,3 @@ def test_cloudflare_readings_handles_errors_and_empty() -> None:
         cloudflare_readings(account="a", token="t", day=date(2026, 9, 6), transport=empty_accounts)
         == ()
     )
-
-
-def test_onepassword_capacity_reads_limits_and_usage_from_the_cli() -> None:
-    rows = [
-        {
-            "type": "token",
-            "action": "read",
-            "limit": 1000,
-            "used": 120,
-            "remaining": 880,
-            "reset": "in 45m",
-        },
-        {"type": "account", "action": "write", "limit": 100, "used": 3, "reset": "in 23h"},
-        {"type": "", "action": "x", "limit": 0},
-    ]
-
-    def runner(args, capture_output, text):
-        assert args[:4] == ["op", "service-account", "ratelimit", "infra2-cli"]
-        return subprocess.CompletedProcess(args, 0, json.dumps(rows), "")
-
-    report = onepassword_capacity("infra2-cli", runner=runner)
-    limits = report.limits
-    readings = report.readings
-    assert [(item.name, item.limit, item.window) for item in limits] == [
-        ("onepassword.token.read", 1000, "hour"),
-        ("onepassword.account.write", 100, "day"),
-    ]
-    assert readings == (
-        CapacityReading("onepassword.token.read", 120),
-        CapacityReading("onepassword.account.write", 3),
-    )
-
-
-def test_onepassword_capacity_report_structured_interface() -> None:
-    from infra2_sdk.capacity import OnePasswordCapacityReport
-
-    rows = [{"type": "token", "action": "read", "limit": 100, "used": 10, "reset": "in 10m"}]
-
-    def runner(args, **kw):
-        return subprocess.CompletedProcess(args, 0, json.dumps(rows), "")
-
-    report = onepassword_capacity("infra2-cli", runner=runner)
-    assert isinstance(report, OnePasswordCapacityReport)
-    assert len(report.limits) == 1
-    assert report.limits[0].name == "onepassword.token.read"
-    assert len(report.readings) == 1
-    assert report.readings[0].used == 10
-
-
-def test_onepassword_capacity_cli_failure_raises() -> None:
-    def fail_runner(args, **kwargs):
-        return subprocess.CompletedProcess(args, 1, "", "authentication failed")
-
-    with pytest.raises(RuntimeError, match="op service-account ratelimit failed"):
-        onepassword_capacity("infra2-cli", runner=fail_runner)
-
-
-def test_onepassword_capacity_cli_timeout_raises() -> None:
-    def timeout_runner(args, **kwargs):
-        assert kwargs.get("timeout") == 12.5
-        raise subprocess.TimeoutExpired(args, kwargs["timeout"])
-
-    with pytest.raises(RuntimeError, match="timed out after 12.5s"):
-        onepassword_capacity("infra2-cli", runner=timeout_runner, timeout=12.5)

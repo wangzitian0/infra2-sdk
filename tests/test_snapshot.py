@@ -1,5 +1,4 @@
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
 
@@ -10,7 +9,6 @@ from infra2_sdk.snapshot import (
     SnapshotArtifact,
     SnapshotArtifactFormat,
     SnapshotProducer,
-    verify_snapshot_artifact,
 )
 
 APP_SHA = "a" * 40
@@ -229,58 +227,6 @@ def test_direct_artifact_format_requires_the_enum_type() -> None:
         )
 
 
-def test_artifact_verification_binds_manifest_to_exact_bytes(tmp_path: Path) -> None:
-    artifact = tmp_path / "snapshot.dump"
-    artifact.write_bytes(b"verified snapshot bytes")
-    import hashlib
-
-    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
-    expected = replace(
-        manifest(),
-        artifact=SnapshotArtifact(
-            format=SnapshotArtifactFormat.POSTGRESQL_CUSTOM,
-            sha256=digest,
-            size_bytes=artifact.stat().st_size,
-        ),
-    )
-
-    verify_snapshot_artifact(expected, artifact)
-    artifact.write_bytes(b"tampered snapshot byte!")
-    with pytest.raises(ValueError, match="snapshot artifact sha256 mismatch"):
-        verify_snapshot_artifact(expected, artifact)
-
-    artifact.write_bytes(b"short")
-    with pytest.raises(ValueError, match="snapshot artifact size mismatch"):
-        verify_snapshot_artifact(expected, artifact)
-
-    with pytest.raises(ValueError, match="snapshot artifact is unavailable"):
-        verify_snapshot_artifact(expected, tmp_path / "missing.dump")
-
-
-def test_artifact_verification_converts_read_failures_to_closed_errors(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    artifact = tmp_path / "snapshot.dump"
-    artifact.write_bytes(b"verified snapshot bytes")
-    import hashlib
-
-    expected = replace(
-        manifest(),
-        artifact=SnapshotArtifact(
-            format=SnapshotArtifactFormat.POSTGRESQL_CUSTOM,
-            sha256=hashlib.sha256(artifact.read_bytes()).hexdigest(),
-            size_bytes=artifact.stat().st_size,
-        ),
-    )
-
-    def deny_read(*args, **kwargs):
-        raise PermissionError("denied")
-
-    monkeypatch.setattr(Path, "open", deny_read)
-    with pytest.raises(ValueError, match="snapshot artifact is unavailable"):
-        verify_snapshot_artifact(expected, artifact)
-
-
 @pytest.mark.parametrize(
     "value",
     [
@@ -306,23 +252,9 @@ def test_json_schema_is_closed_and_requires_clean_proof() -> None:
     assert proof["properties"]["residuals_found"] == {"const": 0}
 
 
-def test_shape_validation_is_not_presented_as_producer_attestation(tmp_path: Path) -> None:
+def test_shape_validation_is_not_presented_as_producer_attestation() -> None:
     """The pure SDK contract must keep the trust decision with infra2."""
-    import ast
-    import hashlib
-    import inspect
-
-    SnapshotManifest = AnonymizedSnapshotManifest
-    validate_snapshot_shape = SnapshotManifest.from_dict
-    verify_digest = verify_snapshot_artifact
-
-    # Direct AST check: verify_digest does not inspect the producer field
-    artifact_ast = ast.parse(inspect.getsource(verify_digest))
-    for node in ast.walk(artifact_ast):
-        if isinstance(node, ast.Attribute) and node.attr == "producer":
-            raise AssertionError("verify_digest must not inspect or attest the producer field")
-
-    # Shape validation accepts any syntactically valid producer without attestation
+    # Shape validation accepts any syntactically valid producer without attestation.
     raw = manifest(
         producer=SnapshotProducer(
             repository="arbitrary-org/arbitrary-repo",
@@ -331,19 +263,6 @@ def test_shape_validation_is_not_presented_as_producer_attestation(tmp_path: Pat
             run_url="https://github.com/arbitrary-org/arbitrary-repo/actions/runs/999999",
         )
     ).to_dict()
-    parsed = validate_snapshot_shape(raw)
+    parsed = AnonymizedSnapshotManifest.from_dict(raw)
     assert parsed.producer.repository == "arbitrary-org/arbitrary-repo"
-
-    # Artifact verification binds only bytes, ignoring producer identity entirely
-    artifact = tmp_path / "snapshot.dump"
-    payload = b"snapshot payload"
-    artifact.write_bytes(payload)
-    bound_manifest = replace(
-        parsed,
-        artifact=SnapshotArtifact(
-            format=SnapshotArtifactFormat.POSTGRESQL_CUSTOM,
-            sha256=hashlib.sha256(payload).hexdigest(),
-            size_bytes=len(payload),
-        ),
-    )
-    verify_digest(bound_manifest, artifact)
+    assert parsed.to_dict() == raw

@@ -13,11 +13,9 @@ from infra2_sdk.runtime.health import (
     DependencyKind,
     DependencyManifest,
     DependencyStatus,
-    DependencyUnavailableError,
     HealthStatus,
     ProbeResult,
     _run_sync_probe,
-    assert_required_dependencies,
     check_health,
     health_response,
     run_probes,
@@ -330,19 +328,6 @@ class _WrappedAsyncCheck:
         return inner()
 
 
-def _single_dependency_manifest() -> DependencyManifest:
-    return DependencyManifest(
-        (
-            Dependency(
-                "database",
-                DependencyKind.CODE_DOMINANT,
-                frozenset({EnvironmentTier.STAGING}),
-                frozenset({"DATABASE_URL"}),
-            ),
-        )
-    )
-
-
 async def test_runner_supports_sync_async_errors_and_timeouts() -> None:
     present = ProbeResult("database", DependencyStatus.PRESENT, "ok", 1)
     results = await run_probes(
@@ -384,15 +369,11 @@ async def test_sync_probe_preserves_caller_context() -> None:
     assert result[0].detail == "staging"
 
 
-def test_probe_wire_round_trip_and_required_gate() -> None:
+def test_probe_wire_round_trip() -> None:
     result = ProbeResult("database", DependencyStatus.PRESENT, "ok", 1.5)
     assert ProbeResult("database", "present").present
     assert ProbeResult.from_dict(result.to_dict()) == result
     assert result.json_schema()["properties"]["status"]["enum"] == ["present", "absent"]
-    assert_required_dependencies(_single_dependency_manifest(), "staging", (result,))
-    with pytest.raises(DependencyUnavailableError) as exc:
-        assert_required_dependencies(_single_dependency_manifest(), "staging", ())
-    assert exc.value.missing == ("database",)
 
 
 def test_probe_validation_rejects_ambiguous_results() -> None:
@@ -402,11 +383,6 @@ def test_probe_validation_rejects_ambiguous_results() -> None:
         ProbeResult("db", DependencyStatus.PRESENT, duration_ms=-1)
     with pytest.raises(ValueError, match="numeric"):
         ProbeResult.from_dict({"name": "db", "status": "present", "duration_ms": "bad"})
-    duplicate = ProbeResult("database", DependencyStatus.PRESENT)
-    with pytest.raises(ValueError, match="duplicate"):
-        assert_required_dependencies(
-            _single_dependency_manifest(), "staging", (duplicate, duplicate)
-        )
 
 
 async def test_runner_rejects_bad_input() -> None:

@@ -32,27 +32,27 @@ python -m pip install \
 
 | Module | Ownership |
 |---|---|
-| `infra2_sdk.capacity` | Capacity limits, readings, and levels; collectors for Cloudflare analytics and 1Password rate limits |
+| `infra2_sdk.capacity` | Capacity limits, readings, and levels; the collector for Cloudflare analytics |
 | `infra2_sdk.cli.scaffold` | Command-line interface for microservice scaffolding |
 | `infra2_sdk.ci` | Delivery-stage vocabulary and CI gate inventory validation |
 | `infra2_sdk.delivery` | Environment/stage evidence and failure taxonomy |
 | `infra2_sdk.deploy` | Deploy lifecycle wire contracts, dispatch client, health poller, and production evidence policies; CLI at `python -m infra2_sdk.deploy` |
 | `infra2_sdk.fastapi` | `init_service`: /livez, /readyz and /health routes for a FastAPI app, plus OTLP telemetry bootstrap |
 | `infra2_sdk.manifests` | Settings manifest driver (`--write`, `--check`, `--validate-env`) wrapping application configuration models |
-| `infra2_sdk.refs` | Git ref resolution, PR and release identity (`ReleaseIdentity`), remote ref queries, and credential redaction |
-| `infra2_sdk.routing` | Canonical domain and routing SSOT: `AppRoutePreference`, Dokploy domain specs, and service URL resolution |
+| `infra2_sdk.refs` | Git ref resolution, PR heads, registry image digests, the `ReleaseIdentity` record, remote ref queries, and credential redaction |
+| `infra2_sdk.routing` | Canonical domain and routing SSOT: `AppRoutePreference`, hostname resolution, and service URL resolution |
 | `infra2_sdk.rules.compose` | Pure compose-file rules (memory ceilings, bare `:latest` image refs); CLI at `python -m infra2_sdk.rules` |
 | `infra2_sdk.runtime.config_schema` | JSON Schema 2020-12 and environment injection manifests |
 | `infra2_sdk.runtime.environment` | Canonical six-tier environment vocabulary, variable resolution, and contract definitions |
 | `infra2_sdk.runtime.health` | Framework-agnostic readiness checks (`check_health`), probe runners, and dependency declarations |
-| `infra2_sdk.runtime.http` | Standard httpx clients and HTTP retry semantics |
+| `infra2_sdk.runtime.http` | Standard httpx clients and the HTTP reachability probe |
 | `infra2_sdk.runtime.identity` | OCI/config/release identity, `canonical_sha256`, and OTel resource coordinates |
-| `infra2_sdk.runtime.otel` | Explicit OTLP provider bootstrap, env-configured samplers, and W3C trace-context propagation |
+| `infra2_sdk.runtime.otel` | Explicit OTLP provider bootstrap and env-configured samplers |
 | `infra2_sdk.runtime.postgres` | PostgreSQL DSN normalization and psycopg reachability probe |
 | `infra2_sdk.runtime.s3` | Standard boto3 S3 client, probe, and safe bucket/object primitives |
 | `infra2_sdk.scaffold` | Zero-compromise scaffolding engine producing compose, deployer, and entrypoint assets |
-| `infra2_sdk.secrets` | Secret-store adapters (Vault KV, 1Password, Env), manifest-driven `SecretsResolver`, and Vault template renderers |
-| `infra2_sdk.snapshot` | Versioned anonymized-snapshot manifest, residual-proof shape, and artifact digest verification |
+| `infra2_sdk.secrets` | Secret-store adapters (Vault KV, 1Password), manifest-driven `SecretsResolver`, and Vault template renderers |
+| `infra2_sdk.snapshot` | Versioned anonymized-snapshot manifest and residual-proof shape |
 | `infra2_sdk.transport` | Minimal injectable HTTP transport (`HttpTransport`, `HttpResponse`, `urllib_transport`) shared by adapters |
 
 ### Core runtime entrypoints
@@ -61,7 +61,7 @@ python -m pip install \
 |---|---|---|---|
 | Service bootstrap | `init_service` | `infra2_sdk.fastapi` | Mounts `/livez`, `/readyz`, `/health` routes and configures OpenTelemetry providers |
 | Health probes | `check_health`, `run_probes` | `infra2_sdk.runtime.health` | Framework-agnostic readiness evaluation across declared dependency probes |
-| HTTP client | `create_http_client`, `probe_http` | `infra2_sdk.runtime.http` | Standard httpx client with connection limits, timeouts, and retry budgets |
+| HTTP client | `create_http_client`, `probe_http` | `infra2_sdk.runtime.http` | Standard httpx client with connection limits, timeouts, and connect retries, plus a reachability probe |
 | PostgreSQL | `normalize_postgres_dsn`, `probe_postgres` | `infra2_sdk.runtime.postgres` | Psycopg reachability probe with credential redaction and DSN normalization |
 | S3 storage | `create_s3_client`, `probe_s3`, `ensure_bucket` | `infra2_sdk.runtime.s3` | Boto3 client initialization, bucket reachability probe, and idempotent bucket creation |
 | Environment & identity | `environment_from_env` | `infra2_sdk.runtime.environment` | Canonical six-tier environment resolution and contract validation |
@@ -90,21 +90,17 @@ storage, database, HTTP, or telemetry abstractions:
   evidence redacts the configured DSN and password before it enters logs or alerts.
 - HTTP returns an httpx client. Provider retry budgets and idempotency policy remain with the
   caller.
-- OpenTelemetry configures OTLP/HTTP providers and W3C Trace Context propagation only when
-  explicitly requested. OTLP endpoints require a valid HTTP(S) host, reject embedded credentials
-  and fragments, and preserve query parameters when deriving per-signal paths.
+- OpenTelemetry configures OTLP/HTTP providers only when explicitly requested. OTLP endpoints
+  require a valid HTTP(S) host, reject embedded credentials and fragments, and preserve query
+  parameters when deriving per-signal paths. Trace-context propagation stays with the
+  application: use `opentelemetry.propagate.inject` and `extract`.
 
 Telemetry and readiness in an application (`infra2-sdk[otel]`):
 
 ```python
 from opentelemetry import trace
 
-from infra2_sdk.runtime.otel import (
-    OtelSettings,
-    configure_telemetry,
-    extract_trace_context,
-    inject_trace_context,
-)
+from infra2_sdk.runtime.otel import OtelSettings, configure_telemetry
 
 tracer = trace.get_tracer("my-app")
 
@@ -112,9 +108,8 @@ tracer = trace.get_tracer("my-app")
 # OTEL_TRACES_SAMPLER and OTEL_TRACES_SAMPLER_ARG; no endpoint (or OTEL_SDK_DISABLED) means off.
 providers = configure_telemetry(OtelSettings.from_env(), set_global=True)
 
-# Inbound: continue the caller's trace. Outbound: propagate the active span.
-with tracer.start_as_current_span("handle", context=extract_trace_context(request.headers)):
-    outbound_headers = inject_trace_context({"Accept": "application/json"})
+with tracer.start_as_current_span("handle"):
+    ...
 
 providers.shutdown()  # on exit: flushes exporters and detaches the logging handler
 ```
@@ -128,14 +123,22 @@ settings (standard `OTEL_TRACES_SAMPLER` names; `OTEL_TRACES_SAMPLER_ARG` for th
 samplers); ambient `os.environ` is only read by `from_env()`.
 
 ```python
-from infra2_sdk.runtime import check_health
-from infra2_sdk.runtime.http import HttpCheck
+from infra2_sdk.runtime import ProbeResult, check_health
+from infra2_sdk.runtime.http import probe_http
+
+
+class CatalogCheck:  # a DependencyCheck: a `name` and a `probe()` that returns a ProbeResult
+    name = "catalog"
+
+    async def probe(self) -> ProbeResult:
+        return await probe_http(url, name=self.name)
+
 
 # In a readiness handler (async, any framework); DEPENDENCIES is your DependencyManifest and
 # `environment` comes from environment_from_env(). A required dependency down is 503 with the
 # reasons; an optional one down is 200 "degraded"; a raising probe is reported, never a 200.
 status_code, body = await check_health(
-    [HttpCheck("catalog", url)], manifest=DEPENDENCIES, tier=environment.tier
+    [CatalogCheck()], manifest=DEPENDENCIES, tier=environment.tier
 )
 ```
 
@@ -401,13 +404,13 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
 
 ### Anonymized snapshot trust boundary
 
-`infra2_sdk.snapshot` validates a closed v1 wire shape and proves that local
-artifact bytes match the manifest's non-zero size and SHA-256 digest. Shape and
-digest validation **does not attest** that the declared producer actually ran
-the anonymizer. Before any restore or deploy side effect, infrastructure must
-independently authorize the declared repository, source SHA, workflow run, and
-artifact provenance. Dumping, anonymization, storage, Vault, host access, and
-deployment remain outside the SDK.
+`infra2_sdk.snapshot` validates a closed v1 wire shape. The manifest carries the
+non-zero size and the SHA-256 digest of the artifact. The SDK does not read the
+artifact. Shape validation **does not attest** that the declared producer actually
+ran the anonymizer. Before any restore or deploy side effect, infrastructure must
+check the artifact bytes against the manifest. It must also independently authorize
+the declared repository, source SHA, workflow run, and artifact provenance. Dumping,
+anonymization, storage, Vault, host access, and deployment remain outside the SDK.
 
 ## Development
 

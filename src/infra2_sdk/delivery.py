@@ -8,7 +8,6 @@ from enum import StrEnum
 from infra2_sdk.runtime.environment import EnvironmentTier, to_environment_tier
 
 __all__ = [
-    "PREVIEW_RELEVANT_STAGES",
     "STAGE_DEADLINE_MS",
     "BudgetStatus",
     "DisagreementKind",
@@ -95,14 +94,6 @@ STAGE_DEADLINE_MS: dict[PipelineStage, int] = {
     PipelineStage.DEPLOY_STATUS: 1_200_000,
     PipelineStage.WATCHDOG: 120_000,
 }
-
-PREVIEW_RELEVANT_STAGES = frozenset(
-    {
-        PipelineStage.REGRESSION_E2E,
-        PipelineStage.IMAGE_BUILD,
-        PipelineStage.DEPLOY_SMOKE,
-    }
-)
 
 
 @dataclass(frozen=True)

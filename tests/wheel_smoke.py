@@ -22,6 +22,34 @@ REMOVED_MODULES = (
     "infra2_sdk.runtime.probes",
 )
 
+# Names removed in 3.4.0 (issue #102), as (module, dotted name). A dotted name is a method.
+# One frozen list: tests/test_removed_names.py imports it.
+REMOVED_NAMES = (
+    ("infra2_sdk.capacity", "LEVELS"),
+    ("infra2_sdk.capacity", "onepassword_capacity"),
+    ("infra2_sdk.delivery", "PREVIEW_RELEVANT_STAGES"),
+    ("infra2_sdk.refs", "resolve_release_identity"),
+    ("infra2_sdk.refs", "verify_runtime_identity"),
+    ("infra2_sdk.routing", "resolve_dokploy_domains"),
+    ("infra2_sdk.runtime.config_schema", "settings_json_schema"),
+    ("infra2_sdk.runtime.health", "assert_required_dependencies"),
+    ("infra2_sdk.runtime.http", "retryable_request"),
+    ("infra2_sdk.runtime.http", "parse_retry_after"),
+    ("infra2_sdk.runtime.http", "HttpCheck"),
+    ("infra2_sdk.runtime.identity", "runtime_identity_fingerprint"),
+    ("infra2_sdk.runtime.otel", "inject_trace_context"),
+    ("infra2_sdk.runtime.otel", "extract_trace_context"),
+    ("infra2_sdk.runtime.postgres", "PostgresCheck"),
+    ("infra2_sdk.runtime.s3", "S3Check"),
+    ("infra2_sdk.secrets", "EnvBackend"),
+    ("infra2_sdk.snapshot", "verify_snapshot_artifact"),
+    # Names that only the removed code used.
+    ("infra2_sdk.capacity", "OnePasswordCapacityReport"),
+    ("infra2_sdk.routing", "DokployDomainSpec"),
+    ("infra2_sdk.runtime.health", "DependencyUnavailableError"),
+    ("infra2_sdk.secrets", "ReadOnlyBackendError"),
+)
+
 
 def smoke_core() -> None:
     from infra2_sdk.runtime import environment_from_env, runtime_env_contract
@@ -38,6 +66,7 @@ def smoke_core() -> None:
     import infra2_sdk.runtime.s3  # noqa: F401
 
     smoke_package_data()
+    smoke_removed_names()
     smoke_health()
 
 
@@ -64,6 +93,25 @@ def smoke_package_data() -> None:
             assert exc.name == module, (module, exc.name)
         else:
             raise AssertionError(f"{module} was removed in 3.3.0 and must not be importable")
+
+
+def smoke_removed_names() -> None:
+    """The wheel does not carry the names removed in 3.4.0."""
+
+    import infra2_sdk
+    import infra2_sdk.runtime
+
+    assert len(REMOVED_NAMES) == 22 and len(set(REMOVED_NAMES)) == 22
+    for module, dotted in REMOVED_NAMES:
+        owner = importlib.import_module(module)
+        *parents, leaf = dotted.split(".")
+        for part in parents:
+            owner = getattr(owner, part)  # AttributeError: the owner vanished, not the name
+        assert not hasattr(owner, leaf), f"{module}.{dotted} was removed in 3.4.0"
+        if not parents:
+            for package in (infra2_sdk, infra2_sdk.runtime):
+                assert not hasattr(package, leaf), f"{package.__name__}.{leaf} was removed"
+                assert leaf not in package.__all__, f"{package.__name__}.__all__ lists {leaf}"
 
 
 def smoke_health() -> None:
@@ -194,13 +242,7 @@ def smoke_standalone_app() -> None:
 def smoke_otel() -> None:
     import opentelemetry.sdk.trace  # noqa: F401
 
-    from infra2_sdk.runtime.otel import (
-        OtelSettings,
-        configure_telemetry,
-        extract_trace_context,
-        inject_trace_context,
-        signal_endpoint,
-    )
+    from infra2_sdk.runtime.otel import OtelSettings, configure_telemetry, signal_endpoint
 
     settings = OtelSettings.from_env(
         {
@@ -211,9 +253,6 @@ def smoke_otel() -> None:
     assert not settings.enabled
     assert configure_telemetry(settings).tracer_provider is None
     assert signal_endpoint("http://collector:4318", "logs") == "http://collector:4318/v1/logs"
-    inbound = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
-    carried = inject_trace_context({}, context=extract_trace_context({"traceparent": inbound}))
-    assert carried.get("traceparent") == inbound, carried
 
 
 async def _asgi_get(app, path: str) -> tuple[int, dict]:

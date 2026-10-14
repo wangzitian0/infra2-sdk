@@ -145,17 +145,6 @@ def probe_s3(settings: S3Settings, *, client: Any | None = None) -> ProbeResult:
                 s3_client.close()
 
 
-class S3Check:
-    name = "object_storage"
-
-    def __init__(self, settings: S3Settings, *, client: Any | None = None) -> None:
-        self.settings = settings
-        self.client = client
-
-    def probe(self) -> ProbeResult:
-        return probe_s3(self.settings, client=self.client)
-
-
 def ensure_bucket(
     settings: S3Settings, *, client: Any | None = None, allow_create: bool = False
 ) -> None:
@@ -213,7 +202,6 @@ def _elapsed(started: float) -> float:
 
 
 __all__ = [
-    "S3Check",
     "S3Settings",
     "create_s3_client",
     "ensure_bucket",

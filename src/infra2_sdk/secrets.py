@@ -34,10 +34,6 @@ class SecretsError(RuntimeError):
     """A backend refused or failed; the message never carries a secret value."""
 
 
-class ReadOnlyBackendError(SecretsError):
-    pass
-
-
 @dataclass(frozen=True)
 class WriteResult:
     changed: tuple[str, ...] = ()
@@ -74,27 +70,6 @@ def op_item(project: str, env: str, service: str, *, scope: str = "env") -> str:
 
 
 # --------------------------------------------------------------------------- backends
-
-
-class EnvBackend:
-    """Read-only view over process environment (and an optional dotenv file).
-
-    The only backend an application needs: with it a standalone process or CI resolves the
-    same manifest without any infrastructure.
-    """
-
-    def __init__(self, environ: Mapping[str, str], *, dotenv_path: str | None = None) -> None:
-        merged: dict[str, str] = {}
-        if dotenv_path:
-            merged.update(_parse_dotenv(dotenv_path))
-        merged.update({k: v for k, v in environ.items() if isinstance(v, str)})
-        self._values = merged
-
-    def read(self, path: str) -> Mapping[str, str]:
-        return dict(self._values)
-
-    def write(self, path: str, values: Mapping[str, str]) -> WriteResult:
-        raise ReadOnlyBackendError("the environment backend is read-only")
 
 
 class VaultKvBackend:
@@ -697,22 +672,3 @@ def _json(response: HttpResponse) -> dict[str, Any]:
     except ValueError as error:
         raise SecretsError("backend returned malformed JSON") from error
     return parsed if isinstance(parsed, dict) else {}
-
-
-def _parse_dotenv(path: str) -> dict[str, str]:
-    values: dict[str, str] = {}
-    try:
-        with open(path, encoding="utf-8") as handle:
-            for raw in handle:
-                line = raw.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                key = key.removeprefix("export ").strip()
-                value = value.strip()
-                if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-                    value = value[1:-1]
-                values[key] = value
-    except FileNotFoundError:
-        return {}
-    return values
