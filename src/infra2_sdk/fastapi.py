@@ -181,7 +181,8 @@ def init_service(
 
     Parameters:
         app: The FastAPI application.
-        name: Logical service name. The telemetry service name is ``OTEL_SERVICE_NAME``, then
+        name: Logical service name. It must not be blank: a blank name raises ``ValueError``
+            before the app changes. The telemetry service name is ``OTEL_SERVICE_NAME``, then
             ``service.name`` in ``OTEL_RESOURCE_ATTRIBUTES``, then ``name``.
         db_checker: Optional sync or async callable. It returns ``bool`` or ``(bool, detail)``.
             A false result, an exception or a timeout makes /readyz and /health answer 503.
@@ -211,6 +212,8 @@ def init_service(
         raise RuntimeError("init_service was already called for this app")
     if not check_timeout_seconds > 0:
         raise ValueError("check_timeout_seconds must be positive")
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("name must not be blank")
     setattr(app.state, _INITIALIZED_ATTRIBUTE, name)
 
     async def report() -> tuple[int, dict[str, Any]]:

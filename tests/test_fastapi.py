@@ -13,7 +13,7 @@ import pytest
 from fastapi import FastAPI, Request
 from starlette.testclient import TestClient
 
-from infra2_sdk.fastapi import init_service
+from infra2_sdk.fastapi import _INITIALIZED_ATTRIBUTE, init_service
 from infra2_sdk.runtime.environment import EnvironmentConflictError
 
 # Every variable that selects the tier, the service identity or the OTLP endpoint.
@@ -376,6 +376,28 @@ def test_second_init_service_call_on_one_app_raises_and_changes_nothing():
 
     assert app.router.routes == routes_before
     assert [route.path for route in app.router.routes].count("/livez") == 1
+
+
+# --- a blank name stops the start before any side effect ---------------------------------------
+
+
+@pytest.mark.parametrize("name", ["", " ", "\t\n"], ids=["empty", "space", "tab-and-newline"])
+@pytest.mark.parametrize("strict", [True, False], ids=["strict", "non-strict"])
+@pytest.mark.parametrize("enable_otel", [True, False], ids=["otel", "no-otel"])
+def test_init_service_rejects_a_blank_name_before_any_side_effect(
+    monkeypatch, name, strict, enable_otel
+):
+    monkeypatch.setenv("ENVIRONMENT", "local_dev")  # a known tier: only the name is at fault
+    app = FastAPI()
+    routes_before = list(app.router.routes)
+
+    with pytest.raises(ValueError, match="name must not be blank"):
+        init_service(app, name, enable_otel=enable_otel, strict_otel=strict)
+
+    assert app.router.routes == routes_before
+    assert not hasattr(app.state, _INITIALIZED_ATTRIBUTE)
+    init_service(app, "svc", enable_otel=False)  # the app is still free for a valid call
+    assert {"/livez", "/readyz", "/health"} <= {route.path for route in app.router.routes}
 
 
 def test_init_service_marks_only_the_app_it_ran_on():
