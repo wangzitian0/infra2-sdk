@@ -1835,3 +1835,31 @@ def test_deploy_main_cli_verify_evidence_non_mapping() -> None:
         ]
     )
     assert rc == 1
+
+
+def test_validate_evidence_urls_is_public_and_accepts_canonical_urls() -> None:
+    from infra2_sdk import deploy
+    from infra2_sdk.deploy import validate_evidence_urls
+
+    assert "validate_evidence_urls" in deploy.__all__
+    validate_evidence_urls(request())
+    validate_evidence_urls(request(), expected_repository="wangzitian0/finance_report")
+
+
+def test_validate_evidence_urls_rejects_a_foreign_repository_and_a_wrong_resource() -> None:
+    from infra2_sdk.deploy import validate_evidence_urls
+
+    with pytest.raises(ValueError, match="expected repository"):
+        validate_evidence_urls(request(), expected_repository="evil/repo")
+    foreign = request(
+        evidence=DeployEvidence(source_run_url="https://github.com/evil/repo/actions/runs/1")
+    )
+    with pytest.raises(ValueError, match="source_run_url"):
+        validate_evidence_urls(foreign)
+    wrong_resource = request(
+        evidence=DeployEvidence(
+            source_run_url="https://github.com/wangzitian0/finance_report/pull/1"
+        )
+    )
+    with pytest.raises(ValueError, match="source_run_url"):
+        validate_evidence_urls(wrong_resource)

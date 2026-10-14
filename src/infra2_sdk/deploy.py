@@ -428,8 +428,17 @@ def _github_evidence_number(
     return number
 
 
-def _validate_evidence_urls(request: DeployRequest) -> None:
-    repository_path = f"/{request.source_repository}/"
+def validate_evidence_urls(
+    request: DeployRequest, *, expected_repository: str | None = None
+) -> None:
+    """Check that evidence URLs are canonical github.com URLs of one repository.
+
+    Use ``expected_repository`` to pin the repository from a trusted source.
+    Without it, the check uses ``request.source_repository``.
+    """
+    if expected_repository is not None and expected_repository != request.source_repository:
+        raise ValueError("source_repository does not match the expected repository")
+    repository_path = f"/{expected_repository or request.source_repository}/"
     _require_github_path(
         request.evidence.source_run_url,
         prefix=f"{repository_path}actions/runs/",
@@ -446,6 +455,9 @@ def _validate_evidence_urls(request: DeployRequest) -> None:
             prefix=f"{repository_path}pull/",
             field="reviewed_change_url",
         )
+
+
+_validate_evidence_urls = validate_evidence_urls
 
 
 def _verify_run(
@@ -1405,6 +1417,7 @@ __all__ = [
     "fetch_production_evidence_policy",
     "poll_until_healthy",
     "validate_deploy_request",
+    "validate_evidence_urls",
     "validate_wire_shape",
     "verify_production_evidence",
     "Api",

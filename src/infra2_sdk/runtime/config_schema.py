@@ -8,7 +8,6 @@ templates, policies, reconciliation) keys off ``EnvironmentField.source``.
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, replace
@@ -17,6 +16,7 @@ from typing import Any, get_args
 
 from infra2_sdk._wire import (
     JSON_SCHEMA_DIALECT,
+    canonical_sha256,
     parse_contract_version,
     parse_string,
     require_contract_version,
@@ -451,8 +451,7 @@ def manifest_config_fingerprint(manifest: EnvironmentManifest, values: Mapping[s
         for field in sorted(manifest.fields, key=lambda item: item.env)
         if field.env in values
     ]
-    payload = json.dumps(lines, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
+    return canonical_sha256(lines)
 
 
 def _validation_aliases(alias: Any) -> tuple[str, ...]:

@@ -4,6 +4,24 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.5.0 - 2026-10-14
+
+### Added
+
+- Add `infra2_sdk.deploy.validate_evidence_urls(request, *, expected_repository=None)`. It checks that the evidence URLs are `github.com` URLs of one repository. With `expected_repository`, a request of another repository raises `ValueError` ([#105](https://github.com/wangzitian0/infra2-sdk/issues/105)).
+- Add `infra2_sdk.runtime.otel.REQUIRED_IDENTITY_ATTRIBUTES`: `deployment.environment.name`, `infra.service.id`, `service.version` and `infra.iac.ref` ([#105](https://github.com/wangzitian0/infra2-sdk/issues/105)).
+- Add the keyword `require_issued_identity` (default `False`) to `OtelSettings.from_env` and `init_service`. With an active OTLP endpoint, it requires `OTEL_SERVICE_NAME` and the four identity attributes, ignores `ENVIRONMENT`, `ENV` and `APP_ENV`, and takes the tier from `deployment.environment.name` ([#105](https://github.com/wangzitian0/infra2-sdk/issues/105)).
+- Add `infra2_sdk.runtime.environment.is_preview_alias`, and `canonical_json_bytes` and `canonical_sha256` in the private module `infra2_sdk._wire` ([#105](https://github.com/wangzitian0/infra2-sdk/issues/105)).
+
+### Changed
+
+- Accept the underscore preview aliases `pr_12`, `branch_main`, `commit_1ab32d5`, `tag_v1_2_3` and `canary_preview`. They give the same tier and display name as the hyphen form ([#105](https://github.com/wangzitian0/infra2-sdk/issues/105)).
+- Reconcile a staging behavior tier with a preview `deployment.environment.name` in `OtelSettings.from_env`. The result is tier `preview`. A staging tier with the name `production` still raises `ValueError` ([#105](https://github.com/wangzitian0/infra2-sdk/issues/105)).
+- Make `resolve_app_hostname` return `<slug>-<alias>.<domain>` for a preview alias in `tier` or `slot_id` (`report-pr-5`, `report-branch-main`). An integer `slot_id` is a PR number. Other slots keep `<slug>-preview-<slot>`. Before, `slot_id="pr-5"` gave `report-preview-pr-5` ([#105](https://github.com/wangzitian0/infra2-sdk/issues/105), [#91](https://github.com/wangzitian0/infra2-sdk/issues/91)).
+- Make the canary host `<slug>-canary-preview.<domain>`. Before, it was `canary-preview.<domain>` without the slug. The census of 2026-10-14 finds no consumer call with a canary tier or slot ([#105](https://github.com/wangzitian0/infra2-sdk/issues/105)).
+- Use one canonical JSON hash function in `runtime.identity` and `runtime.config_schema` ([#105](https://github.com/wangzitian0/infra2-sdk/issues/105)).
+- Generate `mem_limit` in the scaffold `compose.yaml`, so `inspect_compose` accepts it. Generate `compose_path` and `public_route = PublicRouteFacet()` in the scaffold `deploy.py` ([#105](https://github.com/wangzitian0/infra2-sdk/issues/105)).
+
 ## 3.4.0 - 2026-10-14
 
 ### Added

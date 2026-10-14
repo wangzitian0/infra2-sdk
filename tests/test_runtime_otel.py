@@ -727,3 +727,78 @@ def test_logging_handler_falls_back_to_the_sdk_handler_when_the_instrumentation_
     assert otel_module._logging_handler_class().__module__ != sdk_logs.LoggingHandler.__module__
     monkeypatch.setattr(otel_module, "require", require)
     assert otel_module._logging_handler_class() is sdk_logs.LoggingHandler
+
+
+def test_staging_behavior_with_preview_display_name_reconciles_to_preview() -> None:
+    settings = OtelSettings.from_env(
+        {
+            "APP_ENV": "staging",
+            "OTEL_SERVICE_NAME": "api",
+            "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318",
+            "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=pr_12",
+        }
+    )
+    assert settings.environment == "preview"
+    assert settings.deployment_environment == "pr-12"
+
+
+def test_staging_behavior_with_production_display_name_still_conflicts() -> None:
+    with pytest.raises(ValueError, match="deployment_environment disagrees"):
+        OtelSettings.from_env(
+            {
+                "ENVIRONMENT": "staging",
+                "OTEL_SERVICE_NAME": "api",
+                "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=production",
+            }
+        )
+
+
+_ISSUED = {
+    "OTEL_SERVICE_NAME": "api",
+    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318",
+    "OTEL_RESOURCE_ATTRIBUTES": (
+        "deployment.environment.name=pr-12,infra.service.id=p/api,"
+        "service.version=1.2.3,infra.iac.ref=abc1234"
+    ),
+}
+
+
+def test_required_identity_attributes_are_the_four_issued_names() -> None:
+    assert otel_module.REQUIRED_IDENTITY_ATTRIBUTES == (
+        "deployment.environment.name",
+        "infra.service.id",
+        "service.version",
+        "infra.iac.ref",
+    )
+
+
+def test_issued_identity_derives_the_tier_from_the_issued_attribute() -> None:
+    settings = OtelSettings.from_env(
+        {**_ISSUED, "ENVIRONMENT": "production"}, require_issued_identity=True
+    )
+    assert settings.environment == "preview"
+    assert settings.deployment_environment == "pr-12"
+
+
+@pytest.mark.parametrize("missing", otel_module.REQUIRED_IDENTITY_ATTRIBUTES)
+def test_issued_identity_rejects_each_missing_attribute(missing: str) -> None:
+    attrs = ",".join(
+        pair
+        for pair in _ISSUED["OTEL_RESOURCE_ATTRIBUTES"].split(",")
+        if not pair.startswith(f"{missing}=")
+    )
+    with pytest.raises(ValueError, match=missing.replace(".", r"\.")):
+        OtelSettings.from_env(
+            {**_ISSUED, "OTEL_RESOURCE_ATTRIBUTES": attrs}, require_issued_identity=True
+        )
+
+
+def test_issued_identity_rejects_a_missing_service_name() -> None:
+    environ = {k: v for k, v in _ISSUED.items() if k != "OTEL_SERVICE_NAME"}
+    with pytest.raises(ValueError, match="OTEL_SERVICE_NAME"):
+        OtelSettings.from_env(environ, require_issued_identity=True)
+
+
+def test_issued_identity_is_not_required_without_an_endpoint() -> None:
+    settings = OtelSettings.from_env({}, require_issued_identity=True)
+    assert settings.enabled is False

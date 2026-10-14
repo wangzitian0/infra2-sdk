@@ -204,6 +204,28 @@ _PRODUCTION_ALIASES = frozenset({"prod", "production"})
 _PREVIEW_ALIAS_RE = re.compile(
     r"\A(?:branch-[a-z0-9][a-z0-9_-]*|pr-[1-9][0-9]*|commit-[0-9a-f]{7,40}|tag-v[0-9]+-[0-9]+-[0-9]+)\Z"
 )
+_UNDERSCORE_PREVIEW_PREFIX_RE = re.compile(
+    r"\A(?P<prefix>branch|pr|commit|tag)_(?P<rest>[a-z0-9][a-z0-9._-]*)\Z"
+)
+
+
+def _canonicalize_preview_alias(cleaned: str) -> str:
+    """Convert underscore preview aliases from infra2 into hyphenated form."""
+    if cleaned == "canary_preview":
+        return CANARY_SLOT
+    match = _UNDERSCORE_PREVIEW_PREFIX_RE.match(cleaned)
+    if match is not None:
+        rest = match["rest"]
+        if match["prefix"] == "tag":
+            rest = rest.replace("_", "-")
+        return f"{match['prefix']}-{rest}"
+    return cleaned
+
+
+def is_preview_alias(value: str) -> bool:
+    """Return True when value is a canonical or underscore preview alias."""
+    alias = _canonicalize_preview_alias(value.strip().lower())
+    return alias == CANARY_SLOT or bool(_PREVIEW_ALIAS_RE.match(alias))
 
 
 @dataclass(frozen=True)
@@ -244,10 +266,11 @@ def to_environment_tier(
             return EnvironmentTier.GITHUB_CI if github_actions else EnvironmentTier.LOCAL_TEST
         if normalized == EnvironmentTier.GITHUB_CI.value:
             return EnvironmentTier.GITHUB_CI
+        alias = _canonicalize_preview_alias(cleaned)
         if (
             normalized == EnvironmentTier.PREVIEW.value
-            or cleaned == CANARY_SLOT
-            or _PREVIEW_ALIAS_RE.match(cleaned)
+            or alias == CANARY_SLOT
+            or _PREVIEW_ALIAS_RE.match(alias)
         ):
             return EnvironmentTier.PREVIEW
         if normalized == EnvironmentTier.STAGING.value:
@@ -306,7 +329,7 @@ def environment_from_env(
         github_actions=github_actions,
         unknown=unknown,
     )
-    raw_name = resolved.value.strip().lower()
+    raw_name = _canonicalize_preview_alias(resolved.value.strip().lower())
     name = raw_name if tier is EnvironmentTier.PREVIEW and raw_name != "preview" else tier.value
     return RuntimeEnvironment(name=name, tier=tier)
 
@@ -353,6 +376,7 @@ def _resolve_service_identity(
     *,
     strict: bool,
     default_service_name: str | None = None,
+    ignore_environment: bool = False,
 ) -> _ServiceIdentity:
     """Resolve the tier and the service coordinates of one environment.
 
@@ -371,8 +395,17 @@ def _resolve_service_identity(
     - Instance id: ``INSTANCE_ID``, then ``service.instance.id``, then an empty string.
     """
 
-    runtime = strict_environment_from_env(environ) if strict else environment_from_env(environ)
-    environment_is_set = resolve_runtime_env(environ, RuntimeEnvKey.ENVIRONMENT).value is not None
+    if ignore_environment:
+        runtime = RuntimeEnvironment(
+            name=EnvironmentTier.LOCAL_DEV.value,
+            tier=EnvironmentTier.LOCAL_DEV,
+        )
+        environment_is_set = False
+    else:
+        runtime = strict_environment_from_env(environ) if strict else environment_from_env(environ)
+        environment_is_set = (
+            resolve_runtime_env(environ, RuntimeEnvKey.ENVIRONMENT).value is not None
+        )
     named = resolve_runtime_env(environ, RuntimeEnvKey.SERVICE_NAME).value
     attributes, deployment_environment = load_resource_attributes(
         resolve_runtime_env(environ, RuntimeEnvKey.OTEL_RESOURCE_ATTRIBUTES, default="").value
@@ -408,7 +441,7 @@ def normalize_deployment_environment(
     """Validate a display identity without imposing a platform's preview naming scheme."""
 
     resolved_tier = to_environment_tier(tier)
-    display = value.strip().lower()
+    display = _canonicalize_preview_alias(value.strip().lower())
     if not display:
         return resolved_tier.value
     if resolved_tier is EnvironmentTier.PREVIEW:
@@ -466,6 +499,7 @@ __all__ = [
     "UnknownEnvironmentPolicy",
     "env_int",
     "environment_from_env",
+    "is_preview_alias",
     "normalize_deployment_environment",
     "resolve_env",
     "resolve_environment_tier",
