@@ -13,11 +13,11 @@ the same local SDK code.
 
 The SDK owns the contracts and the adapters over open protocols: the environment manifest
 and its source classes, the secret-store adapters (Vault KV v2 HTTP API, the 1Password CLI),
-the generators for everything a deployment derives from a manifest, release identity
-resolution, and capacity accounting. infra2 owns orchestration: compose files, Dokploy,
-host operations, and *when* each SDK operation runs. No `INFRA2_*`, Vault, or Dokploy
-value is required to load runtime settings; an application only ever reads environment
-variables.
+the generators for everything a deployment derives from a manifest, release reference
+resolution (tag to commit, tag to image digest), and capacity accounting. infra2 owns
+orchestration: compose files, Dokploy, host operations, and *when* each SDK operation runs.
+No `INFRA2_*`, Vault, or Dokploy value is required to load runtime settings; an application
+only ever reads environment variables.
 
 ## Install
 
