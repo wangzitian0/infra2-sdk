@@ -6,9 +6,9 @@ The tests read the syntax trees of src/infra2_sdk. They do not import the module
 - The fixed names that the source reads are the names of the runtime env contract plus the list
   FIXED_READS below. A new fixed-name read fails until a person adds it there with a reason.
 
-A read site is a call of get, getenv, resolve_runtime_env, resolve_env, env_int or
-runtime_env_spec, or a subscript, with a string constant that looks like a variable name. The
-receiver can have any name.
+A read site is a call of get, getenv, pop, setdefault, resolve_runtime_env, resolve_env, env_int
+or runtime_env_spec, a subscript, or a test of the form `"NAME" in mapping`, with a string
+constant that looks like a variable name. The receiver can have any name.
 
 These tests do not check:
 
@@ -52,7 +52,7 @@ FIXED_READS = {
 }
 
 _VARIABLE_NAME = re.compile(r"[A-Z][A-Z0-9_]{3,}")
-_FIRST_ARGUMENT = frozenset({"get", "getenv", "runtime_env_spec"})
+_FIRST_ARGUMENT = frozenset({"get", "getenv", "pop", "setdefault", "runtime_env_spec"})
 _SECOND_ARGUMENT = frozenset({"resolve_runtime_env", "resolve_env", "env_int"})
 
 
@@ -88,6 +88,10 @@ def _read_sites(tree: ast.AST) -> list[tuple[int, str]]:
         names: list[str] = []
         if isinstance(node, ast.Subscript):
             names = _constants(node.slice)
+        elif isinstance(node, ast.Compare) and any(
+            isinstance(op, ast.In | ast.NotIn) for op in node.ops
+        ):
+            names = _constants(node.left)
         elif isinstance(node, ast.Call):
             callee = _callee(node)
             if callee in _FIRST_ARGUMENT:
@@ -169,6 +173,10 @@ e = resolve_runtime_env(env, "EEEE_FIVE")
 f = resolve_env(env, "FFFF_SIX", aliases=("GGGG_SEVEN", "HHHH_EIGHT"))
 g = env_int(env, key="IIII_NINE", default=1)
 h = runtime_env_spec("JJJJ_TEN")
+i = "KKKK_ELEVEN" in os.environ
+j = os.environ.pop("LLLL_TWELVE", None)
+k = os.environ.setdefault("MMMM_THIRTEEN", "1")
+l = "NNNN_FOURTEEN" not in values
 not_a_name = other.get("lower_case")
 too_short = other.get("ABC")
 from_variable = environ.get(NAME)
@@ -189,6 +197,10 @@ def test_the_read_site_scan_finds_each_kind_of_read_in_a_synthetic_source() -> N
         "HHHH_EIGHT",
         "IIII_NINE",
         "JJJJ_TEN",
+        "KKKK_ELEVEN",
+        "LLLL_TWELVE",
+        "MMMM_THIRTEEN",
+        "NNNN_FOURTEEN",
     }
 
 
