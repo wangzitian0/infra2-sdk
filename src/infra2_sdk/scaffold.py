@@ -398,8 +398,13 @@ from infra2_sdk.runtime.postgres import PostgresSettings, probe_postgres
 
 app = FastAPI(title="{clean_service}")
 
+# The compose file passes an empty DATABASE_URL when the shell sets none.
+database_url = os.environ.get("DATABASE_URL", "").strip()
+if not database_url:
+    raise RuntimeError("DATABASE_URL is required")
+
 # Database reachability probe via infra2_sdk standard PostgreSQL adapter
-db_settings = PostgresSettings(dsn=os.environ["DATABASE_URL"])
+db_settings = PostgresSettings(dsn=database_url)
 
 
 def check_db() -> tuple[bool, str]:
