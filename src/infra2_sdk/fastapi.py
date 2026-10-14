@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 from infra2_sdk.runtime.environment import (
     PLATFORM_OWNED_TIERS,
     EnvironmentConflictError,
+    EnvironmentTier,
     RuntimeEnvKey,
     UnknownEnvironmentPolicy,
     environment_from_env,
@@ -83,10 +84,10 @@ class _DatabaseCheck:
 def _in_deployed_tier() -> bool:
     """Return True for preview, staging and production.
 
-    An unknown or conflicting environment counts as deployed, so the caller logs more, not less.
-    A missing environment counts as ``local_dev`` in non-strict mode, so this function returns
-    False for it. Strict mode never reaches this function with a missing tier, because
-    ``_require_known_tier`` raises first.
+    Non-strict mode calls this after a failed ``OtelSettings.from_env``, because the failure
+    hides the tier. Strict mode never calls it. An unknown or conflicting environment counts as
+    deployed, so the caller logs more, not less. A missing environment counts as ``local_dev``,
+    so this function returns False for it.
     """
     try:
         tier = environment_from_env(unknown=UnknownEnvironmentPolicy.PRODUCTION).tier
@@ -122,8 +123,8 @@ def _with_relax_hint(exc: Exception) -> Exception:
     return exc
 
 
-def _log_missing_endpoint() -> None:
-    level = logging.WARNING if _in_deployed_tier() else logging.DEBUG
+def _log_missing_endpoint(*, deployed: bool) -> None:
+    level = logging.WARNING if deployed else logging.DEBUG
     logger.log(
         level,
         "%s is not set; OpenTelemetry export is off",
@@ -142,6 +143,9 @@ def _resolve_telemetry(name: str, *, strict: bool) -> OtelSettings | None:
     if strict:
         _require_known_tier()
     try:
+        # from_env is the one reader of the endpoint, the service name and the tier of the
+        # settings. Two other readings of the tier exist, for a message or a log level only:
+        # _require_known_tier (strict mode) and _in_deployed_tier (after a failed from_env).
         settings = OtelSettings.from_env(strict=strict, default_service_name=name)
     except Exception as exc:
         if strict:
@@ -150,7 +154,7 @@ def _resolve_telemetry(name: str, *, strict: bool) -> OtelSettings | None:
         # choose the log line. Without an endpoint, telemetry is off. The missing-endpoint
         # line is then the only message.
         if resolve_runtime_env(None, RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT).value is None:
-            _log_missing_endpoint()
+            _log_missing_endpoint(deployed=_in_deployed_tier())
         else:
             logger.warning("Could not initialize OpenTelemetry: %s", exc)
         return None
@@ -158,7 +162,11 @@ def _resolve_telemetry(name: str, *, strict: bool) -> OtelSettings | None:
         logger.debug("OpenTelemetry is disabled by the environment")
         return None
     if settings.endpoint is None:
-        _log_missing_endpoint()
+        # The tier that from_env resolved, also when it inferred the tier from the attribute
+        # deployment.environment.name.
+        _log_missing_endpoint(
+            deployed=EnvironmentTier(settings.environment) in PLATFORM_OWNED_TIERS
+        )
         return None
     return settings
 

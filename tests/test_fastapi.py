@@ -1007,6 +1007,29 @@ def test_missing_endpoint_outside_a_deployed_tier_stays_at_debug(monkeypatch, ca
     assert any("OTEL_EXPORTER_OTLP_ENDPOINT" in r.getMessage() for r in _sdk_records(caplog))
 
 
+@pytest.mark.parametrize(
+    "attribute,level",
+    [
+        ("production", logging.WARNING),
+        ("staging", logging.WARNING),
+        ("pr-12", logging.WARNING),
+        ("local_dev", logging.DEBUG),
+    ],
+)
+def test_the_missing_endpoint_level_follows_the_tier_that_from_env_resolved(
+    monkeypatch, caplog, attribute, level
+):
+    # No tier variable: OtelSettings.from_env infers the tier from the attribute.
+    monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", f"deployment.environment.name={attribute}")
+
+    with caplog.at_level(logging.DEBUG, logger="infra2_sdk.fastapi"):
+        init_service(FastAPI(), "svc", strict_otel=False)
+
+    assert [(r.levelno, r.getMessage()) for r in _sdk_records(caplog)] == [
+        (level, "OTEL_EXPORTER_OTLP_ENDPOINT is not set; OpenTelemetry export is off")
+    ]
+
+
 def test_missing_endpoint_is_silent_when_the_caller_turns_otel_off(monkeypatch, caplog):
     monkeypatch.setenv("ENVIRONMENT", "production")
 
