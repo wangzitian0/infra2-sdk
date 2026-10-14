@@ -349,6 +349,9 @@ def test_standalone_app_passes_strict_otel_false_and_says_why(tmp_path: Path, db
     options = {keyword.arg: keyword.value for keyword in _init_service_call(app_text).keywords}
     assert ast.literal_eval(options["strict_otel"]) is False
     assert "# A laptop sets no ENVIRONMENT, so strict_otel=False lets" in app_text
+    # The compose file defaults ENV to local_dev, so the comment says what a deployment must do.
+    assert "set ENV to the real tier" in app_text
+    assert "removing the keyword is not enough" in app_text
 
 
 @pytest.mark.parametrize("db", ["postgres", "none"])

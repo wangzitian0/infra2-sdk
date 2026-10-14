@@ -170,7 +170,8 @@ string (`^[0-9a-f]{40}$`) in both strict and non-strict modes. Deployments injec
 leave `GIT_COMMIT_SHA` unset or rely on platform-managed `ServiceIdentity` attributes. Non-strict
 loaders follow OpenTelemetry's error-handling model: malformed optional OTel resource attributes
 are reported as runtime warnings and discarded instead of blocking an application that has
-telemetry disabled.
+telemetry disabled. This holds for `from_env(strict=False)`. `init_service` is strict by default;
+see "Turnkey FastAPI integration".
 
 ## Start an independent app
 
@@ -234,7 +235,8 @@ def check_db() -> tuple[bool, str]:
     return (res.status.value == "present", res.detail or "ok")
 
 
-# Turnkey initialization
+# Turnkey initialization. strict_otel defaults to True: ENVIRONMENT (or ENV, APP_ENV) must name
+# a tier. On a laptop, set ENVIRONMENT=local_dev or pass strict_otel=False.
 init_service(app, name="my-service", db_checker=check_db)
 ```
 
@@ -243,9 +245,25 @@ This single call registers three standardized endpoints and starts telemetry
 - `/livez`: Liveness probe (process-only, anti-puppet rule: never touches databases or external services).
 - `/readyz`: Readiness probe. It runs `db_checker` and answers HTTP 503 with `reasons` when the check fails.
 - `/health`: The `infra2_sdk.runtime.health` report (`status`, `checks`, `reasons`) plus `service`. A failed database check gives `unhealthy` and HTTP 503.
-- OpenTelemetry: when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, one OTLP bootstrap exports traces, metrics and logs. It stops with the application lifespan. FastAPI 0.142 or later emits the request spans itself. A deployed tier (preview, staging, production) without the endpoint logs a warning that names the variable.
+- OpenTelemetry: when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, one OTLP bootstrap exports traces, metrics and logs. It stops with the application lifespan. FastAPI 0.142 or later emits the request spans itself. A deployed tier (preview, staging, production) without the endpoint logs a warning that names the variable, unless `OTEL_SDK_DISABLED=true`.
 
-`db_checker` returns `bool` or `(bool, detail)` and may be sync or async. A false result, an exception, or a call longer than `check_timeout_seconds` (default 10) counts as a failure. Sync checkers run in a worker thread. `strict_otel` defaults to `True`, so the service fails closed. A missing or unknown tier and a malformed `OTEL_*` value raise `ValueError` at start-up, with or without `OTEL_EXPORTER_OTLP_ENDPOINT`. A deployed service needs `ENVIRONMENT` (or `ENV`, `APP_ENV`). A local run sets `ENVIRONMENT=local_dev` or passes `strict_otel=False`. With `strict_otel=False`, a missing tier counts as `local_dev` and a malformed `OTEL_*` value logs a warning. The telemetry service name is `OTEL_SERVICE_NAME`, then `service.name` in `OTEL_RESOURCE_ATTRIBUTES`, then `name`.
+`db_checker` returns `bool` or `(bool, detail)` and may be sync or async. A false result, an exception, or a call longer than `check_timeout_seconds` (default 10) counts as a failure. Sync checkers run in a worker thread.
+
+`name` must not be blank. The telemetry service name is `OTEL_SERVICE_NAME`, then `service.name` in `OTEL_RESOURCE_ATTRIBUTES`, then `name`. A blank variable or attribute value counts as missing.
+
+`strict_otel` defaults to `True`, so `init_service` fails closed. A deployed service needs `ENVIRONMENT` (or `ENV`, `APP_ENV`). A laptop sets `ENVIRONMENT=local_dev` or passes `strict_otel=False`. In strict mode `init_service` raises `ValueError`, before it changes the app, when:
+
+- the tier is missing, unknown or in conflict (`ENVIRONMENT`, `ENV` and `APP_ENV` hold different values);
+- `OTEL_RESOURCE_ATTRIBUTES` is malformed, or its `deployment.environment.name` disagrees with the tier;
+- `OTEL_SDK_DISABLED`, `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` or `OTEL_METRIC_EXPORT_INTERVAL` is invalid (the sampler argument counts only for a ratio sampler);
+- two aliases of one variable hold different values (for example `SERVICE_VERSION` and `IMAGE_TAG`).
+
+An `OTEL_EXPORTER_OTLP_ENDPOINT` that is not an http(s) URL also stops the start, unless `OTEL_SDK_DISABLED=true`. These checks run with or without an endpoint. `OTEL_SDK_DISABLED=true` does not skip the four checks above. Only `enable_otel=False` skips every check. The SDK does not read `OTEL_EXPORTER_OTLP_TIMEOUT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_BSP_*` or `OTEL_EXPORTER_OTLP_PROTOCOL`, so it never checks them.
+
+With `strict_otel=False`, a telemetry problem never stops the service. A missing tier counts as `local_dev`. A problem is reported in one of two ways:
+
+- A Python `RuntimeWarning` reports a malformed `OTEL_RESOURCE_ATTRIBUTES` (the SDK discards the attributes), an invalid `OTEL_SDK_DISABLED` (it counts as false) and an invalid `OTEL_TRACES_SAMPLER` or `OTEL_TRACES_SAMPLER_ARG` (the default sampler applies). The warning also appears when no endpoint is set.
+- A log record of the logger `infra2_sdk.fastapi` reports every other problem. With an endpoint, the record is `Could not initialize OpenTelemetry: ...` at WARNING, and telemetry stays off. Without an endpoint, the only record is `OTEL_EXPORTER_OTLP_ENDPOINT is not set; OpenTelemetry export is off`. Its level is WARNING in a deployed tier (an unknown or conflicting tier counts as deployed) and DEBUG elsewhere. With `OTEL_SDK_DISABLED=true` and no other problem, the record is `OpenTelemetry is disabled by the environment` at DEBUG, with or without an endpoint. An explicit off switch is not a misconfiguration.
 
 Before OpenTelemetry attaches its logging handler, `init_service` calls `logging.basicConfig(level=log_level)` (default `INFO`). The call changes nothing when the root logger already has a handler. Pass `log_level=None` to skip it. The SDK serves no `/metrics` endpoint.
 

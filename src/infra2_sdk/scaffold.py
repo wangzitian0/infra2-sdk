@@ -387,14 +387,17 @@ def generate_env_example(service_name: str, port: int, db: str = "postgres") -> 
 def generate_fastapi_app(service_name: str, db: str = "postgres", profile: str = "infra2") -> str:
     """Generate starter FastAPI application with 1-liner init_service.
 
-    The infra2 profile keeps the default ``strict_otel=True``: its compose file sets ``ENV``.
-    The standalone profile passes ``strict_otel=False``, because a laptop sets no tier.
+    The infra2 profile keeps the default ``strict_otel=True``: its compose file passes ``ENV``
+    from the deployment, and an unset ``ENV`` stops the service. The standalone profile passes
+    ``strict_otel=False``, because a laptop sets no tier. Its compose file defaults ``ENV`` to
+    ``local_dev``, so a deployment must also set a real ``ENV``.
     """
     clean_service = _clean_ident(service_name)
     if profile == "standalone":
         strict_note = (
             "# A laptop sets no ENVIRONMENT, so strict_otel=False lets the service start.\n"
-            "# Remove it for a deployed service.\n"
+            "# For a deployment, remove it and set ENV to the real tier.\n"
+            "# The compose file defaults ENV to local_dev: removing the keyword is not enough.\n"
         )
         strict_option = ", strict_otel=False"
     else:
