@@ -136,7 +136,10 @@ def smoke_core() -> None:
 
     assert classify_ref("v1.2.3") == "tag"
     assert environment_from_env({}).name == "local_dev"
-    assert runtime_env_contract()["contract_version"] == 2
+    version = runtime_env_contract()["contract_version"]
+    assert type(version) is int and version == 2, (
+        f"contract_version must be the integer 2: {version!r}"
+    )
     import infra2_sdk.rules.compose  # noqa: F401
     import infra2_sdk.runtime.health  # noqa: F401
     import infra2_sdk.runtime.http  # noqa: F401

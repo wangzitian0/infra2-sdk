@@ -232,7 +232,8 @@ def test_required_and_secret_errors_never_expose_values() -> None:
 
 def test_runtime_env_registry_is_versioned_unique_and_platform_neutral() -> None:
     contract = runtime_env_contract()
-    assert contract["contract_version"] == 2
+    version = contract["contract_version"]
+    assert type(version) is int and version == 2, f"expected the integer 2, got {version!r}"
     variables = contract["variables"]
     names = [item["name"] for item in variables]
     aliases = [alias for item in variables for alias in item["aliases"]]
@@ -248,8 +249,10 @@ def test_contract_version_is_two_because_3_4_0_removed_20_variables() -> None:
     # Version 1 listed 34 variables. A receiver that requires version 1 must reject the
     # 3.4.0 document. An additive variable keeps version 2: then change this count and the
     # README compatibility note together.
-    assert RUNTIME_ENV_CONTRACT_VERSION == 2
+    # A receiver must require an integer. The value 2.0 equals 2 and is not an integer.
+    assert type(RUNTIME_ENV_CONTRACT_VERSION) is int and RUNTIME_ENV_CONTRACT_VERSION == 2
     contract = runtime_env_contract()
+    assert type(contract["contract_version"]) is int
     assert contract["contract_version"] == RUNTIME_ENV_CONTRACT_VERSION
     assert len(contract["variables"]) == 14
 
