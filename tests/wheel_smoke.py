@@ -164,7 +164,9 @@ def smoke_package_data() -> None:
         pass
     else:
         raise AssertionError("infra2_sdk.images was removed in 3.0.0 and must not be importable")
-    assert len(REMOVED_MODULES) == 7
+    assert len(REMOVED_MODULES) == 7, (
+        f"REMOVED_MODULES has {len(REMOVED_MODULES)} entries, expected 7"
+    )
     for module in REMOVED_MODULES:
         try:
             importlib.import_module(module)
@@ -181,7 +183,10 @@ def smoke_removed_names() -> None:
     import infra2_sdk.runtime
     from infra2_sdk.runtime.environment import RuntimeEnvKey, runtime_env_contract
 
-    assert len(REMOVED_NAMES) == 37 and len(set(REMOVED_NAMES)) == 37
+    assert len(REMOVED_NAMES) == 37 and len(set(REMOVED_NAMES)) == 37, (
+        f"REMOVED_NAMES has {len(REMOVED_NAMES)} entries ({len(set(REMOVED_NAMES))} unique), "
+        "expected 37"
+    )
     for module, dotted in REMOVED_NAMES:
         *parents, leaf = dotted.split(".")
         if module not in REMOVED_MODULES:  # a removed module has no owner to look into
@@ -194,7 +199,10 @@ def smoke_removed_names() -> None:
                 assert not hasattr(package, leaf), f"{package.__name__}.{leaf} was removed"
                 assert leaf not in package.__all__, f"{package.__name__}.__all__ lists {leaf}"
 
-    assert len(REMOVED_ENV_MEMBERS) == 20 and len(REMOVED_ENV_NAMES) == 29
+    assert len(REMOVED_ENV_MEMBERS) == 20 and len(REMOVED_ENV_NAMES) == 29, (
+        f"REMOVED_ENV_MEMBERS has {len(REMOVED_ENV_MEMBERS)} entries, expected 20; "
+        f"REMOVED_ENV_NAMES has {len(REMOVED_ENV_NAMES)} entries, expected 29"
+    )
     present = [member for member in REMOVED_ENV_MEMBERS if hasattr(RuntimeEnvKey, member)]
     assert not present, f"RuntimeEnvKey still has removed members: {present}"
     contract = runtime_env_contract()["variables"]

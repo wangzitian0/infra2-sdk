@@ -21,6 +21,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+import wheel_smoke
 
 # The frozen lists live in wheel_smoke.py, so the source tests and the wheel smoke test share them.
 # Do not derive them from the source tree: a derived list would shrink with the tree.
@@ -280,3 +281,21 @@ def test_removed_environment_name_is_not_in_the_contract(name: str) -> None:
     assert name not in canonical, f"{name} is still a canonical name"
     assert name not in aliases, f"{name} is still an alias"
     assert name not in {key.value for key in RuntimeEnvKey}, f"{name} is still a key value"
+
+
+@pytest.mark.parametrize(
+    ("smoke", "attribute", "expected"),
+    [
+        ("smoke_package_data", "REMOVED_MODULES", 7),
+        ("smoke_removed_names", "REMOVED_NAMES", 37),
+        ("smoke_removed_names", "REMOVED_ENV_MEMBERS", 20),
+        ("smoke_removed_names", "REMOVED_ENV_NAMES", 29),
+    ],
+)
+def test_the_wheel_smoke_names_the_list_that_changed_size(
+    monkeypatch: pytest.MonkeyPatch, smoke: str, attribute: str, expected: int
+) -> None:
+    shorter = getattr(wheel_smoke, attribute)[:-1]
+    monkeypatch.setattr(wheel_smoke, attribute, shorter)
+    with pytest.raises(AssertionError, match=rf"{attribute} has {expected - 1} entries"):
+        getattr(wheel_smoke, smoke)()

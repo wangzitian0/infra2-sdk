@@ -164,7 +164,21 @@ def test_consolidated_secondary_modules() -> None:
 
 # --- The exported surface is locked: every exported name has a recorded reason ----------------
 
-SURFACE = json.loads(Path(__file__).with_name("surface.json").read_text(encoding="utf-8"))
+
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+    keys = [key for key, _ in pairs]
+    for key in keys:
+        if keys.count(key) > 1:
+            raise ValueError(f"duplicate key {key!r}")
+    return dict(pairs)
+
+
+def _load_surface(text: str) -> dict:
+    """Parse surface.json text. A duplicate key is an error: the later value would win."""
+    return json.loads(text, object_pairs_hook=_reject_duplicate_keys)
+
+
+SURFACE = _load_surface(Path(__file__).with_name("surface.json").read_text(encoding="utf-8"))
 README = (Path(__file__).resolve().parent.parent / "README.md").read_text(encoding="utf-8")
 PACKAGES = ("infra2_sdk", "infra2_sdk.runtime")
 REASON_PREFIXES = ("consumer:", "documented:", "held:")
@@ -193,6 +207,14 @@ def _surface_entries() -> list[tuple[str, str, str]]:
     return [
         (package, name, reason) for package in PACKAGES for name, reason in SURFACE[package].items()
     ]
+
+
+def test_the_surface_loader_rejects_a_duplicate_key() -> None:
+    assert _load_surface('{"a": {"x": "1", "y": "2"}}') == {"a": {"x": "1", "y": "2"}}
+    with pytest.raises(ValueError, match="duplicate key 'x'"):
+        _load_surface('{"a": {"x": "1", "x": "2"}}')
+    with pytest.raises(ValueError, match="duplicate key 'a'"):
+        _load_surface('{"a": {}, "a": {}}')
 
 
 def test_surface_lock_lists_exactly_the_two_packages() -> None:
