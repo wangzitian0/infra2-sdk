@@ -5,13 +5,12 @@ from __future__ import annotations
 import contextlib
 import re
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from infra2_sdk.runtime._optional import require
-from infra2_sdk.runtime.environment import RuntimeEnvKey, env_int, resolve_runtime_env
 from infra2_sdk.runtime.health import DependencyStatus, ProbeResult
 
 _SQLALCHEMY_DRIVER_RE = re.compile(r"\Apostgresql\+[a-zA-Z0-9_]+://")
@@ -31,25 +30,6 @@ class PostgresSettings:
             raise ValueError("connect_timeout_seconds must be between 1 and 60")
         if not 1 <= self.statement_timeout_seconds <= 60:
             raise ValueError("statement_timeout_seconds must be between 1 and 60")
-
-    @classmethod
-    def from_env(cls, environ: Mapping[str, str] | None = None) -> PostgresSettings:
-        dsn = resolve_runtime_env(environ, RuntimeEnvKey.DATABASE_URL, required=True).value
-        if dsn is None:
-            raise ValueError("dsn must not be None")
-        return cls(
-            dsn=dsn,
-            connect_timeout_seconds=env_int(
-                environ,
-                RuntimeEnvKey.DATABASE_CONNECT_TIMEOUT_SECONDS,
-                default=5,
-            ),
-            statement_timeout_seconds=env_int(
-                environ,
-                RuntimeEnvKey.DATABASE_STATEMENT_TIMEOUT_SECONDS,
-                default=5,
-            ),
-        )
 
     @property
     def psycopg_dsn(self) -> str:

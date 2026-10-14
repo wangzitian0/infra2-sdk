@@ -5,13 +5,11 @@ from __future__ import annotations
 import contextlib
 import re
 import time
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from infra2_sdk.runtime._optional import require
-from infra2_sdk.runtime.environment import RuntimeEnvKey, env_float, resolve_runtime_env
 from infra2_sdk.runtime.health import DependencyStatus, ProbeResult
 
 _BUCKET_RE = re.compile(r"\A[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]\Z")
@@ -52,45 +50,6 @@ class S3Settings:
                 raise ValueError("S3 endpoint URL must use http:// or https:// with a host")
             if endpoint.username is not None or endpoint.password is not None:
                 raise ValueError("S3 endpoint URL must not contain credentials")
-
-    @classmethod
-    def from_env(cls, environ: Mapping[str, str] | None = None) -> S3Settings:
-        """Load the S3 protocol adapter from standard AWS names and legacy aliases."""
-
-        protocol = resolve_runtime_env(
-            environ,
-            RuntimeEnvKey.OBJECT_STORAGE_PROTOCOL,
-            default="s3",
-        ).value
-        if protocol is None or protocol.lower() != "s3":
-            raise ValueError(f"unsupported object storage protocol: {protocol!r}")
-        bucket = resolve_runtime_env(environ, RuntimeEnvKey.S3_BUCKET, required=True).value
-        endpoint = resolve_runtime_env(environ, RuntimeEnvKey.S3_ENDPOINT_URL).value
-        region = resolve_runtime_env(
-            environ,
-            RuntimeEnvKey.S3_REGION,
-        ).value
-        access_key = resolve_runtime_env(environ, RuntimeEnvKey.AWS_ACCESS_KEY_ID).value
-        secret_key = resolve_runtime_env(environ, RuntimeEnvKey.AWS_SECRET_ACCESS_KEY).value
-        session_token = resolve_runtime_env(environ, RuntimeEnvKey.AWS_SESSION_TOKEN).value
-        addressing_style = resolve_runtime_env(environ, RuntimeEnvKey.S3_ADDRESSING_STYLE).value
-        if bucket is None:
-            raise ValueError("bucket must not be None")
-        return cls(
-            bucket=bucket,
-            endpoint_url=endpoint,
-            access_key_id=access_key,
-            secret_access_key=secret_key,
-            session_token=session_token,
-            region_name=region,
-            connect_timeout_seconds=env_float(
-                environ, RuntimeEnvKey.S3_CONNECT_TIMEOUT_SECONDS, default=5.0
-            ),
-            read_timeout_seconds=env_float(
-                environ, RuntimeEnvKey.S3_READ_TIMEOUT_SECONDS, default=5.0
-            ),
-            addressing_style=addressing_style.lower() if addressing_style else None,
-        )
 
 
 def create_s3_client(settings: S3Settings, *, session: Any | None = None) -> Any:

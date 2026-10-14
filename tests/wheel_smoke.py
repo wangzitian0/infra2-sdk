@@ -43,11 +43,75 @@ REMOVED_NAMES = (
     ("infra2_sdk.runtime.s3", "S3Check"),
     ("infra2_sdk.secrets", "EnvBackend"),
     ("infra2_sdk.snapshot", "verify_snapshot_artifact"),
+    # The three environment readers.
+    ("infra2_sdk.runtime.http", "HttpClientSettings.from_env"),
+    ("infra2_sdk.runtime.postgres", "PostgresSettings.from_env"),
+    ("infra2_sdk.runtime.s3", "S3Settings.from_env"),
     # Names that only the removed code used.
     ("infra2_sdk.capacity", "OnePasswordCapacityReport"),
     ("infra2_sdk.routing", "DokployDomainSpec"),
+    ("infra2_sdk.runtime.environment", "env_bool"),
+    ("infra2_sdk.runtime.environment", "env_float"),
     ("infra2_sdk.runtime.health", "DependencyUnavailableError"),
     ("infra2_sdk.secrets", "ReadOnlyBackendError"),
+)
+
+# RuntimeEnvKey members removed in 3.4.0 (issue #102, decision 2).
+REMOVED_ENV_MEMBERS = (
+    "HTTP_TIMEOUT_SECONDS",
+    "HTTP_CONNECT_TIMEOUT_SECONDS",
+    "HTTP_MAX_CONNECTIONS",
+    "HTTP_MAX_KEEPALIVE_CONNECTIONS",
+    "HTTP_CONNECT_RETRIES",
+    "HTTP_USER_AGENT",
+    "HTTP_FOLLOW_REDIRECTS",
+    "OBJECT_STORAGE_PROTOCOL",
+    "S3_BUCKET",
+    "S3_ENDPOINT_URL",
+    "S3_REGION",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "S3_CONNECT_TIMEOUT_SECONDS",
+    "S3_READ_TIMEOUT_SECONDS",
+    "S3_ADDRESSING_STYLE",
+    "DATABASE_URL",
+    "DATABASE_CONNECT_TIMEOUT_SECONDS",
+    "DATABASE_STATEMENT_TIMEOUT_SECONDS",
+)
+
+# Environment variable names removed from runtime_env_contract() in 3.4.0 (issue #102,
+# decisions 2 and 3): the canonical names, their aliases, and the dead alias SERVICE_NAME.
+REMOVED_ENV_NAMES = (
+    "HTTP_TIMEOUT_SECONDS",
+    "HTTP_CONNECT_TIMEOUT_SECONDS",
+    "HTTP_MAX_CONNECTIONS",
+    "HTTP_MAX_KEEPALIVE_CONNECTIONS",
+    "HTTP_CONNECT_RETRIES",
+    "HTTP_USER_AGENT",
+    "HTTP_FOLLOW_REDIRECTS",
+    "OBJECT_STORAGE_PROTOCOL",
+    "OBJECT_STORAGE_DRIVER",
+    "S3_BUCKET",
+    "AWS_ENDPOINT_URL_S3",
+    "S3_ENDPOINT_URL",
+    "S3_ENDPOINT",
+    "AWS_REGION",
+    "AWS_DEFAULT_REGION",
+    "S3_REGION",
+    "AWS_ACCESS_KEY_ID",
+    "S3_ACCESS_KEY",
+    "AWS_SECRET_ACCESS_KEY",
+    "S3_SECRET_KEY",
+    "AWS_SESSION_TOKEN",
+    "S3_SESSION_TOKEN",
+    "S3_CONNECT_TIMEOUT_SECONDS",
+    "S3_READ_TIMEOUT_SECONDS",
+    "S3_ADDRESSING_STYLE",
+    "DATABASE_URL",
+    "DATABASE_CONNECT_TIMEOUT_SECONDS",
+    "DATABASE_STATEMENT_TIMEOUT_SECONDS",
+    "SERVICE_NAME",
 )
 
 
@@ -96,12 +160,13 @@ def smoke_package_data() -> None:
 
 
 def smoke_removed_names() -> None:
-    """The wheel does not carry the names removed in 3.4.0."""
+    """The wheel does not carry the names, members and variables removed in 3.4.0."""
 
     import infra2_sdk
     import infra2_sdk.runtime
+    from infra2_sdk.runtime.environment import RuntimeEnvKey, runtime_env_contract
 
-    assert len(REMOVED_NAMES) == 22 and len(set(REMOVED_NAMES)) == 22
+    assert len(REMOVED_NAMES) == 27 and len(set(REMOVED_NAMES)) == 27
     for module, dotted in REMOVED_NAMES:
         owner = importlib.import_module(module)
         *parents, leaf = dotted.split(".")
@@ -112,6 +177,14 @@ def smoke_removed_names() -> None:
             for package in (infra2_sdk, infra2_sdk.runtime):
                 assert not hasattr(package, leaf), f"{package.__name__}.{leaf} was removed"
                 assert leaf not in package.__all__, f"{package.__name__}.__all__ lists {leaf}"
+
+    assert len(REMOVED_ENV_MEMBERS) == 20 and len(REMOVED_ENV_NAMES) == 29
+    present = [member for member in REMOVED_ENV_MEMBERS if hasattr(RuntimeEnvKey, member)]
+    assert not present, f"RuntimeEnvKey still has removed members: {present}"
+    contract = runtime_env_contract()["variables"]
+    names = {item["name"] for item in contract} | {a for item in contract for a in item["aliases"]}
+    still_named = sorted(set(REMOVED_ENV_NAMES) & (names | {key.value for key in RuntimeEnvKey}))
+    assert not still_named, f"runtime_env_contract() still names removed variables: {still_named}"
 
 
 def smoke_health() -> None:
@@ -135,13 +208,11 @@ def smoke_s3() -> None:
     os.environ.setdefault("AWS_EC2_METADATA_DISABLED", "true")
     from infra2_sdk.runtime.s3 import S3Settings, create_s3_client
 
-    settings = S3Settings.from_env(
-        {
-            "S3_BUCKET": "smoke-bucket",
-            "AWS_ENDPOINT_URL_S3": "http://127.0.0.1:9000",
-            "AWS_ACCESS_KEY_ID": "smoke",
-            "AWS_SECRET_ACCESS_KEY": "smoke",
-        }
+    settings = S3Settings(
+        bucket="smoke-bucket",
+        endpoint_url="http://127.0.0.1:9000",
+        access_key_id="smoke",
+        secret_access_key="smoke",
     )
     client = create_s3_client(settings)
     assert client.meta.service_model.service_name == "s3"
@@ -153,9 +224,7 @@ def smoke_postgres() -> None:
 
     from infra2_sdk.runtime.postgres import PostgresSettings
 
-    settings = PostgresSettings.from_env(
-        {"DATABASE_URL": "postgresql+asyncpg://user:password@localhost/database"}
-    )
+    settings = PostgresSettings(dsn="postgresql+asyncpg://user:password@localhost/database")
     assert settings.psycopg_dsn == "postgresql://user:password@localhost/database"
 
 

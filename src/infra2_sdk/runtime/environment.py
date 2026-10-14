@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import os
 import re
 from collections.abc import Mapping
@@ -22,32 +21,12 @@ class RuntimeEnvKey(StrEnum):
     CONFIGURATION_SHA256 = "CONFIGURATION_SHA256"
     RELEASE_ID = "RELEASE_ID"
     INSTANCE_ID = "INSTANCE_ID"
-    DATABASE_URL = "DATABASE_URL"
-    DATABASE_CONNECT_TIMEOUT_SECONDS = "DATABASE_CONNECT_TIMEOUT_SECONDS"
-    DATABASE_STATEMENT_TIMEOUT_SECONDS = "DATABASE_STATEMENT_TIMEOUT_SECONDS"
-    OBJECT_STORAGE_PROTOCOL = "OBJECT_STORAGE_PROTOCOL"
-    S3_BUCKET = "S3_BUCKET"
-    S3_ENDPOINT_URL = "AWS_ENDPOINT_URL_S3"
-    S3_REGION = "AWS_REGION"
-    AWS_ACCESS_KEY_ID = "AWS_ACCESS_KEY_ID"
-    AWS_SECRET_ACCESS_KEY = "AWS_SECRET_ACCESS_KEY"
-    AWS_SESSION_TOKEN = "AWS_SESSION_TOKEN"
-    S3_CONNECT_TIMEOUT_SECONDS = "S3_CONNECT_TIMEOUT_SECONDS"
-    S3_READ_TIMEOUT_SECONDS = "S3_READ_TIMEOUT_SECONDS"
-    S3_ADDRESSING_STYLE = "S3_ADDRESSING_STYLE"
     OTEL_EXPORTER_OTLP_ENDPOINT = "OTEL_EXPORTER_OTLP_ENDPOINT"
     OTEL_RESOURCE_ATTRIBUTES = "OTEL_RESOURCE_ATTRIBUTES"
     OTEL_SDK_DISABLED = "OTEL_SDK_DISABLED"
     OTEL_METRIC_EXPORT_INTERVAL = "OTEL_METRIC_EXPORT_INTERVAL"
     OTEL_TRACES_SAMPLER = "OTEL_TRACES_SAMPLER"
     OTEL_TRACES_SAMPLER_ARG = "OTEL_TRACES_SAMPLER_ARG"
-    HTTP_TIMEOUT_SECONDS = "HTTP_TIMEOUT_SECONDS"
-    HTTP_CONNECT_TIMEOUT_SECONDS = "HTTP_CONNECT_TIMEOUT_SECONDS"
-    HTTP_MAX_CONNECTIONS = "HTTP_MAX_CONNECTIONS"
-    HTTP_MAX_KEEPALIVE_CONNECTIONS = "HTTP_MAX_KEEPALIVE_CONNECTIONS"
-    HTTP_CONNECT_RETRIES = "HTTP_CONNECT_RETRIES"
-    HTTP_USER_AGENT = "HTTP_USER_AGENT"
-    HTTP_FOLLOW_REDIRECTS = "HTTP_FOLLOW_REDIRECTS"
 
 
 RUNTIME_ENV_CONTRACT_VERSION = 1
@@ -69,39 +48,19 @@ class RuntimeEnvSpec:
 
 RUNTIME_ENV_SPECS = (
     RuntimeEnvSpec(RuntimeEnvKey.ENVIRONMENT, ("ENV", "APP_ENV")),
-    RuntimeEnvSpec(RuntimeEnvKey.SERVICE_NAME, ("SERVICE_NAME",)),
+    RuntimeEnvSpec(RuntimeEnvKey.SERVICE_NAME),
     RuntimeEnvSpec(RuntimeEnvKey.SERVICE_VERSION, ("IMAGE_TAG",)),
     RuntimeEnvSpec(RuntimeEnvKey.GIT_COMMIT_SHA),
     RuntimeEnvSpec(RuntimeEnvKey.IMAGE_DIGEST),
     RuntimeEnvSpec(RuntimeEnvKey.CONFIGURATION_SHA256),
     RuntimeEnvSpec(RuntimeEnvKey.RELEASE_ID),
     RuntimeEnvSpec(RuntimeEnvKey.INSTANCE_ID),
-    RuntimeEnvSpec(RuntimeEnvKey.DATABASE_URL, sensitive=True),
-    RuntimeEnvSpec(RuntimeEnvKey.DATABASE_CONNECT_TIMEOUT_SECONDS),
-    RuntimeEnvSpec(RuntimeEnvKey.DATABASE_STATEMENT_TIMEOUT_SECONDS),
-    RuntimeEnvSpec(RuntimeEnvKey.OBJECT_STORAGE_PROTOCOL, ("OBJECT_STORAGE_DRIVER",)),
-    RuntimeEnvSpec(RuntimeEnvKey.S3_BUCKET),
-    RuntimeEnvSpec(RuntimeEnvKey.S3_ENDPOINT_URL, ("S3_ENDPOINT_URL", "S3_ENDPOINT")),
-    RuntimeEnvSpec(RuntimeEnvKey.S3_REGION, ("AWS_DEFAULT_REGION", "S3_REGION")),
-    RuntimeEnvSpec(RuntimeEnvKey.AWS_ACCESS_KEY_ID, ("S3_ACCESS_KEY",), sensitive=True),
-    RuntimeEnvSpec(RuntimeEnvKey.AWS_SECRET_ACCESS_KEY, ("S3_SECRET_KEY",), sensitive=True),
-    RuntimeEnvSpec(RuntimeEnvKey.AWS_SESSION_TOKEN, ("S3_SESSION_TOKEN",), sensitive=True),
-    RuntimeEnvSpec(RuntimeEnvKey.S3_CONNECT_TIMEOUT_SECONDS),
-    RuntimeEnvSpec(RuntimeEnvKey.S3_READ_TIMEOUT_SECONDS),
-    RuntimeEnvSpec(RuntimeEnvKey.S3_ADDRESSING_STYLE),
     RuntimeEnvSpec(RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT),
     RuntimeEnvSpec(RuntimeEnvKey.OTEL_RESOURCE_ATTRIBUTES),
     RuntimeEnvSpec(RuntimeEnvKey.OTEL_SDK_DISABLED),
     RuntimeEnvSpec(RuntimeEnvKey.OTEL_METRIC_EXPORT_INTERVAL),
     RuntimeEnvSpec(RuntimeEnvKey.OTEL_TRACES_SAMPLER),
     RuntimeEnvSpec(RuntimeEnvKey.OTEL_TRACES_SAMPLER_ARG),
-    RuntimeEnvSpec(RuntimeEnvKey.HTTP_TIMEOUT_SECONDS),
-    RuntimeEnvSpec(RuntimeEnvKey.HTTP_CONNECT_TIMEOUT_SECONDS),
-    RuntimeEnvSpec(RuntimeEnvKey.HTTP_MAX_CONNECTIONS),
-    RuntimeEnvSpec(RuntimeEnvKey.HTTP_MAX_KEEPALIVE_CONNECTIONS),
-    RuntimeEnvSpec(RuntimeEnvKey.HTTP_CONNECT_RETRIES),
-    RuntimeEnvSpec(RuntimeEnvKey.HTTP_USER_AGENT),
-    RuntimeEnvSpec(RuntimeEnvKey.HTTP_FOLLOW_REDIRECTS),
 )
 
 _SPECS_BY_KEY = {spec.key: spec for spec in RUNTIME_ENV_SPECS}
@@ -197,43 +156,6 @@ def env_int(
         return int(resolved.value)
     except ValueError:
         raise ValueError(f"{key} must be an integer") from None
-
-
-def env_float(
-    environ: Mapping[str, str] | None,
-    key: str | RuntimeEnvKey,
-    *,
-    default: float,
-    aliases: tuple[str, ...] = (),
-) -> float:
-    resolved = resolve_env(environ, key, aliases=aliases)
-    if resolved.value is None:
-        return default
-    try:
-        value = float(resolved.value)
-    except ValueError:
-        raise ValueError(f"{key} must be a floating-point number") from None
-    if not math.isfinite(value):
-        raise ValueError(f"{key} must be finite")
-    return value
-
-
-def env_bool(
-    environ: Mapping[str, str] | None,
-    key: str | RuntimeEnvKey,
-    *,
-    default: bool,
-    aliases: tuple[str, ...] = (),
-) -> bool:
-    resolved = resolve_env(environ, key, aliases=aliases)
-    if resolved.value is None:
-        return default
-    normalized = resolved.value.lower()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    raise ValueError(f"{key} must be a boolean")
 
 
 class EnvironmentTier(StrEnum):
@@ -466,8 +388,6 @@ __all__ = [
     "RuntimeEnvKey",
     "RuntimeEnvSpec",
     "UnknownEnvironmentPolicy",
-    "env_bool",
-    "env_float",
     "env_int",
     "environment_from_env",
     "normalize_deployment_environment",

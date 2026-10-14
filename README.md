@@ -147,15 +147,20 @@ sync work runs only in a daemon thread and cannot delay CLI shutdown, but Python
 underlying blocking I/O. Every sync adapter therefore also configures a protocol-level timeout;
 custom sync checks must do the same.
 
+Settings of the S3, PostgreSQL and HTTP adapters take explicit values. The application owns
+the variable names and the defaults. The SDK reads no environment variable for these settings.
+
 ```python
+import os
+
 from infra2_sdk.runtime import RuntimeIdentity, environment_from_env
 from infra2_sdk.runtime.postgres import PostgresSettings
 from infra2_sdk.runtime.s3 import S3Settings, create_s3_client
 
 runtime = environment_from_env()  # reads os.environ only when called
 identity = RuntimeIdentity.from_env()  # no network or platform lookup
-database = PostgresSettings.from_env()
-s3 = create_s3_client(S3Settings.from_env())
+database = PostgresSettings(dsn=os.environ["DATABASE_URL"])
+s3 = create_s3_client(S3Settings(bucket="my-bucket", endpoint_url=os.environ["S3_ENDPOINT"]))
 ```
 
 Deployed conformance checks opt into fail-closed loading instead of inheriting local defaults:
@@ -222,6 +227,8 @@ success and failure paths on every PR, without installing the SDK source tree.
 The SDK provides single-line compliance with operational observability standards:
 
 ```python
+import os
+
 from fastapi import FastAPI
 from infra2_sdk.fastapi import init_service
 from infra2_sdk.runtime.postgres import PostgresSettings, probe_postgres
@@ -229,7 +236,7 @@ from infra2_sdk.runtime.postgres import PostgresSettings, probe_postgres
 app = FastAPI(title="my-service")
 
 # Optional database checker
-db_settings = PostgresSettings.from_env()
+db_settings = PostgresSettings(dsn=os.environ["DATABASE_URL"])
 
 
 def check_db() -> tuple[bool, str]:
@@ -284,51 +291,33 @@ below is generated from it. Do not edit it by hand.
 | Canonical name | Compatibility aliases | Sensitive |
 |---|---|---|
 | `ENVIRONMENT` | `ENV`, `APP_ENV` | no |
-| `OTEL_SERVICE_NAME` | `SERVICE_NAME` | no |
+| `OTEL_SERVICE_NAME` | none | no |
 | `SERVICE_VERSION` | `IMAGE_TAG` | no |
 | `GIT_COMMIT_SHA` | none | no |
 | `IMAGE_DIGEST` | none | no |
 | `CONFIGURATION_SHA256` | none | no |
 | `RELEASE_ID` | none | no |
 | `INSTANCE_ID` | none | no |
-| `DATABASE_URL` | none | yes |
-| `DATABASE_CONNECT_TIMEOUT_SECONDS` | none | no |
-| `DATABASE_STATEMENT_TIMEOUT_SECONDS` | none | no |
-| `OBJECT_STORAGE_PROTOCOL` | `OBJECT_STORAGE_DRIVER` | no |
-| `S3_BUCKET` | none | no |
-| `AWS_ENDPOINT_URL_S3` | `S3_ENDPOINT_URL`, `S3_ENDPOINT` | no |
-| `AWS_REGION` | `AWS_DEFAULT_REGION`, `S3_REGION` | no |
-| `AWS_ACCESS_KEY_ID` | `S3_ACCESS_KEY` | yes |
-| `AWS_SECRET_ACCESS_KEY` | `S3_SECRET_KEY` | yes |
-| `AWS_SESSION_TOKEN` | `S3_SESSION_TOKEN` | yes |
-| `S3_CONNECT_TIMEOUT_SECONDS` | none | no |
-| `S3_READ_TIMEOUT_SECONDS` | none | no |
-| `S3_ADDRESSING_STYLE` | none | no |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | none | no |
 | `OTEL_RESOURCE_ATTRIBUTES` | none | no |
 | `OTEL_SDK_DISABLED` | none | no |
 | `OTEL_METRIC_EXPORT_INTERVAL` | none | no |
 | `OTEL_TRACES_SAMPLER` | none | no |
 | `OTEL_TRACES_SAMPLER_ARG` | none | no |
-| `HTTP_TIMEOUT_SECONDS` | none | no |
-| `HTTP_CONNECT_TIMEOUT_SECONDS` | none | no |
-| `HTTP_MAX_CONNECTIONS` | none | no |
-| `HTTP_MAX_KEEPALIVE_CONNECTIONS` | none | no |
-| `HTTP_CONNECT_RETRIES` | none | no |
-| `HTTP_USER_AGENT` | none | no |
-| `HTTP_FOLLOW_REDIRECTS` | none | no |
 <!-- env-contract:end -->
 
 Canonical and alias values may coexist only when equal. Conflicts fail before clients are
 created, and secret values never appear in errors. Missing OTLP configuration disables
 telemetry without affecting application startup. `OTEL_SDK_DISABLED=true` takes precedence over
-the endpoint and ignores it completely. Missing S3 credentials leaves boto3's standard credential
-chain intact.
+the endpoint and ignores it completely.
 
-Missing S3 region and addressing-style values also remain unset so boto3 can use its standard
-profile, workload-identity, and service defaults. S3-compatible deployments that require path
-addressing set `S3_ADDRESSING_STYLE=path` explicitly. When bucket creation is explicitly allowed,
-`ensure_bucket` uses the region resolved by the boto3 client if no region was set directly.
+The table lists the variables that `environment_from_env`, `RuntimeIdentity.from_env` and
+`OtelSettings.from_env` resolve. The settings of the S3, PostgreSQL and HTTP adapters take
+explicit values, so no row of the table belongs to them. Two more fixed names exist outside the
+table. `environment_from_env` reads `GITHUB_ACTIONS`. `VaultKvBackend.from_environ` reads
+`VAULT_ADDR`, `VAULT_TOKEN`, `VAULT_ROLE_ID` and `VAULT_SECRET_ID` from the mapping you pass.
+Other names come from the caller: the manifest that you pass to `validate_env`, and the token
+variable that a CLI option names.
 
 `ENVIRONMENT` has two dimensions. `RuntimeEnvironment.tier` controls behavior using the six
 portable tiers. `RuntimeEnvironment.name` preserves the deployment display identity. Therefore

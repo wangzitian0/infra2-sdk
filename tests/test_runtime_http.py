@@ -35,23 +35,38 @@ async def test_create_async_http_client() -> None:
     await async_client.aclose()
 
 
-def test_http_settings_load_from_generic_env() -> None:
-    settings = HttpClientSettings.from_env(
-        {
-            "HTTP_TIMEOUT_SECONDS": "20",
-            "HTTP_CONNECT_TIMEOUT_SECONDS": "3",
-            "HTTP_MAX_CONNECTIONS": "50",
-            "HTTP_MAX_KEEPALIVE_CONNECTIONS": "10",
-            "HTTP_CONNECT_RETRIES": "2",
-            "HTTP_FOLLOW_REDIRECTS": "true",
-        }
+def test_http_settings_keep_their_defaults() -> None:
+    settings = HttpClientSettings()
+    assert settings.timeout_seconds == 10.0
+    assert settings.connect_timeout_seconds == 5.0
+    assert settings.max_connections == 100
+    assert settings.max_keepalive_connections == 20
+    assert settings.connect_retries == 0
+    assert settings.user_agent == f"infra2-sdk/{__version__}"
+    assert settings.follow_redirects is False
+
+
+def test_http_settings_build_from_explicit_values() -> None:
+    settings = HttpClientSettings(
+        timeout_seconds=20,
+        connect_timeout_seconds=3,
+        max_connections=50,
+        max_keepalive_connections=10,
+        connect_retries=2,
+        user_agent="my-app/1.0",
+        follow_redirects=True,
     )
     assert settings.timeout_seconds == 20
     assert settings.connect_timeout_seconds == 3
     assert settings.max_connections == 50
     assert settings.max_keepalive_connections == 10
     assert settings.connect_retries == 2
+    assert settings.user_agent == "my-app/1.0"
     assert settings.follow_redirects is True
+
+
+def test_http_settings_have_no_environment_reader() -> None:
+    assert not hasattr(HttpClientSettings, "from_env")
 
 
 async def test_standard_async_http_client_closes_cleanly() -> None:

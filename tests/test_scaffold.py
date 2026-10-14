@@ -188,6 +188,53 @@ def test_scaffold_app_py_wires_db_healthcheck(tmp_path: Path):
     assert "db_checker" not in app_none
 
 
+@pytest.mark.parametrize("profile", ["infra2", "standalone"])
+def test_scaffolded_postgres_app_builds_its_settings_from_an_explicit_dsn(
+    tmp_path: Path, profile: str
+):
+    out_dir = tmp_path / f"explicit_dsn_{profile}"
+    scaffold_service("demo-service", out_dir, profile=profile, db="postgres")
+
+    source = (out_dir / "app.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)  # the generated file is valid Python
+
+    from_env_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "from_env"
+    ]
+    assert from_env_calls == [], "the generated app must not read the environment through from_env"
+    assert "from_env(" not in source
+
+    assignments = [
+        node.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "db_settings" for target in node.targets
+        )
+    ]
+    assert len(assignments) == 1, "app.py must assign db_settings once"
+    call = assignments[0]
+    assert isinstance(call, ast.Call) and ast.unparse(call.func) == "PostgresSettings"
+    assert [keyword.arg for keyword in call.keywords] == ["dsn"]
+    assert ast.unparse(call.keywords[0].value) == "os.environ['DATABASE_URL']"
+    assert any(
+        isinstance(node, ast.Import) and [alias.name for alias in node.names] == ["os"]
+        for node in tree.body
+    ), "app.py must import os"
+
+    init_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and ast.unparse(node.func) == "init_service"
+    ]
+    assert len(init_calls) == 1, "app.py must still call init_service once"
+    assert "db_checker" in [keyword.arg for keyword in init_calls[0].keywords]
+
+
 def test_scaffold_requirements_txt_includes_extras(tmp_path: Path):
     # The expected bound comes from the installed package metadata, never from a literal.
     release = Version(installed_version("infra2-sdk")).base_version

@@ -5,17 +5,19 @@ import pytest
 from infra2_sdk.runtime.environment import (
     APP_OWNED_TIERS,
     PLATFORM_OWNED_TIERS,
+    RUNTIME_ENV_SPECS,
     EnvironmentConflictError,
     EnvironmentTier,
     RuntimeEnvironment,
     RuntimeEnvKey,
-    env_bool,
-    env_float,
+    RuntimeEnvSpec,
     env_int,
     environment_from_env,
     resolve_env,
     resolve_environment_tier,
+    resolve_runtime_env,
     runtime_env_contract,
+    runtime_env_spec,
     strict_environment_from_env,
     to_environment_tier,
 )
@@ -208,25 +210,22 @@ def test_equal_aliases_are_allowed_but_conflicts_fail_closed() -> None:
 
 
 def test_required_and_secret_errors_never_expose_values() -> None:
-    with pytest.raises(ValueError, match="DATABASE_URL is required"):
-        resolve_env({}, RuntimeEnvKey.DATABASE_URL, required=True)
+    with pytest.raises(ValueError, match="ENVIRONMENT is required"):
+        resolve_env({}, RuntimeEnvKey.ENVIRONMENT, required=True)
 
+    # No variable of the contract is sensitive, so the secret rules run on a caller-chosen name.
     secret = "do-not-leak-this-secret"
     with pytest.raises(EnvironmentConflictError) as captured:
         resolve_env(
-            {"AWS_SECRET_ACCESS_KEY": secret, "S3_SECRET_KEY": "different-secret"},
-            RuntimeEnvKey.AWS_SECRET_ACCESS_KEY,
-            aliases=("S3_SECRET_KEY",),
+            {"EXAMPLE_API_KEY": secret, "EXAMPLE_API_TOKEN": "different-secret"},
+            "EXAMPLE_API_KEY",
+            aliases=("EXAMPLE_API_TOKEN",),
             sensitive=True,
         )
     assert secret not in str(captured.value)
 
     spaced = "  value with intentional spaces  "
-    resolved = resolve_env(
-        {"AWS_SECRET_ACCESS_KEY": spaced},
-        RuntimeEnvKey.AWS_SECRET_ACCESS_KEY,
-        sensitive=True,
-    )
+    resolved = resolve_env({"EXAMPLE_API_KEY": spaced}, "EXAMPLE_API_KEY", sensitive=True)
     assert resolved.value == spaced
 
 
@@ -244,6 +243,39 @@ def test_runtime_env_registry_is_versioned_unique_and_platform_neutral() -> None
         assert forbidden not in serialized
 
 
-def test_typed_env_helpers_accept_registry_keys_in_the_public_contract() -> None:
-    for helper in (env_int, env_float, env_bool):
-        assert get_type_hints(helper)["key"] == str | RuntimeEnvKey
+def test_typed_env_helper_accepts_registry_keys_in_the_public_contract() -> None:
+    assert get_type_hints(env_int)["key"] == str | RuntimeEnvKey
+
+
+def test_every_runtime_env_key_has_exactly_one_spec() -> None:
+    keys = [spec.key for spec in RUNTIME_ENV_SPECS]
+    assert len(keys) == len(set(keys)), "a key has two specs"
+    assert set(keys) == set(RuntimeEnvKey), "a key has no spec, or a spec names no key"
+    for key in RuntimeEnvKey:
+        assert runtime_env_spec(key).key is key
+
+
+def test_the_contract_keeps_three_aliases_and_no_other() -> None:
+    aliases = {alias for spec in RUNTIME_ENV_SPECS for alias in spec.aliases}
+    assert aliases == {"ENV", "APP_ENV", "IMAGE_TAG"}
+    assert runtime_env_spec(RuntimeEnvKey.ENVIRONMENT).aliases == ("ENV", "APP_ENV")
+    assert runtime_env_spec(RuntimeEnvKey.SERVICE_VERSION).aliases == ("IMAGE_TAG",)
+    assert resolve_runtime_env({"IMAGE_TAG": "v1.2.3"}, RuntimeEnvKey.SERVICE_VERSION).source == (
+        "IMAGE_TAG"
+    )
+
+
+def test_the_service_name_variable_has_no_alias() -> None:
+    assert runtime_env_spec(RuntimeEnvKey.SERVICE_NAME).aliases == ()
+    # The dead alias SERVICE_NAME is not read and cannot conflict with OTEL_SERVICE_NAME.
+    resolved = resolve_runtime_env(
+        {"SERVICE_NAME": "legacy", "OTEL_SERVICE_NAME": "api"}, RuntimeEnvKey.SERVICE_NAME
+    )
+    assert (resolved.value, resolved.source) == ("api", "OTEL_SERVICE_NAME")
+    assert resolve_runtime_env({"SERVICE_NAME": "legacy"}, RuntimeEnvKey.SERVICE_NAME).value is None
+
+
+def test_a_sensitive_spec_serializes_its_flag() -> None:
+    # The contract keeps the field although no current variable sets it.
+    spec = RuntimeEnvSpec(RuntimeEnvKey.ENVIRONMENT, ("ENV",), sensitive=True)
+    assert spec.to_dict() == {"name": "ENVIRONMENT", "aliases": ["ENV"], "sensitive": True}

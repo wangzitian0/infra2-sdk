@@ -390,6 +390,8 @@ def generate_fastapi_app(service_name: str, db: str = "postgres") -> str:
     if db == "postgres":
         return f'''"""Application entry point for {clean_service}."""
 
+import os
+
 from fastapi import FastAPI
 from infra2_sdk.fastapi import init_service
 from infra2_sdk.runtime.postgres import PostgresSettings, probe_postgres
@@ -397,7 +399,7 @@ from infra2_sdk.runtime.postgres import PostgresSettings, probe_postgres
 app = FastAPI(title="{clean_service}")
 
 # Database reachability probe via infra2_sdk standard PostgreSQL adapter
-db_settings = PostgresSettings.from_env()
+db_settings = PostgresSettings(dsn=os.environ["DATABASE_URL"])
 
 
 def check_db() -> tuple[bool, str]:
