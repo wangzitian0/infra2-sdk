@@ -32,23 +32,26 @@ do not treat a locally built wheel as a published release or update consumers to
 
 ## Releasing
 
-A release changes the version in the same PR and is published by the workflow, never by hand.
+The release workflow publishes each release. Change the version in the same PR. Do not publish manually.
 
-0. A release that removes a public name or changes a default needs a usage census. Search the
-   production and test code of infra2, finance_report and truealpha, in all file types, for each
-   name and for each caller of the keyword. Attach the result to the release issue. A name that a
-   consumer uses is not removed in a minor release. This repository cannot read the consumers, so
-   no test here proves a `consumer:` reason of `tests/surface.json`.
-1. In the PR: bump `version` in `pyproject.toml` (refresh `uv.lock` with `uv lock`), add the
-   [CHANGELOG](CHANGELOG.md) entry, and update the version pins in the README.
-   `tests/test_release_hygiene.py` fails when any of the three is stale.
-2. After the PR is merged: tag the merge commit on `main` as `vX.Y.Z` and push only the tag.
-   `release.yml` verifies the tag matches the package version, re-runs lint and tests, builds,
-   smoke-tests every extra against the wheel, and creates the GitHub release from those
-   artifacts (`gh release create --verify-tag`).
-3. Do not create the release yourself, with `gh release create` or in the web UI, before the
-   run finishes. The workflow's publish step then fails with "a release with the same tag name
-   already exists" (as for v2.3.1) and the release carries assets the workflow did not build.
-   If it happens, treat the release as unverified: do not overwrite its assets silently, and
-   decide on the fix in [#18](https://github.com/wangzitian0/infra2-sdk/issues/18), which owns
-   release identity.
+0. A release that removes a public name or changes a default requires a usage census.
+   Run `python -m tools.sdk_usage_census --json --check` in `infra2` across `infra2`,
+   `finance_report`, and `truealpha`. The census checks `M1` symbol reachability,
+   `M2` `runtime_env_contract()` reachability, `M3` pin lag, `M4` `LEFT_THE_PACKAGES`
+   references, and `M5` hardcoded `SERVICE_NAME` lists. Attach the output to the release issue.
+   Do not remove a name that a consumer uses in a minor release.
+1. In the PR, bump `version` in `pyproject.toml` and run `uv lock`. Add the
+   [CHANGELOG](CHANGELOG.md) entry and update the README version pins.
+   `tests/test_release_hygiene.py` fails when any of the three files is stale. When a pull
+   request modifies `src/infra2_sdk/`, `.github/workflows/ci.yml` requires a new `pyproject.toml`
+   version and an unused `v<version>` git tag.
+2. After you merge the PR, tag the merge commit on `main` as `vX.Y.Z` and push the tag.
+   `.github/workflows/release.yml` runs under `environment: production` and requires reviewer
+   approval. The workflow verifies that `$GITHUB_SHA` is on `origin/main`
+   (`git merge-base --is-ancestor "$GITHUB_SHA" origin/main`). It also verifies that the tag
+   matches `pyproject.toml`, runs lint and tests, smoke-tests each wheel extra, and runs
+   `gh release create --verify-tag`.
+3. Do not create the GitHub release manually before the workflow finishes. A manual release
+   causes the publish step to fail and leaves unverified assets attached to the tag.
+   Follow the release identity contract in `.github/workflows/ci.yml` and
+   `.github/workflows/release.yml` ([#18](https://github.com/wangzitian0/infra2-sdk/issues/18)).
