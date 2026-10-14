@@ -45,6 +45,48 @@ def test_infra2_sdk_submodules_accessible_from_root() -> None:
         assert isinstance(mod, ModuleType), f"infra2_sdk.{sub} should be a module"
 
 
+def _namespace_differences(module: ModuleType) -> tuple[set[str], set[str]]:
+    """(public non-module attributes not in __all__, non-module names of __all__ not public).
+
+    A public attribute is a name that does not start with an underscore. Submodules are
+    not counted: __all__ may list them, and importing a submodule binds it in the package.
+    """
+    public = {
+        name
+        for name, value in vars(module).items()
+        if not name.startswith("_") and not isinstance(value, ModuleType)
+    }
+    exported = {
+        name for name in module.__all__ if not isinstance(getattr(module, name), ModuleType)
+    }
+    return public - exported, exported - public
+
+
+@pytest.mark.parametrize("package", ["infra2_sdk", "infra2_sdk.runtime"])
+def test_public_namespace_equals_all(package: str) -> None:
+    """A leftover import line, such as `from x import Name`, must fail."""
+    module = importlib.import_module(package)
+    assert module.__all__, f"{package}.__all__ is empty: this test would check nothing"
+    leftover, missing = _namespace_differences(module)
+    assert not leftover, f"{package} exposes names that __all__ does not list: {sorted(leftover)}"
+    assert not missing, f"{package}.__all__ lists names that are not attributes: {sorted(missing)}"
+
+
+def test_the_namespace_check_rejects_a_leftover_import_and_a_missing_attribute() -> None:
+    fake = ModuleType("fake")
+    fake.__all__ = ["kept", "sub"]  # type: ignore[attr-defined]
+    fake.kept = 1  # type: ignore[attr-defined]
+    fake.sub = ModuleType("sub")  # type: ignore[attr-defined]
+    fake._private = 1  # type: ignore[attr-defined]
+    assert _namespace_differences(fake) == (set(), set())
+    fake.leftover = object()  # type: ignore[attr-defined]
+    assert _namespace_differences(fake) == ({"leftover"}, set())
+    del fake.kept
+    fake.__all__ = ["sub", "kept"]
+    with pytest.raises(AttributeError):
+        _namespace_differences(fake)  # a name in __all__ with no attribute fails loudly
+
+
 def test_infra2_sdk_runtime_all_matches_actual_attributes() -> None:
     """Verify that every symbol declared in runtime.__all__ exists on infra2_sdk.runtime."""
     runtime_all = infra2_sdk.runtime.__all__

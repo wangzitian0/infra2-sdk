@@ -1,10 +1,11 @@
 """Stable contracts shared by infra2 and application repositories."""
 
-from importlib.metadata import PackageNotFoundError, version
+from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
+from importlib.metadata import version as _version
 
 try:
-    __version__ = version("infra2-sdk")
-except PackageNotFoundError:  # pragma: no cover - source tree without installation
+    __version__ = _version("infra2-sdk")
+except _PackageNotFoundError:  # pragma: no cover - source tree without installation
     __version__ = "0.0.0"
 
 from infra2_sdk import (
