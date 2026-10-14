@@ -11,22 +11,19 @@ from urllib.parse import urlsplit, urlunsplit
 from warnings import warn
 
 from infra2_sdk.runtime._optional import require
-from infra2_sdk.runtime._otel_env import (
-    load_resource_attributes,
-    parse_otel_boolean,
-    parse_traces_sampler,
-)
+from infra2_sdk.runtime._otel_env import parse_otel_boolean, parse_traces_sampler
 from infra2_sdk.runtime.environment import (
     RuntimeEnvironment,
     RuntimeEnvKey,
+    _resolve_service_identity,
     env_int,
-    environment_from_env,
     normalize_deployment_environment,
     resolve_environment_tier,
     resolve_runtime_env,
-    strict_environment_from_env,
 )
 from infra2_sdk.runtime.identity import RuntimeIdentity
+
+_INTERVAL_MESSAGE = "export_interval_millis must be positive"
 
 
 @dataclass(frozen=True)
@@ -42,6 +39,8 @@ class OtelSettings:
     export_interval_millis: int = 60_000
     traces_sampler: str = field(default="", kw_only=True)
     traces_sampler_arg: str = field(default="", kw_only=True)
+    #: True when ``OTEL_SDK_DISABLED`` is true. ``from_env`` then sets ``endpoint`` to ``None``.
+    sdk_disabled: bool = field(default=False, kw_only=True)
 
     def __post_init__(self) -> None:
         tier = resolve_environment_tier(self.environment)
@@ -55,7 +54,7 @@ class OtelSettings:
         if self.endpoint:
             _validate_endpoint(self.endpoint)
         if self.export_interval_millis <= 0:
-            raise ValueError("export_interval_millis must be positive")
+            raise ValueError(_INTERVAL_MESSAGE)
         sampler, _ = parse_traces_sampler(self.traces_sampler, self.traces_sampler_arg)
         object.__setattr__(self, "traces_sampler", sampler if self.traces_sampler.strip() else "")
         object.__setattr__(self, "traces_sampler_arg", self.traces_sampler_arg.strip())
@@ -93,16 +92,16 @@ class OtelSettings:
         environ: Mapping[str, str] | None = None,
         *,
         strict: bool = False,
+        default_service_name: str | None = None,
     ) -> OtelSettings:
-        runtime = strict_environment_from_env(environ) if strict else environment_from_env(environ)
-        environment_value = resolve_runtime_env(environ, RuntimeEnvKey.ENVIRONMENT).value
-        service_name = (
-            resolve_runtime_env(
-                environ,
-                RuntimeEnvKey.SERVICE_NAME,
-                default="",
-            ).value
-            or ""
+        """Build the settings from the environment.
+
+        The service name is ``OTEL_SERVICE_NAME``, then ``service.name`` in
+        ``OTEL_RESOURCE_ATTRIBUTES``, then ``default_service_name``, then ``unknown_service``.
+        """
+
+        identity = _resolve_service_identity(
+            environ, strict=strict, default_service_name=default_service_name
         )
         endpoint = resolve_runtime_env(environ, RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT).value
         try:
@@ -111,28 +110,27 @@ class OtelSettings:
             )
         except ValueError as exc:
             if strict:
-                raise
+                raise ValueError(f"invalid OTEL_SDK_DISABLED: {exc}") from exc
             warn(f"invalid OTEL_SDK_DISABLED: {exc}", RuntimeWarning, stacklevel=2)
             disabled = False
-        raw_attributes = (
-            resolve_runtime_env(environ, RuntimeEnvKey.OTEL_RESOURCE_ATTRIBUTES, default="").value
-            or ""
-        )
-        attributes, deployment_environment = load_resource_attributes(
-            raw_attributes,
-            strict=strict,
-        )
-        if deployment_environment and not environment_value:
-            inferred_tier = resolve_environment_tier(deployment_environment)
-            runtime = RuntimeEnvironment(
-                normalize_deployment_environment(deployment_environment, inferred_tier),
-                inferred_tier,
-            )
-        elif deployment_environment:
-            deployment_environment = normalize_deployment_environment(
-                deployment_environment,
-                runtime.tier,
-            )
+        runtime = identity.environment
+        deployment_environment = identity.deployment_environment
+        try:
+            if deployment_environment and not identity.environment_is_set:
+                inferred_tier = resolve_environment_tier(deployment_environment)
+                runtime = RuntimeEnvironment(
+                    normalize_deployment_environment(deployment_environment, inferred_tier),
+                    inferred_tier,
+                )
+            elif deployment_environment:
+                deployment_environment = normalize_deployment_environment(
+                    deployment_environment,
+                    runtime.tier,
+                )
+        except ValueError as exc:
+            if strict:
+                raise ValueError(f"invalid deployment.environment.name: {exc}") from exc
+            raise
         sampler_name = resolve_runtime_env(environ, RuntimeEnvKey.OTEL_TRACES_SAMPLER).value
         sampler_arg = resolve_runtime_env(environ, RuntimeEnvKey.OTEL_TRACES_SAMPLER_ARG).value
         sampler_name, sampler_arg = sampler_name or "", sampler_arg or ""
@@ -143,35 +141,28 @@ class OtelSettings:
                 raise
             warn(f"invalid OTEL_TRACES_SAMPLER: {exc}", RuntimeWarning, stacklevel=2)
             sampler_name = sampler_arg = ""
-        service_name = service_name or attributes.get("service.name", "unknown_service")
-        service_version = resolve_runtime_env(
-            environ,
-            RuntimeEnvKey.SERVICE_VERSION,
-            default=attributes.get("service.version", "unknown"),
-        ).value
-        instance_id = resolve_runtime_env(
-            environ,
-            RuntimeEnvKey.INSTANCE_ID,
-            default=attributes.get("service.instance.id", ""),
-        ).value
-        if service_name is None or service_version is None:
-            raise ValueError("service_name and service_version must not be None")
         effective_endpoint = None if disabled else endpoint
-        return cls(
-            service_name=service_name,
-            endpoint=effective_endpoint,
-            service_version=service_version,
-            environment=runtime.tier.value,
-            deployment_environment=deployment_environment or runtime.name,
-            instance_id=instance_id or "",
-            resource_attributes=attributes,
-            enabled=bool(effective_endpoint),
-            export_interval_millis=env_int(
-                environ, RuntimeEnvKey.OTEL_METRIC_EXPORT_INTERVAL, default=60_000
-            ),
-            traces_sampler=sampler_name,
-            traces_sampler_arg=sampler_arg,
-        )
+        try:
+            return cls(
+                service_name=identity.service_name or "unknown_service",
+                endpoint=effective_endpoint,
+                service_version=identity.service_version,
+                environment=runtime.tier.value,
+                deployment_environment=deployment_environment or runtime.name,
+                instance_id=identity.instance_id,
+                resource_attributes=identity.attributes,
+                enabled=bool(effective_endpoint),
+                export_interval_millis=env_int(
+                    environ, RuntimeEnvKey.OTEL_METRIC_EXPORT_INTERVAL, default=60_000
+                ),
+                traces_sampler=sampler_name,
+                traces_sampler_arg=sampler_arg,
+                sdk_disabled=disabled,
+            )
+        except ValueError as exc:
+            if strict and str(exc) == _INTERVAL_MESSAGE:
+                raise ValueError(f"invalid OTEL_METRIC_EXPORT_INTERVAL: {exc}") from exc
+            raise
 
 
 @dataclass

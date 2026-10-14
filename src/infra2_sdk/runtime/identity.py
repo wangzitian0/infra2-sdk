@@ -10,11 +10,13 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from infra2_sdk._wire import JSON_SCHEMA_DIALECT, parse_string
-from infra2_sdk.runtime._otel_env import load_resource_attributes
 from infra2_sdk.runtime.environment import (
     EnvironmentTier,
+    RuntimeEnvKey,
+    _resolve_service_identity,
     normalize_deployment_environment,
     resolve_environment_tier,
+    resolve_runtime_env,
 )
 
 _SHA40_RE = re.compile(r"\A[0-9a-f]{40}\Z")
@@ -115,42 +117,22 @@ class RuntimeIdentity:
         *,
         strict: bool = False,
     ) -> RuntimeIdentity:
-        """Build identity from deploy_v2-derived results or equivalent standalone env."""
+        """Build identity from deploy_v2-derived results or equivalent standalone env.
 
-        from infra2_sdk.runtime.environment import (
-            RuntimeEnvKey,
-            environment_from_env,
-            resolve_runtime_env,
-            strict_environment_from_env,
-        )
+        The service name is ``OTEL_SERVICE_NAME``, then ``service.name`` in
+        ``OTEL_RESOURCE_ATTRIBUTES``. A missing name raises ``ValueError``.
+        """
 
-        runtime = strict_environment_from_env(environ) if strict else environment_from_env(environ)
-        attributes, deployment_environment = load_resource_attributes(
-            resolve_runtime_env(environ, RuntimeEnvKey.OTEL_RESOURCE_ATTRIBUTES, default="").value
-            or "",
-            strict=strict,
-        )
-        service_name = resolve_runtime_env(
-            environ,
-            RuntimeEnvKey.SERVICE_NAME,
-            required=True,
-        ).value
-        service_version = resolve_runtime_env(
-            environ,
-            RuntimeEnvKey.SERVICE_VERSION,
-            default=attributes.get("service.version", "unknown"),
-        ).value
-        commit_sha = resolve_runtime_env(
-            environ, RuntimeEnvKey.GIT_COMMIT_SHA, default="unknown"
-        ).value
-        if service_name is None or service_version is None or commit_sha is None:
-            raise ValueError("service_name, service_version, and commit_sha must not be None")
+        resolved = _resolve_service_identity(environ, strict=strict)
+        if resolved.service_name is None:
+            raise ValueError(f"{RuntimeEnvKey.SERVICE_NAME} is required")
         identity = cls(
-            service_name=service_name,
-            service_version=service_version,
-            environment=runtime.tier,
-            deployment_environment=deployment_environment or runtime.name,
-            commit_sha=commit_sha,
+            service_name=resolved.service_name,
+            service_version=resolved.service_version,
+            environment=resolved.environment.tier,
+            deployment_environment=resolved.deployment_environment or resolved.environment.name,
+            commit_sha=resolve_runtime_env(environ, RuntimeEnvKey.GIT_COMMIT_SHA).value
+            or "unknown",
             image_digest=resolve_runtime_env(environ, RuntimeEnvKey.IMAGE_DIGEST, default="").value
             or "",
             configuration_sha256=resolve_runtime_env(
@@ -161,12 +143,7 @@ class RuntimeIdentity:
             or "",
             release_id=resolve_runtime_env(environ, RuntimeEnvKey.RELEASE_ID, default="").value
             or "",
-            instance_id=resolve_runtime_env(
-                environ,
-                RuntimeEnvKey.INSTANCE_ID,
-                default=attributes.get("service.instance.id", ""),
-            ).value
-            or "",
+            instance_id=resolved.instance_id,
         )
         if strict:
             identity.validate_deployed()

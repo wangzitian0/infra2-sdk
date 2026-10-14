@@ -43,6 +43,59 @@ class _MemoryOtlp:
         return Memory()
 
 
+def _patch_everywhere(monkeypatch, name: str, replacement) -> int:
+    """Replace the function ``name`` in every SDK module that holds the original.
+
+    A module that imports the function with ``from x import f`` keeps its own binding. Patching
+    every holder counts a call whichever module makes it, including a module added later.
+    """
+    from infra2_sdk.runtime import environment as environment_module
+
+    original = getattr(environment_module, name)
+    holders = [
+        module
+        for module_name, module in list(sys.modules.items())
+        if module_name.startswith("infra2_sdk") and getattr(module, name, None) is original
+    ]
+    for module in holders:
+        monkeypatch.setattr(module, name, replacement)
+    return len(holders)
+
+
+@pytest.fixture
+def resolver_calls(monkeypatch) -> list[dict]:
+    """The keyword arguments of every call of the one private service identity resolver."""
+    from infra2_sdk.runtime import environment as environment_module
+
+    real = environment_module._resolve_service_identity
+    calls: list[dict] = []
+
+    def counting(*args, **kwargs):
+        calls.append(dict(kwargs))
+        return real(*args, **kwargs)
+
+    holders = _patch_everywhere(monkeypatch, "_resolve_service_identity", counting)
+    assert holders >= 3, "environment, otel and identity must hold the resolver: nothing is counted"
+    return calls
+
+
+@pytest.fixture
+def environment_reads(monkeypatch) -> list[str]:
+    """The canonical name of every ``resolve_runtime_env`` read, in call order."""
+    from infra2_sdk.runtime import environment as environment_module
+
+    real = environment_module.resolve_runtime_env
+    reads: list[str] = []
+
+    def recording(environ, key, **kwargs):
+        reads.append(str(environment_module.RuntimeEnvKey(key)))
+        return real(environ, key, **kwargs)
+
+    holders = _patch_everywhere(monkeypatch, "resolve_runtime_env", recording)
+    assert holders >= 3, "no module holds resolve_runtime_env: nothing is counted"
+    return reads
+
+
 @pytest.fixture
 def memory_otlp(monkeypatch):
     import opentelemetry.exporter.otlp.proto.http._log_exporter as log_exporter
