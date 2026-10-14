@@ -163,12 +163,14 @@ identity = RuntimeIdentity.from_env(strict=True)
 ```
 
 Strict identity loading requires a real commit SHA in every deployed tier and the complete
-digest/configuration/release identity in staging and production. Strict mode validates that
-`GIT_COMMIT_SHA` is a 40-character lowercase hexadecimal string (`^[0-9a-f]{40}$`). Deployments
-injecting release tags (e.g. `v0.1.74`) or short SHAs must use non-strict loading (`strict=False`)
-or platform-managed `ServiceIdentity`. Non-strict loaders follow OpenTelemetry's error-handling
-model: malformed optional OTel values are reported as runtime warnings and discarded instead of
-blocking an application that has telemetry disabled.
+digest/configuration/release identity in staging and production. Note that `RuntimeIdentity`
+validates that `GIT_COMMIT_SHA` (when not `'unknown'`) is a 40-character lowercase hexadecimal
+string (`^[0-9a-f]{40}$`) in both strict and non-strict modes. Deployments injecting release tags
+(e.g. `v0.1.74`) or short SHAs cannot construct `RuntimeIdentity` with that commit ref and should
+leave `GIT_COMMIT_SHA` unset or rely on platform-managed `ServiceIdentity` attributes. Non-strict
+loaders follow OpenTelemetry's error-handling model: malformed optional OTel resource attributes
+are reported as runtime warnings and discarded instead of blocking an application that has
+telemetry disabled.
 
 ## Start an independent app
 
