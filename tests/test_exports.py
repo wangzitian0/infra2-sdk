@@ -127,13 +127,16 @@ README = (Path(__file__).resolve().parent.parent / "README.md").read_text(encodi
 PACKAGES = ("infra2_sdk", "infra2_sdk.runtime")
 REASON_PREFIXES = ("consumer:", "documented:", "held:")
 CONSUMER_REPOSITORIES = frozenset({"infra2", "finance_report", "truealpha"})
-# A hold is a recorded decision. A new hold needs a new line here and a review of that decision.
-HELD_REASONS = frozenset(
-    {
-        "held: infra2 docs/ssot/core.environments.md identity decision (not adopted yet)",
-        "held: issue #102 decision 7 (adopt, do not delete)",
-    }
-)
+# A hold is a recorded decision: name -> exact reason. A new hold needs a new line here and a
+# review of that decision. surface.json and this table must agree on the names and the reasons.
+HELD = {
+    "RUNTIME_ENV_CONTRACT_VERSION": "held: issue #102 decision 7 (adopt, do not delete)",
+    "RUNTIME_ENV_SPECS": "held: issue #102 decision 7 (adopt, do not delete)",
+    "runtime_env_contract": "held: issue #102 decision 7 (adopt, do not delete)",
+    "RuntimeIdentity": (
+        "held: infra2 docs/ssot/core.environments.md identity decision (not adopted yet)"
+    ),
+}
 
 
 def _readme_sections() -> dict[str, str]:
@@ -175,12 +178,23 @@ def test_every_reason_starts_with_a_known_prefix_and_gives_a_detail() -> None:
 
 
 def test_consumer_reasons_name_known_repositories() -> None:
+    """Check the form of each `consumer:` reason, not its truth.
+
+    The SDK repository cannot read the consumers. It cannot tell whether a named repository
+    imports the name. The release check does that: consumer_import_check.py with --tests, and
+    the census sdk_api_reach.py. Both belong to issue #102 and live in the infra2 workspace,
+    in .agents/runs/env-inventory-20261013/tool. A false claim passes this test and fails
+    that check.
+    """
+    checked = 0
     for package, name, reason in _surface_entries():
         if not reason.startswith("consumer:"):
             continue
         repositories = [part.strip() for part in reason.removeprefix("consumer:").split(",")]
         assert repositories == sorted(set(repositories)), f"{package}.{name}: {reason!r}"
         assert set(repositories) <= CONSUMER_REPOSITORIES, f"{package}.{name}: {reason!r}"
+        checked += 1
+    assert checked, "no consumer reason: this test would check nothing"
 
 
 def test_documented_reasons_point_to_a_readme_section_that_names_the_export() -> None:
@@ -202,8 +216,14 @@ def test_documented_reasons_point_to_a_readme_section_that_names_the_export() ->
     assert checked, "no documented reason: this test would check nothing"
 
 
-def test_held_reasons_use_a_recorded_decision_text() -> None:
-    held = [(p, n, r) for p, n, r in _surface_entries() if r.startswith("held:")]
+def test_held_names_and_reasons_equal_the_recorded_table() -> None:
+    held = [(name, reason) for _, name, reason in _surface_entries() if reason.startswith("held:")]
     assert held, "no held reason: this test would check nothing"
-    for package, name, reason in held:
-        assert reason in HELD_REASONS, f"{package}.{name}: unrecorded hold {reason!r}"
+    by_name = dict(held)
+    assert len(by_name) == len(held), "one name is held in both packages"
+    assert set(by_name) == set(HELD), (
+        f"held in surface.json only: {sorted(set(by_name) - set(HELD))}; "
+        f"held in HELD only: {sorted(set(HELD) - set(by_name))}"
+    )
+    for name, reason in by_name.items():
+        assert reason == HELD[name], f"{name}: the reason {reason!r} is not {HELD[name]!r}"
