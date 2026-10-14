@@ -5,6 +5,7 @@ import pytest
 from infra2_sdk.runtime.environment import (
     APP_OWNED_TIERS,
     PLATFORM_OWNED_TIERS,
+    RUNTIME_ENV_CONTRACT_VERSION,
     RUNTIME_ENV_SPECS,
     EnvironmentConflictError,
     EnvironmentTier,
@@ -231,7 +232,7 @@ def test_required_and_secret_errors_never_expose_values() -> None:
 
 def test_runtime_env_registry_is_versioned_unique_and_platform_neutral() -> None:
     contract = runtime_env_contract()
-    assert contract["contract_version"] == 1
+    assert contract["contract_version"] == 2
     variables = contract["variables"]
     names = [item["name"] for item in variables]
     aliases = [alias for item in variables for alias in item["aliases"]]
@@ -241,6 +242,16 @@ def test_runtime_env_registry_is_versioned_unique_and_platform_neutral() -> None
     serialized = str(contract).upper()
     for forbidden in ("INFRA2", "IAC_REF", "VAULT", "DOKPLOY"):
         assert forbidden not in serialized
+
+
+def test_contract_version_is_two_because_3_4_0_removed_20_variables() -> None:
+    # Version 1 listed 34 variables. A receiver that requires version 1 must reject the
+    # 3.4.0 document. An additive variable keeps version 2: then change this count and the
+    # README compatibility note together.
+    assert RUNTIME_ENV_CONTRACT_VERSION == 2
+    contract = runtime_env_contract()
+    assert contract["contract_version"] == RUNTIME_ENV_CONTRACT_VERSION
+    assert len(contract["variables"]) == 14
 
 
 def test_typed_env_helper_accepts_registry_keys_in_the_public_contract() -> None:

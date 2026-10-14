@@ -6,6 +6,7 @@ Each removed name must stay absent. A new shim with the same name fails these te
 from __future__ import annotations
 
 import importlib
+import json
 
 import pytest
 
@@ -156,6 +157,26 @@ def test_removed_name_is_not_exported_by_a_package(module: str, name: str) -> No
 def test_removed_environment_member_is_not_in_runtime_env_key(member: str) -> None:
     assert member not in RuntimeEnvKey.__members__
     assert not hasattr(RuntimeEnvKey, member)
+
+
+def _strings(value: object):
+    """Every string of a JSON document: keys and values, at any depth."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            yield from _strings(key)
+            yield from _strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _strings(item)
+
+
+def test_serialized_contract_names_no_removed_variable_anywhere() -> None:
+    document = json.loads(json.dumps(runtime_env_contract()))
+    found = set(_strings(document))
+    assert "ENVIRONMENT" in found, "the walk found no variable: this test would check nothing"
+    assert not found & set(REMOVED_ENV_NAMES), sorted(found & set(REMOVED_ENV_NAMES))
 
 
 @pytest.mark.parametrize("name", REMOVED_ENV_NAMES)

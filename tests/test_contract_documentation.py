@@ -93,7 +93,7 @@ def test_renderer_prints_one_row_per_contract_variable_in_contract_order() -> No
 def test_renderer_marks_aliases_and_sensitive_variables_of_a_synthetic_contract() -> None:
     # No variable of the real contract is sensitive, so the "yes" branch needs its own input.
     contract = {
-        "contract_version": 1,
+        "contract_version": 2,
         "variables": [
             {"name": "B_SECRET", "aliases": ["B_OLD", "B_LEGACY"], "sensitive": True},
             {"name": "A_PLAIN", "aliases": [], "sensitive": False},
@@ -107,9 +107,10 @@ def test_renderer_marks_aliases_and_sensitive_variables_of_a_synthetic_contract(
     )
 
 
-def test_renderer_rejects_an_unknown_contract_version() -> None:
-    with pytest.raises(ValueError, match="contract version 1"):
-        _load_renderer().render({"contract_version": 2, "variables": []})
+@pytest.mark.parametrize("version", [1, 3, True, "2"])
+def test_renderer_rejects_an_unsupported_contract_version(version: object) -> None:
+    with pytest.raises(ValueError, match="contract version 2"):
+        _load_renderer().render({"contract_version": version, "variables": []})
 
 
 def test_readme_block_extraction_fails_when_a_marker_is_missing() -> None:

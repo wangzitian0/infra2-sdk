@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from infra2_sdk.runtime.environment import runtime_env_contract  # noqa: E402
 
-SUPPORTED_CONTRACT_VERSION = 1
+SUPPORTED_CONTRACT_VERSION = 2
 HEADER = "| Canonical name | Compatibility aliases | Sensitive |"
 SEPARATOR = "|---|---|---|"
 

@@ -431,6 +431,10 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
     `S3_ADDRESSING_STYLE`;
   - database: `DATABASE_URL`, `DATABASE_CONNECT_TIMEOUT_SECONDS`,
     `DATABASE_STATEMENT_TIMEOUT_SECONDS`.
+- In v3.4.0, `runtime_env_contract()["contract_version"]` (`RUNTIME_ENV_CONTRACT_VERSION`) is 2,
+  not 1, because the document lost the 20 variables above. Version 2 lists 14 variables. The
+  field layout is the same. A receiver that requires version 1 rejects version 2, as the rule
+  above says, so change it to require version 2.
 - In v3.4.0, the SDK no longer reads `SERVICE_NAME`, the unused alias of `OTEL_SERVICE_NAME`.
   `ENV`, `APP_ENV` and `IMAGE_TAG` stay.
 - In v3.4.0, names that no consumer imports and no recorded decision holds left `__all__` of
