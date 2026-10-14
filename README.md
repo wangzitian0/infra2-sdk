@@ -55,6 +55,19 @@ python -m pip install \
 | `infra2_sdk.snapshot` | Versioned anonymized-snapshot manifest, residual-proof shape, and artifact digest verification |
 | `infra2_sdk.transport` | Minimal injectable HTTP transport (`HttpTransport`, `HttpResponse`, `urllib_transport`) shared by adapters |
 
+### Core runtime entrypoints
+
+| Capability | Canonical entrypoint | Primary module | Description |
+|---|---|---|---|
+| Service bootstrap | `init_service` | `infra2_sdk.fastapi` | Mounts `/livez`, `/readyz`, `/health` routes and configures OpenTelemetry providers |
+| Health probes | `check_health`, `run_probes` | `infra2_sdk.runtime.health` | Framework-agnostic readiness evaluation across declared dependency probes |
+| HTTP client | `create_http_client`, `probe_http` | `infra2_sdk.runtime.http` | Standard httpx client with connection limits, timeouts, and retry budgets |
+| PostgreSQL | `normalize_postgres_dsn`, `probe_postgres` | `infra2_sdk.runtime.postgres` | Psycopg reachability probe with credential redaction and DSN normalization |
+| S3 storage | `create_s3_client`, `probe_s3`, `ensure_bucket` | `infra2_sdk.runtime.s3` | Boto3 client initialization, bucket reachability probe, and idempotent bucket creation |
+| Environment & identity | `environment_from_env` | `infra2_sdk.runtime.environment` | Canonical six-tier environment resolution and contract validation |
+| Identity verification | `RuntimeIdentity` | `infra2_sdk.runtime.identity` | Strict 40-hex commit SHA and deployment release attribute validation |
+| Secret manifests | `render_agent_template`, `render_agent_policy` | `infra2_sdk.secrets` | Manifest-driven Vault Agent Consul template and HCL policy generation |
+
 ## Runtime extras
 
 The core runtime contracts have no runtime dependency beyond the SDK core. Install only the
@@ -150,9 +163,14 @@ identity = RuntimeIdentity.from_env(strict=True)
 ```
 
 Strict identity loading requires a real commit SHA in every deployed tier and the complete
-digest/configuration/release identity in staging and production. Non-strict loaders follow
-OpenTelemetry's error-handling model: malformed optional OTel values are reported as runtime
-warnings and discarded instead of blocking an application that has telemetry disabled.
+digest/configuration/release identity in staging and production. Note that `RuntimeIdentity`
+validates that `GIT_COMMIT_SHA` (when not `'unknown'`) is a 40-character lowercase hexadecimal
+string (`^[0-9a-f]{40}$`) in both strict and non-strict modes. Deployments injecting release tags
+(e.g. `v0.1.74`) or short SHAs cannot construct `RuntimeIdentity` with that commit ref and should
+leave `GIT_COMMIT_SHA` unset or rely on platform-managed `ServiceIdentity` attributes. Non-strict
+loaders follow OpenTelemetry's error-handling model: malformed optional OTel resource attributes
+are reported as runtime warnings and discarded instead of blocking an application that has
+telemetry disabled.
 
 ## Start an independent app
 
@@ -261,8 +279,10 @@ aliases, and sensitivity. Canonical names prefer existing open ecosystem convent
 | Concern | Canonical names | Compatibility aliases |
 |---|---|---|
 | Runtime | `ENVIRONMENT`, `OTEL_SERVICE_NAME`, `SERVICE_VERSION`, `GIT_COMMIT_SHA`, `INSTANCE_ID` | `ENV`, `APP_ENV`, `SERVICE_NAME`, `IMAGE_TAG` |
-| PostgreSQL | `DATABASE_URL`, `DATABASE_CONNECT_TIMEOUT_SECONDS` | — |
-| S3 | `OBJECT_STORAGE_PROTOCOL=s3`, `S3_BUCKET`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, standard AWS credentials | `OBJECT_STORAGE_DRIVER`, `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` |
+| Image & Release Digest | `IMAGE_DIGEST`, `CONFIGURATION_SHA256`, `RELEASE_ID` | — |
+| HTTP Client | `HTTP_TIMEOUT_SECONDS`, `HTTP_CONNECT_TIMEOUT_SECONDS`, `HTTP_MAX_CONNECTIONS`, `HTTP_MAX_KEEPALIVE_CONNECTIONS`, `HTTP_CONNECT_RETRIES`, `HTTP_USER_AGENT`, `HTTP_FOLLOW_REDIRECTS` | — |
+| PostgreSQL | `DATABASE_URL`, `DATABASE_CONNECT_TIMEOUT_SECONDS`, `DATABASE_STATEMENT_TIMEOUT_SECONDS` | — |
+| S3 | `OBJECT_STORAGE_PROTOCOL=s3`, `S3_BUCKET`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `S3_CONNECT_TIMEOUT_SECONDS`, `S3_READ_TIMEOUT_SECONDS`, `S3_ADDRESSING_STYLE` | `OBJECT_STORAGE_DRIVER`, `S3_ENDPOINT_URL`, `S3_ENDPOINT`, `AWS_DEFAULT_REGION`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_SESSION_TOKEN` |
 | Telemetry | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_SDK_DISABLED`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | — |
 
 Canonical and alias values may coexist only when equal. Conflicts fail before clients are
