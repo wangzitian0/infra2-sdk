@@ -395,6 +395,11 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
 - Semantic versions describe the public Python and serialized JSON contracts.
 - Additive fields and enum values require a minor release.
 - Removing or changing an existing field requires a major release.
+- While infra2, finance_report and truealpha are the only consumers, a minor release may remove a
+  public name. It may also change the default of a keyword. The census must cover the production
+  and test code of the three consumers. It must find no use of the name and no reliance on the
+  old default. The CHANGELOG states the change. A change that a consumer relies on needs a major
+  release.
 - New runtime dataclass fields are keyword-only so additive releases do not rebind existing
   positional arguments.
 - Receivers must require a JSON integer `contract_version` and reject booleans or unsupported
@@ -419,9 +424,9 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
 - In v3.3.0, `routing.LEGACY_CANARY_PR` and its `999` and `pr-999` slot mapping were removed.
   Those slot ids now resolve as ordinary preview slots. For the canary host, pass `tier="canary"`,
   `is_canary=True`, or `slot_id=CANARY_SLOT`.
-- In v3.4.0, the SDK removed public names that no consumer uses. The basis is the same as in
-  v3.3.0: a census of infra2, finance_report and truealpha found no use of them. Replacements
-  are in brackets.
+- In v3.4.0, the SDK removed public names that no consumer uses. It follows the rule above: a
+  census of infra2, finance_report and truealpha found no use of them. (v3.3.0 removed names
+  that the README had marked as compatibility shims.) Replacements are in brackets.
   - `capacity.LEVELS`, `capacity.onepassword_capacity`, `capacity.OnePasswordCapacityReport` and
     `capacity.Runner`;
   - `delivery.PREVIEW_RELEVANT_STAGES`;
@@ -504,12 +509,25 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
 - In v3.4.0, a string lookup of a removed variable raises `ValueError`:
   `resolve_runtime_env(env, "DATABASE_URL")`, `runtime_env_spec("S3_BUCKET")` and
   `RuntimeEnvKey("AWS_REGION")`. Before 3.4.0, each of them returned a value.
+- In v3.4.0, `init_service` is strict by default (`strict_otel=True`). Before, the default was
+  `False`. A service without a known tier, or with an invalid `OTEL_*` value that the SDK reads,
+  now stops at start-up. A caller that must never stop on telemetry passes `strict_otel=False`.
+  The `init_service` documentation lists every strict check.
+- In v3.4.0, the service name of the telemetry is `OTEL_SERVICE_NAME`, then `service.name` in
+  `OTEL_RESOURCE_ATTRIBUTES`, then the `name` argument of `init_service`. Before, `init_service`
+  used its `name` argument over the attribute. `RuntimeIdentity.from_env` now also takes
+  `service.name` from the attributes. A padded value is trimmed. A value that is blank after
+  decoding counts as missing.
+- In v3.4.0, `init_service` raises `ValueError` for a blank `name` before it changes the app. A
+  strict check that fails leaves no marker and no probe route. A failure while the providers
+  start is the one exception. The `init_service` documentation describes it.
 - In v3.4.0, 31 names left `__all__` of `infra2_sdk` and `infra2_sdk.runtime` and are no longer
   attributes of these packages. No consumer imports them from the package, and no recorded
-  decision holds them. Four of them (`DeployState`, `DisagreementKind`, `PipelineStage` and
-  `validate_gate`) are imported from their module in the test code of infra2. That import
-  works as before. All 31 stay defined in their modules. Import them from the module, for
-  example `from infra2_sdk.deploy import DeployState`:
+  decision holds them. Six of them are imported from their module in test code. In infra2 these
+  are `BudgetStatus`, `DeployState`, `DisagreementKind`, `PipelineStage` and `validate_gate`.
+  In finance_report and truealpha it is `ProductionEvidencePolicy`. That import works as
+  before. All 31 stay defined in their modules. Import them from the module, for example
+  `from infra2_sdk.deploy import DeployState`:
   - in `infra2_sdk`:
     - `capacity`: `CapacityLimit`;
     - `ci`: `validate_gate`;
