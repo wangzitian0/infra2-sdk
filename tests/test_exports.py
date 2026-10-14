@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import importlib
+import json
+import re
 import sys
+from pathlib import Path
 from types import ModuleType
 
 import pytest
@@ -116,3 +120,92 @@ def test_consolidated_secondary_modules() -> None:
     assert runtime_env_contract.__module__ == "infra2_sdk.runtime.environment"
     assert DependencyManifest.__module__ == "infra2_sdk.runtime.health"
     assert check_health.__module__ == "infra2_sdk.runtime.health"
+
+
+# --- The exported surface is locked: every exported name has a recorded reason ----------------
+
+SURFACE = json.loads(Path(__file__).with_name("surface.json").read_text(encoding="utf-8"))
+README = (Path(__file__).resolve().parent.parent / "README.md").read_text(encoding="utf-8")
+PACKAGES = ("infra2_sdk", "infra2_sdk.runtime")
+REASON_PREFIXES = ("consumer:", "documented:", "held:")
+CONSUMER_REPOSITORIES = frozenset({"infra2", "finance_report", "truealpha"})
+# A hold is a recorded decision. A new hold needs a new line here and a review of that decision.
+HELD_REASONS = frozenset(
+    {
+        "held: infra2 docs/ssot/core.environments.md identity decision (not adopted yet)",
+        "held: issue #102 decision 7 (adopt, do not delete)",
+    }
+)
+
+
+def _readme_sections() -> dict[str, str]:
+    """Title of each level 2 or level 3 heading of the README, mapped to its text."""
+    parts = re.split(r"^#{2,3} (.+)$", README, flags=re.MULTILINE)
+    titles = parts[1::2]
+    assert len(titles) == len(set(titles)), "README has two headings with one title"
+    return dict(zip(titles, parts[2::2], strict=True))
+
+
+def _surface_entries() -> list[tuple[str, str, str]]:
+    return [
+        (package, name, reason) for package in PACKAGES for name, reason in SURFACE[package].items()
+    ]
+
+
+def test_surface_lock_lists_exactly_the_two_packages() -> None:
+    assert set(SURFACE) == set(PACKAGES)
+
+
+@pytest.mark.parametrize("package", PACKAGES)
+def test_exported_names_equal_the_surface_lock(package: str) -> None:
+    exported = set(importlib.import_module(package).__all__)
+    locked = set(SURFACE[package])
+    assert exported, f"{package}.__all__ is empty: this test would check nothing"
+    assert exported == locked, (
+        f"{package}: exported without a reason in tests/surface.json: {sorted(exported - locked)}; "
+        f"reason without an export: {sorted(locked - exported)}"
+    )
+
+
+def test_every_reason_starts_with_a_known_prefix_and_gives_a_detail() -> None:
+    entries = _surface_entries()
+    assert entries, "tests/surface.json lists no name: this test would check nothing"
+    for package, name, reason in entries:
+        prefixes = [prefix for prefix in REASON_PREFIXES if reason.startswith(prefix)]
+        assert len(prefixes) == 1, f"{package}.{name}: reason {reason!r} has no known prefix"
+        assert reason.removeprefix(prefixes[0]).strip(), f"{package}.{name}: empty reason detail"
+
+
+def test_consumer_reasons_name_known_repositories() -> None:
+    for package, name, reason in _surface_entries():
+        if not reason.startswith("consumer:"):
+            continue
+        repositories = [part.strip() for part in reason.removeprefix("consumer:").split(",")]
+        assert repositories == sorted(set(repositories)), f"{package}.{name}: {reason!r}"
+        assert set(repositories) <= CONSUMER_REPOSITORIES, f"{package}.{name}: {reason!r}"
+
+
+def test_documented_reasons_point_to_a_readme_section_that_names_the_export() -> None:
+    sections = _readme_sections()
+    checked = 0
+    for package, name, reason in _surface_entries():
+        if not reason.startswith("documented:"):
+            continue
+        match = re.fullmatch(r"documented: README section (?P<title>.+)", reason)
+        assert match, f"{package}.{name}: write 'documented: README section <heading>'"
+        assert match["title"] in sections, f"{package}.{name}: no README heading {match['title']!r}"
+        is_module = isinstance(getattr(importlib.import_module(package), name), ModuleType)
+        needle = f"{package}.{name}" if is_module else name
+        pattern = rf"(?<![A-Za-z0-9_]){re.escape(needle)}(?![A-Za-z0-9_])"
+        assert re.search(pattern, sections[match["title"]]), (
+            f"{package}.{name}: README section {match['title']!r} does not name {needle!r}"
+        )
+        checked += 1
+    assert checked, "no documented reason: this test would check nothing"
+
+
+def test_held_reasons_use_a_recorded_decision_text() -> None:
+    held = [(p, n, r) for p, n, r in _surface_entries() if r.startswith("held:")]
+    assert held, "no held reason: this test would check nothing"
+    for package, name, reason in held:
+        assert reason in HELD_REASONS, f"{package}.{name}: unrecorded hold {reason!r}"
