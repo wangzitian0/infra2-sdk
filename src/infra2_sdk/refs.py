@@ -6,11 +6,10 @@ import json
 import re
 import subprocess
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import urlencode
 
-from infra2_sdk.runtime.identity import RuntimeIdentity
 from infra2_sdk.transport import HttpResponse, HttpTransport, urllib_transport
 
 _SHA_RE = re.compile(r"\A[0-9a-fA-F]{7,40}\Z")
@@ -187,24 +186,6 @@ class ReleaseError(RuntimeError):
     pass
 
 
-@dataclass(frozen=True)
-class ReleaseIdentity:
-    tag: str
-    commit_sha: str
-    registry: str
-    image: str
-    image_digest: str
-
-    @property
-    def image_ref(self) -> str:
-        return f"{self.registry}/{self.image}@{self.image_digest}"
-
-    def to_dict(self) -> dict[str, str]:
-        data = asdict(self)
-        data["image_ref"] = self.image_ref
-        return data
-
-
 def resolve_image_digest(
     *,
     image: str,
@@ -289,53 +270,9 @@ def _bearer_token(send: HttpTransport, challenge: str) -> str:
     return token
 
 
-def resolve_release_identity(
-    *,
-    repo: str,
-    image: str,
-    tag: str,
-    registry: str = "ghcr.io",
-    runner: CommandRunner = subprocess.run,
-    transport: HttpTransport | None = None,
-) -> ReleaseIdentity:
-    """Tag → commit (git ls-remote) and tag → digest (registry), in one immutable record."""
-    resolved = resolve_image_ref(tag, repo=repo, runner=runner)
-    if resolved.form != "tag":
-        raise ReleaseError(f"{tag!r} is not a tag")
-    digest = resolve_image_digest(
-        image=image, reference=tag, registry=registry, transport=transport
-    )
-    return ReleaseIdentity(
-        tag=tag.strip(),
-        commit_sha=resolved.sha,
-        registry=registry,
-        image=image,
-        image_digest=digest,
-    )
-
-
-def verify_runtime_identity(
-    expected: RuntimeIdentity, observed: RuntimeIdentity
-) -> tuple[str, ...]:
-    """Names of identity coordinates where the running artifact disagrees with the release."""
-    mismatched: list[str] = []
-    for name in (
-        "service_version",
-        "commit_sha",
-        "image_digest",
-        "release_id",
-        "configuration_sha256",
-    ):
-        wanted = getattr(expected, name)
-        if wanted and wanted != "unknown" and getattr(observed, name) != wanted:
-            mismatched.append(name)
-    return tuple(mismatched)
-
-
 __all__ = [
     "CommandRunner",
     "ReleaseError",
-    "ReleaseIdentity",
     "ResolvedRef",
     "classify_ref",
     "ls_remote_rows",
@@ -343,7 +280,5 @@ __all__ = [
     "resolve_image_digest",
     "resolve_image_ref",
     "resolve_pr",
-    "resolve_release_identity",
     "resolve_to_sha",
-    "verify_runtime_identity",
 ]

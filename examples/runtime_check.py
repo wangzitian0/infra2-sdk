@@ -8,16 +8,16 @@ import os
 
 from infra2_sdk.runtime import (
     Dependency,
+    DependencyCheck,
     DependencyKind,
     DependencyManifest,
-    DependencyUnavailableError,
     EnvironmentTier,
+    ProbeResult,
     RuntimeIdentity,
-    assert_required_dependencies,
+    check_health,
     environment_from_env,
-    run_probes,
 )
-from infra2_sdk.runtime.http import HttpCheck
+from infra2_sdk.runtime.http import probe_http
 
 # This is application policy: name the dependency and the tiers that require it.
 # Keep this declaration in your app; the SDK owns validation and probe execution.
@@ -33,18 +33,36 @@ DEPENDENCIES = DependencyManifest(
 )
 
 
+class CatalogCheck:
+    """A DependencyCheck: a name and a probe() that returns a ProbeResult."""
+
+    name = "catalog"
+
+    def __init__(self, url: str) -> None:
+        self.url = url
+
+    async def probe(self) -> ProbeResult:
+        return await probe_http(self.url, name=self.name)
+
+
 async def main() -> int:
     try:
         environment = environment_from_env(required=True)
         identity = RuntimeIdentity.from_env(strict=True)
         url = os.environ.get("CATALOG_HEALTH_URL", "")
-        checks = [HttpCheck("catalog", url)] if url else []
-        results = await run_probes(checks, timeout_seconds=5)
-        assert_required_dependencies(DEPENDENCIES, environment.tier, results)
-    except (ValueError, DependencyUnavailableError) as exc:
+        checks: list[DependencyCheck] = [CatalogCheck(url)] if url else []
+        status_code, report = await check_health(
+            checks, manifest=DEPENDENCIES, tier=environment.tier, timeout_seconds=5
+        )
+    except ValueError as exc:
         print(json.dumps({"ready": False, "error": str(exc)}))
         return 1
-    print(json.dumps({"ready": True, "identity": identity.to_dict()}))
+    if status_code != 200:
+        print(
+            json.dumps({"ready": False, "status": report["status"], "reasons": report["reasons"]})
+        )
+        return 1
+    print(json.dumps({"ready": True, "status": report["status"], "identity": identity.to_dict()}))
     return 0
 
 

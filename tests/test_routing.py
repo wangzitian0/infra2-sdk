@@ -6,10 +6,8 @@ from infra2_sdk.routing import (
     CANARY_SLOT,
     DEFAULT_BASE_DOMAIN,
     AppRoutePreference,
-    DokployDomainSpec,
     RouteEndpoint,
     resolve_app_hostname,
-    resolve_dokploy_domains,
     resolve_service_url,
 )
 from infra2_sdk.runtime.environment import EnvironmentTier
@@ -119,41 +117,6 @@ def test_canary_hostname_resolution_and_slot_999_is_not_special():
         warnings.simplefilter("error")
         host = resolve_app_hostname("report", EnvironmentTier.PREVIEW, slot_id=CANARY_SLOT)
         assert host == f"{CANARY_SLOT}.{DEFAULT_BASE_DOMAIN}"
-
-
-def test_resolve_dokploy_domains():
-    pref = AppRoutePreference(
-        slug="report",
-        endpoints=(
-            RouteEndpoint(port=3000, path="/", service_name="frontend"),
-            RouteEndpoint(port=8000, path="/api", service_name="backend"),
-        ),
-    )
-    specs = resolve_dokploy_domains(pref, EnvironmentTier.STAGING)
-    assert len(specs) == 2
-    assert specs[0] == DokployDomainSpec(
-        host="report-staging.zitian.party",
-        port=3000,
-        path="/",
-        service_name="frontend",
-        https=True,
-    )
-    assert specs[1] == DokployDomainSpec(
-        host="report-staging.zitian.party",
-        port=8000,
-        path="/api",
-        service_name="backend",
-        https=True,
-    )
-
-    d0 = specs[0].to_dict()
-    assert d0 == {
-        "host": "report-staging.zitian.party",
-        "port": 3000,
-        "path": "/",
-        "serviceName": "frontend",
-        "https": True,
-    }
 
 
 def test_resolve_service_url():

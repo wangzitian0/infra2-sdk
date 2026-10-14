@@ -258,10 +258,9 @@ def init_service(
             - ``OTEL_SDK_DISABLED``, ``OTEL_TRACES_SAMPLER``, ``OTEL_TRACES_SAMPLER_ARG`` or
               ``OTEL_METRIC_EXPORT_INTERVAL`` is invalid (the sampler argument counts only for
               a ratio sampler);
-            - two aliases of one variable hold different values. ``init_service`` reads three
+            - two aliases of one variable hold different values. ``init_service`` reads two
               groups of aliases: the tier variables (``ENVIRONMENT``, ``ENV``, ``APP_ENV``),
-              ``OTEL_SERVICE_NAME`` with ``SERVICE_NAME``, and ``SERVICE_VERSION`` with
-              ``IMAGE_TAG``. It reads no other alias pair of the contract.
+              and ``SERVICE_VERSION`` with ``IMAGE_TAG``. The contract has no other alias.
 
             An ``OTEL_EXPORTER_OTLP_ENDPOINT`` that is not a valid http(s) URL also stops the
             start, unless ``OTEL_SDK_DISABLED=true``. The checks run with or without an

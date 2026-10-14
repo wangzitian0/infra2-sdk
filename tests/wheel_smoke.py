@@ -12,7 +12,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
 
-# Modules removed in 3.3.0 (issue #90). One frozen list: tests/test_removed_modules.py imports it.
+# Modules removed in 3.3.0 (issue #90) and 3.4.0 (issue #102).
+# One frozen list: tests/test_removed_modules.py imports it.
 REMOVED_MODULES = (
     "infra2_sdk.deploy_health",
     "infra2_sdk.dispatch",
@@ -20,16 +21,125 @@ REMOVED_MODULES = (
     "infra2_sdk.runtime.environ",
     "infra2_sdk.runtime.dependencies",
     "infra2_sdk.runtime.probes",
+    "infra2_sdk.snapshot",  # 3.4.0: no user was left after infra2 #1206
+)
+
+# Names removed in 3.4.0 (issue #102), as (module, dotted name). A dotted name is a method.
+# One frozen list: tests/test_removed_names.py imports it.
+REMOVED_NAMES = (
+    ("infra2_sdk.capacity", "LEVELS"),
+    ("infra2_sdk.capacity", "onepassword_capacity"),
+    ("infra2_sdk.delivery", "PREVIEW_RELEVANT_STAGES"),
+    ("infra2_sdk.refs", "resolve_release_identity"),
+    ("infra2_sdk.refs", "verify_runtime_identity"),
+    ("infra2_sdk.routing", "resolve_dokploy_domains"),
+    ("infra2_sdk.runtime.config_schema", "settings_json_schema"),
+    ("infra2_sdk.runtime.health", "assert_required_dependencies"),
+    ("infra2_sdk.runtime.http", "retryable_request"),
+    ("infra2_sdk.runtime.http", "parse_retry_after"),
+    ("infra2_sdk.runtime.http", "HttpCheck"),
+    ("infra2_sdk.runtime.identity", "runtime_identity_fingerprint"),
+    ("infra2_sdk.runtime.otel", "inject_trace_context"),
+    ("infra2_sdk.runtime.otel", "extract_trace_context"),
+    ("infra2_sdk.runtime.postgres", "PostgresCheck"),
+    ("infra2_sdk.runtime.s3", "S3Check"),
+    ("infra2_sdk.secrets", "EnvBackend"),
+    ("infra2_sdk.snapshot", "verify_snapshot_artifact"),
+    # The three environment readers.
+    ("infra2_sdk.runtime.http", "HttpClientSettings.from_env"),
+    ("infra2_sdk.runtime.postgres", "PostgresSettings.from_env"),
+    ("infra2_sdk.runtime.s3", "S3Settings.from_env"),
+    # Names that only the removed code used.
+    ("infra2_sdk.capacity", "OnePasswordCapacityReport"),
+    ("infra2_sdk.capacity", "Runner"),
+    ("infra2_sdk.refs", "ReleaseIdentity"),
+    ("infra2_sdk.routing", "DokployDomainSpec"),
+    ("infra2_sdk.runtime.environment", "env_bool"),
+    ("infra2_sdk.runtime.environment", "env_float"),
+    ("infra2_sdk.runtime.health", "DependencyUnavailableError"),
+    ("infra2_sdk.secrets", "ReadOnlyBackendError"),
+    # Found without a user by the audit of PR #104 (references inside the own body do not count).
+    ("infra2_sdk.deploy", "DeployStatus"),
+    # The public names of the module infra2_sdk.snapshot (see REMOVED_MODULES). The module is
+    # gone, so the owner check does not apply to these names.
+    ("infra2_sdk.snapshot", "AnonymizedSnapshotManifest"),
+    ("infra2_sdk.snapshot", "ResidualScanProof"),
+    ("infra2_sdk.snapshot", "ResidualScanStatus"),
+    ("infra2_sdk.snapshot", "SNAPSHOT_MANIFEST_VERSION"),
+    ("infra2_sdk.snapshot", "SnapshotArtifact"),
+    ("infra2_sdk.snapshot", "SnapshotArtifactFormat"),
+    ("infra2_sdk.snapshot", "SnapshotProducer"),
+)
+
+# RuntimeEnvKey members removed in 3.4.0 (issue #102, decision 2).
+REMOVED_ENV_MEMBERS = (
+    "HTTP_TIMEOUT_SECONDS",
+    "HTTP_CONNECT_TIMEOUT_SECONDS",
+    "HTTP_MAX_CONNECTIONS",
+    "HTTP_MAX_KEEPALIVE_CONNECTIONS",
+    "HTTP_CONNECT_RETRIES",
+    "HTTP_USER_AGENT",
+    "HTTP_FOLLOW_REDIRECTS",
+    "OBJECT_STORAGE_PROTOCOL",
+    "S3_BUCKET",
+    "S3_ENDPOINT_URL",
+    "S3_REGION",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "S3_CONNECT_TIMEOUT_SECONDS",
+    "S3_READ_TIMEOUT_SECONDS",
+    "S3_ADDRESSING_STYLE",
+    "DATABASE_URL",
+    "DATABASE_CONNECT_TIMEOUT_SECONDS",
+    "DATABASE_STATEMENT_TIMEOUT_SECONDS",
+)
+
+# Environment variable names removed from runtime_env_contract() in 3.4.0 (issue #102,
+# decisions 2 and 3): the canonical names, their aliases, and the dead alias SERVICE_NAME.
+REMOVED_ENV_NAMES = (
+    "HTTP_TIMEOUT_SECONDS",
+    "HTTP_CONNECT_TIMEOUT_SECONDS",
+    "HTTP_MAX_CONNECTIONS",
+    "HTTP_MAX_KEEPALIVE_CONNECTIONS",
+    "HTTP_CONNECT_RETRIES",
+    "HTTP_USER_AGENT",
+    "HTTP_FOLLOW_REDIRECTS",
+    "OBJECT_STORAGE_PROTOCOL",
+    "OBJECT_STORAGE_DRIVER",
+    "S3_BUCKET",
+    "AWS_ENDPOINT_URL_S3",
+    "S3_ENDPOINT_URL",
+    "S3_ENDPOINT",
+    "AWS_REGION",
+    "AWS_DEFAULT_REGION",
+    "S3_REGION",
+    "AWS_ACCESS_KEY_ID",
+    "S3_ACCESS_KEY",
+    "AWS_SECRET_ACCESS_KEY",
+    "S3_SECRET_KEY",
+    "AWS_SESSION_TOKEN",
+    "S3_SESSION_TOKEN",
+    "S3_CONNECT_TIMEOUT_SECONDS",
+    "S3_READ_TIMEOUT_SECONDS",
+    "S3_ADDRESSING_STYLE",
+    "DATABASE_URL",
+    "DATABASE_CONNECT_TIMEOUT_SECONDS",
+    "DATABASE_STATEMENT_TIMEOUT_SECONDS",
+    "SERVICE_NAME",
 )
 
 
 def smoke_core() -> None:
+    from infra2_sdk.refs import classify_ref
     from infra2_sdk.runtime import environment_from_env, runtime_env_contract
-    from infra2_sdk.snapshot import SNAPSHOT_MANIFEST_VERSION
 
-    assert SNAPSHOT_MANIFEST_VERSION == 1
+    assert classify_ref("v1.2.3") == "tag"
     assert environment_from_env({}).name == "local_dev"
-    assert runtime_env_contract()["contract_version"] == 1
+    version = runtime_env_contract()["contract_version"]
+    assert type(version) is int and version == 2, (
+        f"contract_version must be the integer 2: {version!r}"
+    )
     import infra2_sdk.rules.compose  # noqa: F401
     import infra2_sdk.runtime.health  # noqa: F401
     import infra2_sdk.runtime.http  # noqa: F401
@@ -38,6 +148,7 @@ def smoke_core() -> None:
     import infra2_sdk.runtime.s3  # noqa: F401
 
     smoke_package_data()
+    smoke_removed_names()
     smoke_health()
 
 
@@ -56,14 +167,51 @@ def smoke_package_data() -> None:
         pass
     else:
         raise AssertionError("infra2_sdk.images was removed in 3.0.0 and must not be importable")
-    assert len(REMOVED_MODULES) == 6
+    assert len(REMOVED_MODULES) == 7, (
+        f"REMOVED_MODULES has {len(REMOVED_MODULES)} entries, expected 7"
+    )
     for module in REMOVED_MODULES:
         try:
             importlib.import_module(module)
         except ModuleNotFoundError as exc:
             assert exc.name == module, (module, exc.name)
         else:
-            raise AssertionError(f"{module} was removed in 3.3.0 and must not be importable")
+            raise AssertionError(f"{module} was removed and must not be importable")
+
+
+def smoke_removed_names() -> None:
+    """The wheel does not carry the names, members and variables removed in 3.4.0."""
+
+    import infra2_sdk
+    import infra2_sdk.runtime
+    from infra2_sdk.runtime.environment import RuntimeEnvKey, runtime_env_contract
+
+    assert len(REMOVED_NAMES) == 37 and len(set(REMOVED_NAMES)) == 37, (
+        f"REMOVED_NAMES has {len(REMOVED_NAMES)} entries ({len(set(REMOVED_NAMES))} unique), "
+        "expected 37"
+    )
+    for module, dotted in REMOVED_NAMES:
+        *parents, leaf = dotted.split(".")
+        if module not in REMOVED_MODULES:  # a removed module has no owner to look into
+            owner = importlib.import_module(module)
+            for part in parents:
+                owner = getattr(owner, part)  # AttributeError: the owner vanished, not the name
+            assert not hasattr(owner, leaf), f"{module}.{dotted} was removed in 3.4.0"
+        if not parents:
+            for package in (infra2_sdk, infra2_sdk.runtime):
+                assert not hasattr(package, leaf), f"{package.__name__}.{leaf} was removed"
+                assert leaf not in package.__all__, f"{package.__name__}.__all__ lists {leaf}"
+
+    assert len(REMOVED_ENV_MEMBERS) == 20 and len(REMOVED_ENV_NAMES) == 29, (
+        f"REMOVED_ENV_MEMBERS has {len(REMOVED_ENV_MEMBERS)} entries, expected 20; "
+        f"REMOVED_ENV_NAMES has {len(REMOVED_ENV_NAMES)} entries, expected 29"
+    )
+    present = [member for member in REMOVED_ENV_MEMBERS if hasattr(RuntimeEnvKey, member)]
+    assert not present, f"RuntimeEnvKey still has removed members: {present}"
+    contract = runtime_env_contract()["variables"]
+    names = {item["name"] for item in contract} | {a for item in contract for a in item["aliases"]}
+    still_named = sorted(set(REMOVED_ENV_NAMES) & (names | {key.value for key in RuntimeEnvKey}))
+    assert not still_named, f"runtime_env_contract() still names removed variables: {still_named}"
 
 
 def smoke_health() -> None:
@@ -87,13 +235,11 @@ def smoke_s3() -> None:
     os.environ.setdefault("AWS_EC2_METADATA_DISABLED", "true")
     from infra2_sdk.runtime.s3 import S3Settings, create_s3_client
 
-    settings = S3Settings.from_env(
-        {
-            "S3_BUCKET": "smoke-bucket",
-            "AWS_ENDPOINT_URL_S3": "http://127.0.0.1:9000",
-            "AWS_ACCESS_KEY_ID": "smoke",
-            "AWS_SECRET_ACCESS_KEY": "smoke",
-        }
+    settings = S3Settings(
+        bucket="smoke-bucket",
+        endpoint_url="http://127.0.0.1:9000",
+        access_key_id="smoke",
+        secret_access_key="smoke",
     )
     client = create_s3_client(settings)
     assert client.meta.service_model.service_name == "s3"
@@ -105,9 +251,7 @@ def smoke_postgres() -> None:
 
     from infra2_sdk.runtime.postgres import PostgresSettings
 
-    settings = PostgresSettings.from_env(
-        {"DATABASE_URL": "postgresql+asyncpg://user:password@localhost/database"}
-    )
+    settings = PostgresSettings(dsn="postgresql+asyncpg://user:password@localhost/database")
     assert settings.psycopg_dsn == "postgresql://user:password@localhost/database"
 
 
@@ -194,13 +338,7 @@ def smoke_standalone_app() -> None:
 def smoke_otel() -> None:
     import opentelemetry.sdk.trace  # noqa: F401
 
-    from infra2_sdk.runtime.otel import (
-        OtelSettings,
-        configure_telemetry,
-        extract_trace_context,
-        inject_trace_context,
-        signal_endpoint,
-    )
+    from infra2_sdk.runtime.otel import OtelSettings, configure_telemetry, signal_endpoint
 
     settings = OtelSettings.from_env(
         {
@@ -211,9 +349,6 @@ def smoke_otel() -> None:
     assert not settings.enabled
     assert configure_telemetry(settings).tracer_provider is None
     assert signal_endpoint("http://collector:4318", "logs") == "http://collector:4318/v1/logs"
-    inbound = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
-    carried = inject_trace_context({}, context=extract_trace_context({"traceparent": inbound}))
-    assert carried.get("traceparent") == inbound, carried
 
 
 async def _asgi_get(app, path: str) -> tuple[int, dict]:

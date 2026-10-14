@@ -1,18 +1,8 @@
-from datetime import UTC, datetime, timedelta
-from email.utils import format_datetime
-
 import pytest
 
 from infra2_sdk import __version__
 from infra2_sdk.runtime.health import DependencyStatus
-from infra2_sdk.runtime.http import (
-    HttpCheck,
-    HttpClientSettings,
-    create_http_client,
-    parse_retry_after,
-    probe_http,
-    retryable_request,
-)
+from infra2_sdk.runtime.http import HttpClientSettings, create_http_client, probe_http
 
 
 class Response:
@@ -31,16 +21,11 @@ class Client:
         return self.response
 
 
-def test_standard_http_clients_and_retry_policy() -> None:
+def test_standard_http_client_sets_the_user_agent_and_extra_headers() -> None:
     sync_client = create_http_client(headers={"X-Test": "1"})
     assert sync_client.headers["user-agent"] == f"infra2-sdk/{__version__}"
     assert sync_client.headers["x-test"] == "1"
     sync_client.close()
-
-    assert retryable_request("GET", 503)
-    assert retryable_request("POST", 429, has_idempotency_key=True)
-    assert not retryable_request("POST", 503)
-    assert not retryable_request("GET", 404)
 
 
 @pytest.mark.asyncio
@@ -50,23 +35,38 @@ async def test_create_async_http_client() -> None:
     await async_client.aclose()
 
 
-def test_http_settings_load_from_generic_env() -> None:
-    settings = HttpClientSettings.from_env(
-        {
-            "HTTP_TIMEOUT_SECONDS": "20",
-            "HTTP_CONNECT_TIMEOUT_SECONDS": "3",
-            "HTTP_MAX_CONNECTIONS": "50",
-            "HTTP_MAX_KEEPALIVE_CONNECTIONS": "10",
-            "HTTP_CONNECT_RETRIES": "2",
-            "HTTP_FOLLOW_REDIRECTS": "true",
-        }
+def test_http_settings_keep_their_defaults() -> None:
+    settings = HttpClientSettings()
+    assert settings.timeout_seconds == 10.0
+    assert settings.connect_timeout_seconds == 5.0
+    assert settings.max_connections == 100
+    assert settings.max_keepalive_connections == 20
+    assert settings.connect_retries == 0
+    assert settings.user_agent == f"infra2-sdk/{__version__}"
+    assert settings.follow_redirects is False
+
+
+def test_http_settings_build_from_explicit_values() -> None:
+    settings = HttpClientSettings(
+        timeout_seconds=20,
+        connect_timeout_seconds=3,
+        max_connections=50,
+        max_keepalive_connections=10,
+        connect_retries=2,
+        user_agent="my-app/1.0",
+        follow_redirects=True,
     )
     assert settings.timeout_seconds == 20
     assert settings.connect_timeout_seconds == 3
     assert settings.max_connections == 50
     assert settings.max_keepalive_connections == 10
     assert settings.connect_retries == 2
+    assert settings.user_agent == "my-app/1.0"
     assert settings.follow_redirects is True
+
+
+def test_http_settings_have_no_environment_reader() -> None:
+    assert not hasattr(HttpClientSettings, "from_env")
 
 
 async def test_standard_async_http_client_closes_cleanly() -> None:
@@ -76,10 +76,12 @@ async def test_standard_async_http_client_closes_cleanly() -> None:
 
 
 async def test_http_probe_reports_status_and_errors() -> None:
-    healthy = await HttpCheck(
-        "analytics", "https://example.test", client=Client(Response(429))
-    ).probe()
+    healthy = await probe_http(
+        "https://example.test", name="analytics", client=Client(Response(429))
+    )
     assert healthy.status is DependencyStatus.PRESENT
+    assert healthy.name == "analytics"
+    assert healthy.detail == "HTTP 429"
     failed = await probe_http("https://example.test", client=Client(Response(503)))
     assert failed.status is DependencyStatus.ABSENT
     error = await probe_http("https://example.test", client=Client(error=OSError("down")))
@@ -94,15 +96,6 @@ async def test_http_probe_creates_and_closes_owned_client() -> None:
     assert result.name == "http"
 
 
-def test_retry_after_supports_both_standard_forms() -> None:
-    now = datetime(2026, 1, 1, tzinfo=UTC)
-    assert parse_retry_after("30", now=now) == 30
-    assert parse_retry_after(format_datetime(now + timedelta(seconds=15)), now=now) == 15
-    assert parse_retry_after("bad", now=now) is None
-    assert parse_retry_after(None) is None
-    assert parse_retry_after(format_datetime(now), now=datetime(2026, 1, 1)) == 0
-
-
 @pytest.mark.parametrize(
     "changes,message",
     [
@@ -115,8 +108,3 @@ def test_retry_after_supports_both_standard_forms() -> None:
 def test_http_settings_validation(changes, message) -> None:
     with pytest.raises(ValueError, match=message):
         HttpClientSettings(**changes)
-
-
-def test_http_check_requires_standard_absolute_url() -> None:
-    with pytest.raises(ValueError, match="absolute"):
-        HttpCheck("bad", "/relative")

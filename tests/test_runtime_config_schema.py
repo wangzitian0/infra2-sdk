@@ -9,7 +9,6 @@ from infra2_sdk.runtime.config_schema import (
     environment_manifest_from_model,
     manifest_config_fingerprint,
     reconcile,
-    settings_json_schema,
     validate_environment,
 )
 from infra2_sdk.runtime.environment import EnvironmentConflictError
@@ -35,11 +34,7 @@ class PrefixedSettings(BaseSettings):
     token: str = Field(validation_alias="TOKEN")
 
 
-def test_pydantic_model_renders_open_schema_and_manifest() -> None:
-    schema = settings_json_schema(Settings, title="Example settings")
-    assert schema["$schema"] == JSON_SCHEMA_DIALECT
-    assert schema["title"] == "Example settings"
-
+def test_pydantic_model_renders_a_manifest() -> None:
     manifest = environment_manifest_from_model(Settings, source="example.Settings")
     assert manifest.source == "example.Settings"
     assert manifest.fields[0].env == "DATABASE_URL"
@@ -50,6 +45,7 @@ def test_pydantic_model_renders_open_schema_and_manifest() -> None:
     assert manifest.fields[1].has_default is True
     assert manifest.fields[1].sensitive is True
     assert manifest.to_json_schema()["required"] == ["DATABASE_URL"]
+    assert manifest.to_json_schema()["$schema"] == JSON_SCHEMA_DIALECT
     assert manifest.to_dict()["contract_version"] == 2
     assert EnvironmentManifest.from_dict(manifest.to_dict()) == manifest
 
@@ -119,8 +115,6 @@ def test_manifest_validation_rejects_ambiguous_contracts() -> None:
 
 
 def test_non_pydantic_models_are_rejected() -> None:
-    with pytest.raises(TypeError, match="model_json_schema"):
-        settings_json_schema(object)
     with pytest.raises(TypeError, match="model_fields"):
         environment_manifest_from_model(object)
     manifest = environment_manifest_from_model(SettingsWithMalformedMetadata)

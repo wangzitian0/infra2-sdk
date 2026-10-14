@@ -191,6 +191,56 @@ def test_scaffold_app_py_wires_db_healthcheck(tmp_path: Path):
     assert "db_checker" not in app_none
 
 
+@pytest.mark.parametrize("profile", ["infra2", "standalone"])
+def test_scaffolded_postgres_app_builds_its_settings_from_an_explicit_dsn(
+    tmp_path: Path, profile: str
+):
+    out_dir = tmp_path / f"explicit_dsn_{profile}"
+    scaffold_service("demo-service", out_dir, profile=profile, db="postgres")
+
+    source = (out_dir / "app.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)  # the generated file is valid Python
+
+    from_env_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "from_env"
+    ]
+    assert from_env_calls == [], "the generated app must not read the environment through from_env"
+    assert "from_env(" not in source
+
+    assignments = [
+        node.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "db_settings" for target in node.targets
+        )
+    ]
+    assert len(assignments) == 1, "app.py must assign db_settings once"
+    call = assignments[0]
+    assert isinstance(call, ast.Call) and ast.unparse(call.func) == "PostgresSettings"
+    assert [keyword.arg for keyword in call.keywords] == ["dsn"]
+    assert ast.unparse(call.keywords[0].value) == "database_url"
+    assert "database_url = os.environ.get('DATABASE_URL', '').strip()" in [
+        ast.unparse(node) for node in tree.body
+    ], "app.py must read DATABASE_URL, an empty string counts as unset"
+    assert any(
+        isinstance(node, ast.Import) and [alias.name for alias in node.names] == ["os"]
+        for node in tree.body
+    ), "app.py must import os"
+
+    init_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and ast.unparse(node.func) == "init_service"
+    ]
+    assert len(init_calls) == 1, "app.py must still call init_service once"
+    assert "db_checker" in [keyword.arg for keyword in init_calls[0].keywords]
+
+
 def test_scaffold_requirements_txt_includes_extras(tmp_path: Path):
     # The expected bound comes from the installed package metadata, never from a literal.
     release = Version(installed_version("infra2-sdk")).base_version
@@ -472,3 +522,58 @@ def test_scaffold_vault_agent_healthcheck_accepts_an_empty_env_file_when_no_secr
     assert "test -s /vault/secrets/.env" not in compose
     assert "test -s /vault/.token" in compose
     assert 'grep -q "<no value>" /vault/secrets/.env' in compose
+
+
+# --- The generated app with a database stops with a clear error when DATABASE_URL is missing ---
+# Issue #102. Keep these tests together at the end of the file: other branches add tests above.
+
+
+def _run_postgres_app(app_dir: Path, profile: str, variables: dict[str, str], code: str):
+    """Scaffold an app with a database, then run ``code`` in its directory.
+
+    The child process has PATH, the path of the SDK under test and ``variables``. It has no
+    other variable and no network.
+    """
+    import os
+    import subprocess
+    import sys
+
+    scaffold_service("demo-service", app_dir, profile=profile, db="postgres")
+    sdk_source = str(Path(infra2_sdk.__file__).resolve().parents[1])
+    return subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=app_dir,
+        env={"PATH": os.environ.get("PATH", ""), "PYTHONPATH": sdk_source, **variables},
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize("profile", ["infra2", "standalone"])
+@pytest.mark.parametrize(
+    "variables",
+    [{}, {"DATABASE_URL": ""}, {"DATABASE_URL": "   "}],
+    ids=["unset", "empty", "spaces"],
+)
+def test_generated_postgres_app_stops_with_a_clear_error_without_database_url(
+    tmp_path: Path, profile: str, variables: dict[str, str]
+):
+    result = _run_postgres_app(tmp_path / "app", profile, variables, "import app")
+
+    assert result.returncode != 0
+    last_line = result.stderr.rstrip().splitlines()[-1]
+    assert last_line == "RuntimeError: DATABASE_URL is required", result.stderr
+
+
+@pytest.mark.parametrize("profile", ["infra2", "standalone"])
+def test_generated_postgres_app_uses_a_set_database_url(tmp_path: Path, profile: str):
+    variables = {"DATABASE_URL": " postgresql+asyncpg://u:p@db.invalid/app ", "ENV": "local_dev"}
+
+    result = _run_postgres_app(
+        tmp_path / "app", profile, variables, "import app\nprint(app.db_settings.psycopg_dsn)"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "postgresql://u:p@db.invalid/app"

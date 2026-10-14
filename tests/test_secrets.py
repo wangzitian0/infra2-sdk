@@ -5,9 +5,7 @@ import pytest
 
 from infra2_sdk.runtime.config_schema import EnvironmentField, EnvironmentManifest
 from infra2_sdk.secrets import (
-    EnvBackend,
     OnePasswordBackend,
-    ReadOnlyBackendError,
     SecretsError,
     SecretsResolver,
     SyncReport,
@@ -118,15 +116,6 @@ def test_paths_follow_the_infra2_coordinate() -> None:
         "truealpha/shared/data_engine"
     )
     assert op_item("bootstrap", "production", "iac_runner") == "bootstrap/iac_runner"
-
-
-def test_env_backend_reads_process_and_dotenv_and_refuses_writes(tmp_path) -> None:
-    dotenv = tmp_path / ".env"
-    dotenv.write_text('export A="from-file"\nB=file-b\n# comment\n', encoding="utf-8")
-    backend = EnvBackend({"A": "from-env"}, dotenv_path=str(dotenv))
-    assert backend.read("ignored") == {"A": "from-env", "B": "file-b"}
-    with pytest.raises(ReadOnlyBackendError):
-        backend.write("x", {"A": "1"})
 
 
 def test_sync_human_reads_shared_and_env_items_and_writes_only_differences() -> None:

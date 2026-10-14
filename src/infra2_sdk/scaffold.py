@@ -405,14 +405,21 @@ def generate_fastapi_app(service_name: str, db: str = "postgres", profile: str =
     if db == "postgres":
         return f'''"""Application entry point for {clean_service}."""
 
+import os
+
 from fastapi import FastAPI
 from infra2_sdk.fastapi import init_service
 from infra2_sdk.runtime.postgres import PostgresSettings, probe_postgres
 
 app = FastAPI(title="{clean_service}")
 
+# The compose file passes an empty DATABASE_URL when the shell sets none.
+database_url = os.environ.get("DATABASE_URL", "").strip()
+if not database_url:
+    raise RuntimeError("DATABASE_URL is required")
+
 # Database reachability probe via infra2_sdk standard PostgreSQL adapter
-db_settings = PostgresSettings.from_env()
+db_settings = PostgresSettings(dsn=database_url)
 
 
 def check_db() -> tuple[bool, str]:

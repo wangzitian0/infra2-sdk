@@ -1,7 +1,6 @@
 # Changelog
 
-Versions follow the compatibility rules in the [README](README.md#compatibility): additive
-changes are minor releases, removing or changing a public symbol is a major release. Release
+Versions follow the compatibility rules in the [README](README.md#compatibility). Release
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 

@@ -281,12 +281,6 @@ class DependencyCheck(Protocol):
     def probe(self) -> ProbeResult | Awaitable[ProbeResult]: ...
 
 
-class DependencyUnavailableError(RuntimeError):
-    def __init__(self, missing: Iterable[str]) -> None:
-        self.missing = tuple(sorted(set(missing)))
-        super().__init__(f"required runtime dependencies are absent: {', '.join(self.missing)}")
-
-
 async def run_probes(
     checks: Iterable[DependencyCheck],
     *,
@@ -388,26 +382,6 @@ async def _run_sync_probe(probe, *, name: str):
                 future.cancel()
 
 
-def assert_required_dependencies(
-    manifest: DependencyManifest,
-    tier: str | EnvironmentTier,
-    results: Iterable[ProbeResult],
-) -> None:
-    """Fail when required checks are absent, missing, or duplicated."""
-    values = tuple(results)
-    names = [result.name for result in values]
-    if len(names) != len(set(names)):
-        raise ValueError("duplicate probe result name")
-    by_name = {result.name: result for result in values}
-    missing = [
-        name
-        for name in manifest.required_for(tier)
-        if name not in by_name or not by_name[name].present
-    ]
-    if missing:
-        raise DependencyUnavailableError(missing)
-
-
 def _elapsed(started: float) -> float:
     return (time.perf_counter() - started) * 1000
 
@@ -426,8 +400,8 @@ def health_response(
     """Summarize finished probes as ``(status_code, body)``.
 
     ``required`` names the dependencies that must be present; one with no result counts as
-    absent, exactly as in ``assert_required_dependencies``. Raises ``ValueError`` for
-    duplicate result names and when there are neither results nor required names.
+    absent. Raises ``ValueError`` for duplicate result names and when there are neither
+    results nor required names.
     """
     values = tuple(results)
     required_names = frozenset(required)
@@ -510,10 +484,8 @@ __all__ = [
     "DependencyKind",
     "DependencyManifest",
     "DependencyStatus",
-    "DependencyUnavailableError",
     "HealthStatus",
     "ProbeResult",
-    "assert_required_dependencies",
     "check_health",
     "health_response",
     "run_probes",

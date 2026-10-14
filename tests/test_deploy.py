@@ -15,7 +15,6 @@ from infra2_sdk.deploy import (
     DeployOperation,
     DeployRequest,
     DeployState,
-    DeployStatus,
     DeployType,
     HealthCheckResult,
     ProductionEvidencePolicy,
@@ -142,17 +141,16 @@ def test_contract_version_fails_closed() -> None:
         request(contract_version=True)
 
 
-def test_success_status_requires_evidence() -> None:
-    with pytest.raises(ValueError, match="evidence_url"):
-        DeployStatus(request_id="run-12345678", state=DeployState.SUCCEEDED)
-
-    status = DeployStatus(
-        request_id="run-12345678",
-        state=DeployState.SUCCEEDED,
-        evidence_url="https://github.com/wangzitian0/infra2/actions/runs/2",
-        deployed_version="v1.2.3",
-    )
-    assert DeployStatus.from_dict(status.to_dict()) == status
+def test_deploy_state_values_are_stable() -> None:
+    # infra2 compares SyncAction.FAILED with DeployState.FAILED.value. The removed
+    # DeployStatus tests were the only SDK test of these values.
+    assert {state.name: state.value for state in DeployState} == {
+        "ACCEPTED": "accepted",
+        "RUNNING": "running",
+        "SUCCEEDED": "succeeded",
+        "FAILED": "failed",
+        "REJECTED": "rejected",
+    }
 
 
 def test_source_sha_is_lowercase_and_full_length() -> None:
@@ -201,38 +199,6 @@ def test_request_deserialization_rejects_bad_types(field, value, message) -> Non
     raw[field] = value
     with pytest.raises(ValueError, match=message):
         DeployRequest.from_dict(raw)
-
-
-def test_status_failure_requires_detail_and_round_trips() -> None:
-    with pytest.raises(ValueError, match="requires detail"):
-        DeployStatus(request_id="run-12345678", state=DeployState.FAILED)
-    status = DeployStatus(
-        request_id="run-12345678",
-        state=DeployState.REJECTED,
-        detail="unsupported service",
-    )
-    assert DeployStatus.from_dict(status.to_dict()) == status
-
-
-def test_status_rejects_bad_contract_and_types() -> None:
-    with pytest.raises(ValueError, match="unsupported contract_version"):
-        DeployStatus(
-            request_id="run-12345678",
-            state=DeployState.ACCEPTED,
-            contract_version=2,
-        )
-    raw = {"contract_version": "bad", "request_id": "run-12345678", "state": "accepted"}
-    with pytest.raises(ValueError, match="must be an integer"):
-        DeployStatus.from_dict(raw)
-    raw["contract_version"] = True
-    with pytest.raises(ValueError, match="must be an integer"):
-        DeployStatus.from_dict(raw)
-    with pytest.raises(ValueError, match="must be an integer"):
-        DeployStatus(
-            request_id="run-12345678",
-            state=DeployState.ACCEPTED,
-            contract_version=True,
-        )
 
 
 # --- Production evidence policy (infra2-sdk#8) ------------------------------------
@@ -1233,14 +1199,6 @@ def test_dispatch_main_cli_success(monkeypatch, tmp_path, capsys) -> None:
 
 
 # --- Coverage hardening tests for issue #76 ---
-
-
-def test_deploy_status_validation_edge_cases() -> None:
-    with pytest.raises(ValueError, match="invalid request_id"):
-        DeployStatus(
-            request_id="short",
-            state=DeployState.ACCEPTED,
-        )
 
 
 def test_run_evidence_expectation_validation_edge_cases() -> None:

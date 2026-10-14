@@ -24,7 +24,6 @@ _AMBIENT_VARIABLES = (
     "OTEL_EXPORTER_OTLP_ENDPOINT",
     "OTEL_SDK_DISABLED",
     "OTEL_SERVICE_NAME",
-    "SERVICE_NAME",
     "OTEL_RESOURCE_ATTRIBUTES",
     "OTEL_TRACES_SAMPLER",
     "OTEL_TRACES_SAMPLER_ARG",
@@ -824,14 +823,11 @@ def test_init_service_with_conflicting_tier_names_refuses_to_start_by_default(mo
     [
         # The tier check of init_service raises this one.
         pytest.param({"ENVIRONMENT": "staging", "APP_ENV": "production"}, id="tier"),
-        # OtelSettings.from_env raises these two. A known tier lets the tier check pass.
+        # OtelSettings.from_env raises this one. A known tier lets the tier check pass.
+        # The pair OTEL_SERVICE_NAME and SERVICE_NAME is gone: 3.4.0 removed the alias.
         pytest.param(
             {"ENVIRONMENT": "staging", "SERVICE_VERSION": "a", "IMAGE_TAG": "b"},
             id="service-version",
-        ),
-        pytest.param(
-            {"ENVIRONMENT": "staging", "OTEL_SERVICE_NAME": "a", "SERVICE_NAME": "b"},
-            id="service-name",
         ),
     ],
 )
@@ -847,6 +843,15 @@ def test_a_strict_conflict_keeps_its_type_and_ends_with_the_way_out(monkeypatch,
     original = caught.value.__cause__
     assert isinstance(original, EnvironmentConflictError), "the new error must chain the original"
     assert str(caught.value) == f"{original}{_STRICT_WAY_OUT}"
+
+
+def test_a_set_service_name_variable_is_ignored_and_does_not_conflict(monkeypatch):
+    # Issue #102 removed the alias SERVICE_NAME of OTEL_SERVICE_NAME. The SDK ignores it.
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.setenv("OTEL_SERVICE_NAME", "a")
+    monkeypatch.setenv("SERVICE_NAME", "b")
+
+    init_service(FastAPI(), "svc")
 
 
 @pytest.mark.parametrize(

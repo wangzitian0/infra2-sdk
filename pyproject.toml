@@ -82,6 +82,7 @@ addopts = "--strict-markers --strict-config"
 testpaths = ["tests"]
 asyncio_mode = "auto"
 pythonpath = ["src"]
+empty_parameter_set_mark = "fail_at_collect"
 
 [tool.coverage.run]
 branch = true

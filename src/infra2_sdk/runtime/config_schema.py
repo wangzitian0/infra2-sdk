@@ -11,7 +11,6 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
-from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 from enum import StrEnum
 from typing import Any, get_args
@@ -279,25 +278,6 @@ class ReconcileReport:
             "unclassified": list(self.unclassified),
             "stale": list(self.stale),
         }
-
-
-def settings_json_schema(model: type, *, title: str | None = None) -> dict[str, Any]:
-    """Return a JSON Schema 2020-12 document from a Pydantic-compatible model."""
-
-    renderer = getattr(model, "model_json_schema", None)
-    if not callable(renderer):
-        raise TypeError("model must expose model_json_schema()")
-    try:
-        rendered = renderer(by_alias=True, mode="validation")
-    except TypeError:
-        rendered = renderer(by_alias=True)
-    if not isinstance(rendered, Mapping):
-        raise TypeError("model_json_schema() must return a mapping")
-    schema = deepcopy(dict(rendered))
-    schema["$schema"] = JSON_SCHEMA_DIALECT
-    if title is not None:
-        schema["title"] = title
-    return schema
 
 
 def environment_manifest_from_model(

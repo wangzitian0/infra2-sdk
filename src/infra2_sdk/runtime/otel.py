@@ -1,4 +1,4 @@
-"""Explicit OpenTelemetry bootstrap using OTLP and W3C Trace Context."""
+"""Explicit OpenTelemetry bootstrap using OTLP."""
 
 from __future__ import annotations
 
@@ -364,43 +364,6 @@ def _logging_handler_class() -> Any:
         return require("opentelemetry.sdk._logs", extra="otel").LoggingHandler
 
 
-def inject_trace_context(
-    headers: Mapping[str, str] | None = None,
-    *,
-    context: Any | None = None,
-) -> dict[str, str]:
-    """Return a copy of ``headers`` with the W3C trace context of the active span written in.
-
-    ``context`` selects an explicit OpenTelemetry context (for example the result of
-    ``extract_trace_context``) instead of the current one. Nothing is written when that
-    context holds no valid span.
-    """
-
-    propagate = require("opentelemetry.propagate", extra="otel")
-    carrier = dict(headers or {})
-    propagate.inject(carrier, context=context)
-    return carrier
-
-
-def extract_trace_context(headers: Mapping[str, str] | None = None) -> Any:
-    """Extract the W3C trace context of an inbound request into an OpenTelemetry context.
-
-    Header names are matched case-insensitively and non-string values are ignored, so
-    framework header mappings and plain dicts both work. A missing or malformed
-    ``traceparent`` yields an empty context (a new root trace), never an error. Use the
-    result as ``tracer.start_as_current_span(name, context=...)`` or pass it to
-    ``inject_trace_context(..., context=...)``.
-    """
-
-    propagate = require("opentelemetry.propagate", extra="otel")
-    carrier = {
-        str(name).lower(): value
-        for name, value in (headers or {}).items()
-        if isinstance(value, str)
-    }
-    return propagate.extract(carrier)
-
-
 def signal_endpoint(base: str | None, signal: str) -> str:
     """Derive the OTLP/HTTP URL of one signal (``traces``, ``metrics`` or ``logs``) from a base
     endpoint: any trailing ``/v1/<signal>`` is replaced, the query string is preserved and the
@@ -443,7 +406,5 @@ def _validate_endpoint(value: str) -> None:
 __all__ = [
     "OtelSettings",
     "configure_telemetry",
-    "extract_trace_context",
-    "inject_trace_context",
     "signal_endpoint",
 ]

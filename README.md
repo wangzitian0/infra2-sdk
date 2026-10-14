@@ -13,11 +13,11 @@ the same local SDK code.
 
 The SDK owns the contracts and the adapters over open protocols: the environment manifest
 and its source classes, the secret-store adapters (Vault KV v2 HTTP API, the 1Password CLI),
-the generators for everything a deployment derives from a manifest, release identity
-resolution, and capacity accounting. infra2 owns orchestration: compose files, Dokploy,
-host operations, and *when* each SDK operation runs. No `INFRA2_*`, Vault, or Dokploy
-value is required to load runtime settings; an application only ever reads environment
-variables.
+the generators for everything a deployment derives from a manifest, release reference
+resolution (tag to commit, tag to image digest), and capacity accounting. infra2 owns
+orchestration: compose files, Dokploy, host operations, and *when* each SDK operation runs.
+No `INFRA2_*`, Vault, or Dokploy value is required to load runtime settings; an application
+only ever reads environment variables.
 
 ## Install
 
@@ -32,27 +32,26 @@ python -m pip install \
 
 | Module | Ownership |
 |---|---|
-| `infra2_sdk.capacity` | Capacity limits, readings, and levels; collectors for Cloudflare analytics and 1Password rate limits |
+| `infra2_sdk.capacity` | Capacity limits and readings, `evaluate` (a level per item: ok, warn, exceeded or unknown), and the collector for Cloudflare analytics |
 | `infra2_sdk.cli.scaffold` | Command-line interface for microservice scaffolding |
 | `infra2_sdk.ci` | Delivery-stage vocabulary and CI gate inventory validation |
 | `infra2_sdk.delivery` | Environment/stage evidence and failure taxonomy |
 | `infra2_sdk.deploy` | Deploy lifecycle wire contracts, dispatch client, health poller, and production evidence policies; CLI at `python -m infra2_sdk.deploy` |
 | `infra2_sdk.fastapi` | `init_service`: /livez, /readyz and /health routes for a FastAPI app, plus OTLP telemetry bootstrap |
 | `infra2_sdk.manifests` | Settings manifest driver (`--write`, `--check`, `--validate-env`) wrapping application configuration models |
-| `infra2_sdk.refs` | Git ref resolution, PR and release identity (`ReleaseIdentity`), remote ref queries, and credential redaction |
-| `infra2_sdk.routing` | Canonical domain and routing SSOT: `AppRoutePreference`, Dokploy domain specs, and service URL resolution |
+| `infra2_sdk.refs` | Git ref resolution, PR heads, registry image digests, remote ref queries, and credential redaction |
+| `infra2_sdk.routing` | Canonical domain and routing SSOT: `AppRoutePreference`, hostname resolution, and service URL resolution |
 | `infra2_sdk.rules.compose` | Pure compose-file rules (memory ceilings, bare `:latest` image refs); CLI at `python -m infra2_sdk.rules` |
 | `infra2_sdk.runtime.config_schema` | JSON Schema 2020-12 and environment injection manifests |
 | `infra2_sdk.runtime.environment` | Canonical six-tier environment vocabulary, variable resolution, and contract definitions |
 | `infra2_sdk.runtime.health` | Framework-agnostic readiness checks (`check_health`), probe runners, and dependency declarations |
-| `infra2_sdk.runtime.http` | Standard httpx clients and HTTP retry semantics |
+| `infra2_sdk.runtime.http` | Standard httpx clients and the HTTP reachability probe |
 | `infra2_sdk.runtime.identity` | OCI/config/release identity, `canonical_sha256`, and OTel resource coordinates |
-| `infra2_sdk.runtime.otel` | Explicit OTLP provider bootstrap, env-configured samplers, and W3C trace-context propagation |
+| `infra2_sdk.runtime.otel` | Explicit OTLP provider bootstrap and env-configured samplers |
 | `infra2_sdk.runtime.postgres` | PostgreSQL DSN normalization and psycopg reachability probe |
 | `infra2_sdk.runtime.s3` | Standard boto3 S3 client, probe, and safe bucket/object primitives |
 | `infra2_sdk.scaffold` | Zero-compromise scaffolding engine producing compose, deployer, and entrypoint assets |
-| `infra2_sdk.secrets` | Secret-store adapters (Vault KV, 1Password, Env), manifest-driven `SecretsResolver`, and Vault template renderers |
-| `infra2_sdk.snapshot` | Versioned anonymized-snapshot manifest, residual-proof shape, and artifact digest verification |
+| `infra2_sdk.secrets` | Secret-store adapters (Vault KV, 1Password), manifest-driven `SecretsResolver`, and Vault template renderers |
 | `infra2_sdk.transport` | Minimal injectable HTTP transport (`HttpTransport`, `HttpResponse`, `urllib_transport`) shared by adapters |
 
 ### Core runtime entrypoints
@@ -61,7 +60,7 @@ python -m pip install \
 |---|---|---|---|
 | Service bootstrap | `init_service` | `infra2_sdk.fastapi` | Mounts `/livez`, `/readyz`, `/health` routes and configures OpenTelemetry providers |
 | Health probes | `check_health`, `run_probes` | `infra2_sdk.runtime.health` | Framework-agnostic readiness evaluation across declared dependency probes |
-| HTTP client | `create_http_client`, `probe_http` | `infra2_sdk.runtime.http` | Standard httpx client with connection limits, timeouts, and retry budgets |
+| HTTP client | `create_http_client`, `probe_http` | `infra2_sdk.runtime.http` | Standard httpx client with connection limits, timeouts, and connect retries, plus a reachability probe |
 | PostgreSQL | `normalize_postgres_dsn`, `probe_postgres` | `infra2_sdk.runtime.postgres` | Psycopg reachability probe with credential redaction and DSN normalization |
 | S3 storage | `create_s3_client`, `probe_s3`, `ensure_bucket` | `infra2_sdk.runtime.s3` | Boto3 client initialization, bucket reachability probe, and idempotent bucket creation |
 | Environment & identity | `environment_from_env` | `infra2_sdk.runtime.environment` | Canonical six-tier environment resolution and contract validation |
@@ -90,21 +89,19 @@ storage, database, HTTP, or telemetry abstractions:
   evidence redacts the configured DSN and password before it enters logs or alerts.
 - HTTP returns an httpx client. Provider retry budgets and idempotency policy remain with the
   caller.
-- OpenTelemetry configures OTLP/HTTP providers and W3C Trace Context propagation only when
-  explicitly requested. OTLP endpoints require a valid HTTP(S) host, reject embedded credentials
-  and fragments, and preserve query parameters when deriving per-signal paths.
+- OpenTelemetry configures OTLP/HTTP providers only when explicitly requested. OTLP endpoints
+  require a valid HTTP(S) host, reject embedded credentials and fragments, and preserve query
+  parameters when deriving per-signal paths. Trace-context propagation stays with the
+  application: use `opentelemetry.propagate.inject` and `extract`. `extract` reads a plain
+  `dict` case-sensitively, so `Traceparent` is not found. Pass lower-case keys or a
+  case-insensitive mapping such as the Starlette `request.headers`.
 
 Telemetry and readiness in an application (`infra2-sdk[otel]`):
 
 ```python
 from opentelemetry import trace
 
-from infra2_sdk.runtime.otel import (
-    OtelSettings,
-    configure_telemetry,
-    extract_trace_context,
-    inject_trace_context,
-)
+from infra2_sdk.runtime.otel import OtelSettings, configure_telemetry
 
 tracer = trace.get_tracer("my-app")
 
@@ -112,9 +109,8 @@ tracer = trace.get_tracer("my-app")
 # OTEL_TRACES_SAMPLER and OTEL_TRACES_SAMPLER_ARG; no endpoint (or OTEL_SDK_DISABLED) means off.
 providers = configure_telemetry(OtelSettings.from_env(), set_global=True)
 
-# Inbound: continue the caller's trace. Outbound: propagate the active span.
-with tracer.start_as_current_span("handle", context=extract_trace_context(request.headers)):
-    outbound_headers = inject_trace_context({"Accept": "application/json"})
+with tracer.start_as_current_span("handle"):
+    ...
 
 providers.shutdown()  # on exit: flushes exporters and detaches the logging handler
 ```
@@ -128,14 +124,22 @@ settings (standard `OTEL_TRACES_SAMPLER` names; `OTEL_TRACES_SAMPLER_ARG` for th
 samplers); ambient `os.environ` is only read by `from_env()`.
 
 ```python
-from infra2_sdk.runtime import check_health
-from infra2_sdk.runtime.http import HttpCheck
+from infra2_sdk.runtime import ProbeResult, check_health
+from infra2_sdk.runtime.http import probe_http
+
+
+class CatalogCheck:  # a DependencyCheck: a `name` and a `probe()` that returns a ProbeResult
+    name = "catalog"
+
+    async def probe(self) -> ProbeResult:
+        return await probe_http(url, name=self.name)
+
 
 # In a readiness handler (async, any framework); DEPENDENCIES is your DependencyManifest and
 # `environment` comes from environment_from_env(). A required dependency down is 503 with the
 # reasons; an optional one down is 200 "degraded"; a raising probe is reported, never a 200.
 status_code, body = await check_health(
-    [HttpCheck("catalog", url)], manifest=DEPENDENCIES, tier=environment.tier
+    [CatalogCheck()], manifest=DEPENDENCIES, tier=environment.tier
 )
 ```
 
@@ -144,15 +148,23 @@ sync work runs only in a daemon thread and cannot delay CLI shutdown, but Python
 underlying blocking I/O. Every sync adapter therefore also configures a protocol-level timeout;
 custom sync checks must do the same.
 
+Settings of the S3, PostgreSQL and HTTP adapters take explicit values. The application owns
+the variable names and the defaults. The SDK reads no environment variable for these settings.
+boto3 may: when an S3 setting stays unset, `create_s3_client` passes `None` and boto3 applies
+its own provider chain. That chain reads variables such as `AWS_ACCESS_KEY_ID`,
+`AWS_DEFAULT_REGION` and `AWS_ENDPOINT_URL_S3`.
+
 ```python
+import os
+
 from infra2_sdk.runtime import RuntimeIdentity, environment_from_env
 from infra2_sdk.runtime.postgres import PostgresSettings
 from infra2_sdk.runtime.s3 import S3Settings, create_s3_client
 
 runtime = environment_from_env()  # reads os.environ only when called
 identity = RuntimeIdentity.from_env()  # no network or platform lookup
-database = PostgresSettings.from_env()
-s3 = create_s3_client(S3Settings.from_env())
+database = PostgresSettings(dsn=os.environ["DATABASE_URL"])
+s3 = create_s3_client(S3Settings(bucket="my-bucket", endpoint_url=os.environ["S3_ENDPOINT"]))
 ```
 
 Deployed conformance checks opt into fail-closed loading instead of inheriting local defaults:
@@ -220,6 +232,8 @@ success and failure paths on every PR, without installing the SDK source tree.
 The SDK provides single-line compliance with operational observability standards:
 
 ```python
+import os
+
 from fastapi import FastAPI
 from infra2_sdk.fastapi import init_service
 from infra2_sdk.runtime.postgres import PostgresSettings, probe_postgres
@@ -227,7 +241,7 @@ from infra2_sdk.runtime.postgres import PostgresSettings, probe_postgres
 app = FastAPI(title="my-service")
 
 # Optional database checker
-db_settings = PostgresSettings.from_env()
+db_settings = PostgresSettings(dsn=os.environ["DATABASE_URL"])
 
 
 def check_db() -> tuple[bool, str]:
@@ -256,7 +270,7 @@ This single call registers three standardized endpoints and starts telemetry
 - the tier is missing or unknown;
 - `OTEL_RESOURCE_ATTRIBUTES` is malformed, or its `deployment.environment.name` disagrees with the tier;
 - `OTEL_SDK_DISABLED`, `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` or `OTEL_METRIC_EXPORT_INTERVAL` is invalid (the sampler argument counts only for a ratio sampler);
-- two aliases of one variable hold different values. `init_service` reads three groups of aliases: the tier variables (`ENVIRONMENT`, `ENV`, `APP_ENV`), `OTEL_SERVICE_NAME` with `SERVICE_NAME`, and `SERVICE_VERSION` with `IMAGE_TAG`. It reads no other alias pair of the contract.
+- two aliases of one variable hold different values. `init_service` reads two groups of aliases: the tier variables (`ENVIRONMENT`, `ENV`, `APP_ENV`), and `SERVICE_VERSION` with `IMAGE_TAG`. The contract has no other alias.
 
 An `OTEL_EXPORTER_OTLP_ENDPOINT` that is not a valid http(s) URL also stops the start, unless `OTEL_SDK_DISABLED=true`. These checks run with or without an endpoint. `OTEL_SDK_DISABLED=true` does not skip the four checks above. `enable_otel=False` skips every telemetry check; the blank-name check always runs. The SDK does not read `OTEL_EXPORTER_OTLP_TIMEOUT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_BSP_*` or `OTEL_EXPORTER_OTLP_PROTOCOL`, so it never checks them.
 
@@ -291,30 +305,50 @@ Generated assets include:
 - `Dockerfile`: Minimal container image recipe.
 - `.env.example` (in standalone profile) or `deploy.py` and the Vault assets (in infra2 profile): `secrets.ctmpl` and `vault-policy.hcl` are rendered by `infra2_sdk.secrets` from one manifest, `vault-agent.hcl` configures the sidecar.
 
+The generated `app.py` of a project with a database reads `DATABASE_URL`. It stops at import with `RuntimeError: DATABASE_URL is required` when the variable is unset, empty or blank. The generated compose file passes an empty string when the shell sets none.
+
 ## Environment contract
 
 `runtime_env_contract()` is the machine-readable source for canonical names, compatibility
-aliases, and sensitivity. Canonical names prefer existing open ecosystem conventions:
+aliases, and sensitivity. Canonical names prefer existing open ecosystem conventions. The table
+below is generated from it. Do not edit it by hand. After a change of the contract, replace the
+text between the two markers with the output of `python scripts/render_env_contract.py`. Run
+it in a source checkout: the wheel does not ship the script. The test suite fails when the
+block is stale.
 
-| Concern | Canonical names | Compatibility aliases |
+<!-- env-contract:begin (generated by scripts/render_env_contract.py; do not edit) -->
+| Canonical name | Compatibility aliases | Sensitive |
 |---|---|---|
-| Runtime | `ENVIRONMENT`, `OTEL_SERVICE_NAME`, `SERVICE_VERSION`, `GIT_COMMIT_SHA`, `INSTANCE_ID` | `ENV`, `APP_ENV`, `SERVICE_NAME`, `IMAGE_TAG` |
-| Image & Release Digest | `IMAGE_DIGEST`, `CONFIGURATION_SHA256`, `RELEASE_ID` | — |
-| HTTP Client | `HTTP_TIMEOUT_SECONDS`, `HTTP_CONNECT_TIMEOUT_SECONDS`, `HTTP_MAX_CONNECTIONS`, `HTTP_MAX_KEEPALIVE_CONNECTIONS`, `HTTP_CONNECT_RETRIES`, `HTTP_USER_AGENT`, `HTTP_FOLLOW_REDIRECTS` | — |
-| PostgreSQL | `DATABASE_URL`, `DATABASE_CONNECT_TIMEOUT_SECONDS`, `DATABASE_STATEMENT_TIMEOUT_SECONDS` | — |
-| S3 | `OBJECT_STORAGE_PROTOCOL=s3`, `S3_BUCKET`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `S3_CONNECT_TIMEOUT_SECONDS`, `S3_READ_TIMEOUT_SECONDS`, `S3_ADDRESSING_STYLE` | `OBJECT_STORAGE_DRIVER`, `S3_ENDPOINT_URL`, `S3_ENDPOINT`, `AWS_DEFAULT_REGION`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_SESSION_TOKEN` |
-| Telemetry | `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_SDK_DISABLED`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | — |
+| `ENVIRONMENT` | `ENV`, `APP_ENV` | no |
+| `OTEL_SERVICE_NAME` | none | no |
+| `SERVICE_VERSION` | `IMAGE_TAG` | no |
+| `GIT_COMMIT_SHA` | none | no |
+| `IMAGE_DIGEST` | none | no |
+| `CONFIGURATION_SHA256` | none | no |
+| `RELEASE_ID` | none | no |
+| `INSTANCE_ID` | none | no |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | none | no |
+| `OTEL_RESOURCE_ATTRIBUTES` | none | no |
+| `OTEL_SDK_DISABLED` | none | no |
+| `OTEL_METRIC_EXPORT_INTERVAL` | none | no |
+| `OTEL_TRACES_SAMPLER` | none | no |
+| `OTEL_TRACES_SAMPLER_ARG` | none | no |
+<!-- env-contract:end -->
 
-Canonical and alias values may coexist only when equal. Conflicts fail before clients are
-created, and secret values never appear in errors. Missing OTLP configuration disables
-telemetry without affecting application startup. `OTEL_SDK_DISABLED=true` takes precedence over
-the endpoint and ignores it completely. Missing S3 credentials leaves boto3's standard credential
-chain intact.
+Canonical and alias values may coexist only when equal. A conflict between a canonical name and
+an alias fails in `resolve_runtime_env` with `EnvironmentConflictError`. No variable of the
+contract is sensitive today. The `sensitive` field stays for the wire shape, and
+`resolve_env(..., sensitive=True)` keeps the values out of its error message. Missing OTLP
+configuration disables telemetry without affecting application startup.
+`OTEL_SDK_DISABLED=true` takes precedence over the endpoint and ignores it completely.
 
-Missing S3 region and addressing-style values also remain unset so boto3 can use its standard
-profile, workload-identity, and service defaults. S3-compatible deployments that require path
-addressing set `S3_ADDRESSING_STYLE=path` explicitly. When bucket creation is explicitly allowed,
-`ensure_bucket` uses the region resolved by the boto3 client if no region was set directly.
+The table lists the variables that `environment_from_env`, `RuntimeIdentity.from_env` and
+`OtelSettings.from_env` resolve. The settings of the S3, PostgreSQL and HTTP adapters take
+explicit values, so no row of the table belongs to them. Five more fixed names exist outside
+the table. `environment_from_env` reads `GITHUB_ACTIONS`. `VaultKvBackend.from_environ` reads
+`VAULT_ADDR`, `VAULT_TOKEN`, `VAULT_ROLE_ID` and `VAULT_SECRET_ID` from the mapping you pass.
+Other names come from the caller: the manifest that you pass to `validate_env`, and the token
+variable that a CLI option names.
 
 `ENVIRONMENT` has two dimensions. `RuntimeEnvironment.tier` controls behavior using the six
 portable tiers. `RuntimeEnvironment.name` preserves the deployment display identity. Therefore
@@ -361,6 +395,11 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
 - Semantic versions describe the public Python and serialized JSON contracts.
 - Additive fields and enum values require a minor release.
 - Removing or changing an existing field requires a major release.
+- While infra2, finance_report and truealpha are the only consumers, a minor release may remove a
+  public name. It may also change the default of a keyword. The census must cover the production
+  and test code of the three consumers. It must find no use of the name and no reliance on the
+  old default. The CHANGELOG states the change. A change that a consumer relies on needs a major
+  release.
 - New runtime dataclass fields are keyword-only so additive releases do not rebind existing
   positional arguments.
 - Receivers must require a JSON integer `contract_version` and reject booleans or unsupported
@@ -385,18 +424,132 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
 - In v3.3.0, `routing.LEGACY_CANARY_PR` and its `999` and `pr-999` slot mapping were removed.
   Those slot ids now resolve as ordinary preview slots. For the canary host, pass `tier="canary"`,
   `is_canary=True`, or `slot_id=CANARY_SLOT`.
+- In v3.4.0, the SDK removed public names that no consumer uses. It follows the rule above: a
+  census of infra2, finance_report and truealpha found no use of them. (v3.3.0 removed names
+  that the README had marked as compatibility shims.) Replacements are in brackets.
+  - `capacity.LEVELS`, `capacity.onepassword_capacity`, `capacity.OnePasswordCapacityReport` and
+    `capacity.Runner`;
+  - `delivery.PREVIEW_RELEVANT_STAGES`;
+  - `deploy.DeployStatus` (no replacement: build the record you need in your own code;
+    `DeployState` stays);
+  - `refs.resolve_release_identity` (use `refs.resolve_image_ref` and
+    `refs.resolve_image_digest`);
+  - `refs.verify_runtime_identity` (no replacement: compare the two records in your own code);
+  - `refs.ReleaseIdentity` (no replacement: build the record you need in your own code);
+  - `routing.resolve_dokploy_domains` and `routing.DokployDomainSpec`;
+  - `runtime.config_schema.settings_json_schema`;
+  - `runtime.environment.env_float` and `runtime.environment.env_bool`;
+  - `runtime.health.assert_required_dependencies` and `runtime.health.DependencyUnavailableError`
+    (use `check_health`);
+  - `runtime.http.retryable_request` and `runtime.http.parse_retry_after` (no replacement: use
+    httpx and your own `Retry-After` handling);
+  - `runtime.http.HttpCheck` (use `probe_http`. It is only a reachability probe and does not
+    validate the URL. `HttpCheck` raised `ValueError` for a bad URL);
+  - `runtime.identity.runtime_identity_fingerprint`;
+  - `runtime.otel.inject_trace_context` and `runtime.otel.extract_trace_context` (use
+    `opentelemetry.propagate.inject` and `extract`. `extract` reads a plain dict
+    case-sensitively, so pass lower-case keys or a case-insensitive mapping such as the Starlette
+    `request.headers`. The removed helper lowercased the keys);
+  - `runtime.postgres.PostgresCheck` and `runtime.s3.S3Check` (wrap `probe_postgres` or
+    `probe_s3` in your own `DependencyCheck`):
+
+    ```python
+    from infra2_sdk.runtime import probe_postgres, probe_s3
+
+
+    class DatabaseCheck:
+        name = "database"
+
+        def probe(self):
+            return probe_postgres(db_settings)
+
+
+    class ObjectStorageCheck:
+        name = "object_storage"
+
+        def probe(self):
+            return probe_s3(storage_settings)
+    ```
+
+    The probes return the names `database` and `object_storage`. `run_probes` reports a check
+    with another name as `absent`, with the detail `probe result name does not match check name`;
+  - `secrets.EnvBackend` and `secrets.ReadOnlyBackendError`;
+  - the module `infra2_sdk.snapshot`, with `AnonymizedSnapshotManifest`, `ResidualScanProof`,
+    `ResidualScanStatus`, `SNAPSHOT_MANIFEST_VERSION`, `SnapshotArtifact`,
+    `SnapshotArtifactFormat`, `SnapshotProducer` and `verify_snapshot_artifact` (no replacement:
+    infra2 removed the last user, `tools/sync_anonymized_staging.sh`, on 2026-10-12. A project
+    that still needs the manifest shape pins `infra2-sdk<3.4`).
+- In v3.4.0, `S3Settings.from_env`, `HttpClientSettings.from_env` and `PostgresSettings.from_env`
+  were removed. Build the settings with explicit values. The SDK no longer reads the variables
+  below, and they left `RuntimeEnvKey` and `runtime_env_contract()`. boto3 may still read its
+  own variables, such as `AWS_ACCESS_KEY_ID`, `AWS_DEFAULT_REGION` and `AWS_ENDPOINT_URL_S3`,
+  when an S3 setting stays unset:
+  - HTTP: `HTTP_TIMEOUT_SECONDS`, `HTTP_CONNECT_TIMEOUT_SECONDS`, `HTTP_MAX_CONNECTIONS`,
+    `HTTP_MAX_KEEPALIVE_CONNECTIONS`, `HTTP_CONNECT_RETRIES`, `HTTP_USER_AGENT`,
+    `HTTP_FOLLOW_REDIRECTS`;
+  - S3: `OBJECT_STORAGE_PROTOCOL` (alias `OBJECT_STORAGE_DRIVER`), `S3_BUCKET`,
+    `AWS_ENDPOINT_URL_S3` (aliases `S3_ENDPOINT_URL`, `S3_ENDPOINT`), `AWS_REGION` (aliases
+    `AWS_DEFAULT_REGION`, `S3_REGION`), `AWS_ACCESS_KEY_ID` (alias `S3_ACCESS_KEY`),
+    `AWS_SECRET_ACCESS_KEY` (alias `S3_SECRET_KEY`), `AWS_SESSION_TOKEN` (alias
+    `S3_SESSION_TOKEN`), `S3_CONNECT_TIMEOUT_SECONDS`, `S3_READ_TIMEOUT_SECONDS`,
+    `S3_ADDRESSING_STYLE`;
+  - database: `DATABASE_URL`, `DATABASE_CONNECT_TIMEOUT_SECONDS`,
+    `DATABASE_STATEMENT_TIMEOUT_SECONDS`.
+- In v3.4.0, `runtime_env_contract()["contract_version"]` (`RUNTIME_ENV_CONTRACT_VERSION`) is 2,
+  not 1, because the document lost the 20 variables above. Version 2 lists 14 variables. The
+  field layout is the same. A receiver that requires version 1 rejects version 2, as the rule
+  above says, so change it to require version 2.
+- In v3.4.0, the SDK no longer reads `SERVICE_NAME`, the unused alias of `OTEL_SERVICE_NAME`.
+  `ENV`, `APP_ENV` and `IMAGE_TAG` stay. A deployment that sets only `SERVICE_NAME` must set
+  `OTEL_SERVICE_NAME` instead. Until then:
+  - `OtelSettings.from_env` gives the service name `unknown_service` and raises no error;
+  - `RuntimeIdentity.from_env` raises `ValueError: OTEL_SERVICE_NAME is required`;
+  - when both variables are set, the SDK uses `OTEL_SERVICE_NAME` and reports no conflict.
+    Before 3.4.0, two different values raised `EnvironmentConflictError`.
+- In v3.4.0, a string lookup of a removed variable raises `ValueError`:
+  `resolve_runtime_env(env, "DATABASE_URL")`, `runtime_env_spec("S3_BUCKET")` and
+  `RuntimeEnvKey("AWS_REGION")`. Before 3.4.0, each of them returned a value.
+- In v3.4.0, `init_service` is strict by default (`strict_otel=True`). Before, the default was
+  `False`. A service without a known tier, or with an invalid `OTEL_*` value that the SDK reads,
+  now stops at start-up. A caller that must never stop on telemetry passes `strict_otel=False`.
+  The `init_service` documentation lists every strict check.
+- In v3.4.0, the service name of the telemetry is `OTEL_SERVICE_NAME`, then `service.name` in
+  `OTEL_RESOURCE_ATTRIBUTES`, then the `name` argument of `init_service`. Before, `init_service`
+  used its `name` argument over the attribute. `RuntimeIdentity.from_env` now also takes
+  `service.name` from the attributes. A padded value is trimmed. A value that is blank after
+  decoding counts as missing.
+- In v3.4.0, `init_service` raises `ValueError` for a blank `name` before it changes the app. A
+  strict check that fails leaves no marker and no probe route. A failure while the providers
+  start is the one exception. The `init_service` documentation describes it.
+- In v3.4.0, 31 names left `__all__` of `infra2_sdk` and `infra2_sdk.runtime` and are no longer
+  attributes of these packages. No consumer imports them from the package, and no recorded
+  decision holds them. Six of them are imported from their module in test code. In infra2 these
+  are `BudgetStatus`, `DeployState`, `DisagreementKind`, `PipelineStage` and `validate_gate`.
+  In finance_report and truealpha it is `ProductionEvidencePolicy`. That import works as
+  before. All 31 stay defined in their modules. Import them from the module, for example
+  `from infra2_sdk.deploy import DeployState`:
+  - in `infra2_sdk`:
+    - `capacity`: `CapacityLimit`;
+    - `ci`: `validate_gate`;
+    - `delivery`: `BudgetStatus`, `DisagreementKind`, `PipelineStage`, `validate_stage_result`;
+    - `deploy`: `CONTRACT_VERSION`, `DeployEvidence`, `DeployState`, `HealthCheckResult`,
+      `ProductionEvidencePolicy`, `build_deploy_request`, `derive_release_evidence`,
+      `fetch_production_evidence_policy`;
+    - `routing`: `DEFAULT_BASE_DOMAIN`, `RouteEndpoint`;
+    - `secrets`: `SecretsBackend`, `TokenStatus`;
+  - in `infra2_sdk.runtime`:
+    - `config_schema`: `EnvironmentValidation`, `validate_environment`;
+    - `environment`: `APP_OWNED_TIERS`, `EnvironmentConflictError`, `PLATFORM_OWNED_TIERS`,
+      `ResolvedEnvValue`, `RuntimeEnvSpec`, `UnknownEnvironmentPolicy`,
+      `normalize_deployment_environment`, `resolve_env`, `strict_environment_from_env`;
+    - `health`: `HealthStatus`, `health_response`.
+- In v3.4.0, `infra2_sdk.__version__` left `infra2_sdk.__all__` and stays importable. The root
+  package no longer exposes `version` and `PackageNotFoundError`, which it imported from
+  `importlib.metadata`.
+- `tests/surface.json` records the reason for each name in `__all__`: a consumer imports it, the
+  README documents it, or a recorded decision holds it.
 - `to_environment_tier` and `to_deploy_type` provide canonical bridging mappings across `EnvironmentTier` and `DeployType`.
 - `CommandRunner` protocol is exported from `infra2_sdk.refs` for subprocess runner injection.
-
-### Anonymized snapshot trust boundary
-
-`infra2_sdk.snapshot` validates a closed v1 wire shape and proves that local
-artifact bytes match the manifest's non-zero size and SHA-256 digest. Shape and
-digest validation **does not attest** that the declared producer actually ran
-the anonymizer. Before any restore or deploy side effect, infrastructure must
-independently authorize the declared repository, source SHA, workflow run, and
-artifact provenance. Dumping, anonymization, storage, Vault, host access, and
-deployment remain outside the SDK.
 
 ## Development
 

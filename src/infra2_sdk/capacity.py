@@ -1,23 +1,20 @@
 """Capacity limits and readings: the quota side of every external dependency.
 
 A limit is a number per window; a reading is what was used. ``evaluate`` turns them into
-levels a daily check can act on. Collectors for open APIs (Cloudflare analytics, the
-1Password rate-limit command) live here so that no consumer re-implements the query.
+levels a daily check can act on. The collector for an open API (Cloudflare analytics) lives
+here so that no consumer re-implements the query.
 """
 
 from __future__ import annotations
 
 import json
-import subprocess
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import date
-from typing import Any
 
 from infra2_sdk.transport import HttpTransport, urllib_transport
 
 WINDOWS = ("hour", "day", "month")
-LEVELS = ("ok", "warn", "exceeded", "unknown")
 
 
 @dataclass(frozen=True)
@@ -170,61 +167,3 @@ def cloudflare_readings(
     ]
     readings.append(CapacityReading("cloudflare.workers.requests", workers))
     return tuple(readings)
-
-
-@dataclass(frozen=True)
-class OnePasswordCapacityReport:
-    """Structured report of 1Password service account rate limits and usage."""
-
-    limits: tuple[CapacityLimit, ...]
-    readings: tuple[CapacityReading, ...]
-
-
-Runner = Callable[..., subprocess.CompletedProcess[str]]
-
-
-def onepassword_capacity(
-    service_account: str,
-    *,
-    runner: Runner = subprocess.run,
-    timeout: float = 30.0,
-) -> OnePasswordCapacityReport:
-    """Limits and usage from ``op service-account ratelimit``; the CLI reports both."""
-    kwargs: dict[str, Any] = {"capture_output": True, "text": True}
-    if timeout is not None:
-        kwargs["timeout"] = timeout
-    try:
-        try:
-            result = runner(
-                ["op", "service-account", "ratelimit", service_account, "--format=json"],
-                **kwargs,
-            )
-        except TypeError:
-            kwargs.pop("timeout", None)
-            result = runner(
-                ["op", "service-account", "ratelimit", service_account, "--format=json"],
-                **kwargs,
-            )
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(f"op service-account ratelimit timed out after {timeout}s") from exc
-    if result.returncode != 0:
-        raise RuntimeError("op service-account ratelimit failed")
-    rows = json.loads(result.stdout or "[]")
-    limits: list[CapacityLimit] = []
-    readings: list[CapacityReading] = []
-    for row in rows:
-        kind = str(row.get("type", "")).lower()
-        action = str(row.get("action", "")).lower()
-        limit = int(row.get("limit", 0))
-        if not (kind and action) or limit <= 0:
-            continue
-        name = f"onepassword.{kind}.{action}"
-        reset = str(row.get("reset", "")).lower()
-        window = (
-            "hour"
-            if kind == "token" or "h" in reset and "m" in reset and "d" not in reset
-            else "day"
-        )
-        limits.append(CapacityLimit(name, limit, window))
-        readings.append(CapacityReading(name, int(row.get("used", 0))))
-    return OnePasswordCapacityReport(tuple(limits), tuple(readings))

@@ -7,6 +7,8 @@ code defines (the package version, the modules on disk), not against a copy of t
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -66,3 +68,37 @@ def test_py_typed_marker_ships_with_the_package() -> None:
     package_data = PYPROJECT["tool"]["setuptools"]["package-data"]["infra2_sdk"]
     assert "py.typed" in package_data
     assert "data/*.yaml" in package_data
+
+
+def test_an_empty_parametrization_stops_the_run_instead_of_skipping(tmp_path: Path) -> None:
+    ini = PYPROJECT["tool"]["pytest"]["ini_options"]
+    assert ini.get("empty_parameter_set_mark") == "fail_at_collect"
+    case = tmp_path / "test_empty_case.py"
+    case.write_text(
+        "import pytest\n\n\n@pytest.mark.parametrize('x', [])\ndef test_it(x):\n    pass\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-c",
+            str(ROOT / "pyproject.toml"),
+            "--rootdir",
+            str(tmp_path),
+            str(case),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    report = result.stdout + result.stderr
+    assert result.returncode == 2, report
+    assert "Empty parameter set in 'test_it'" in report, report
+    assert "skipped" not in report, report
