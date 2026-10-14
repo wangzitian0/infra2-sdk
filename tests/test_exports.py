@@ -244,11 +244,10 @@ def test_every_reason_starts_with_a_known_prefix_and_gives_a_detail() -> None:
 def test_consumer_reasons_name_known_repositories() -> None:
     """Check the form of each `consumer:` reason, not its truth.
 
-    The SDK repository cannot read the consumers. It cannot tell whether a named repository
-    imports the name. The release check does that: consumer_import_check.py with --tests, and
-    the census sdk_api_reach.py. Both belong to issue #102 and live in the infra2 workspace,
-    in .agents/runs/env-inventory-20261013/tool. A false claim passes this test and fails
-    that check.
+    This repository cannot read its consumers, so no test here can tell whether a named
+    repository imports the name. A usage census of infra2, finance_report and truealpha checks
+    the reasons before a release that removes names or changes `tests/surface.json`. The step
+    is in CONTRIBUTING.md, section "Releasing". A false claim passes this test.
     """
     checked = 0
     for package, name, reason in _surface_entries():

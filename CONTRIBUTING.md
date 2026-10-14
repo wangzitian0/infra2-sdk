@@ -34,6 +34,11 @@ do not treat a locally built wheel as a published release or update consumers to
 
 A release changes the version in the same PR and is published by the workflow, never by hand.
 
+0. A release that removes a public name or changes a default needs a usage census. Search the
+   production and test code of infra2, finance_report and truealpha, in all file types, for each
+   name and for each caller of the keyword. Attach the result to the release issue. A name that a
+   consumer uses is not removed in a minor release. This repository cannot read the consumers, so
+   no test here proves a `consumer:` reason of `tests/surface.json`.
 1. In the PR: bump `version` in `pyproject.toml` (refresh `uv.lock` with `uv lock`), add the
    [CHANGELOG](CHANGELOG.md) entry, and update the version pins in the README.
    `tests/test_release_hygiene.py` fails when any of the three is stale.
