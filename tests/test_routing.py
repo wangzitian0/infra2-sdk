@@ -189,4 +189,3 @@ def test_derive_preview_coordinates_preview_variations() -> None:
     custom_coords = derive_preview_coordinates("demo", "preview", slot_id="custom-slot")
     assert custom_coords.deployment_environment == "preview-custom-slot"
     assert custom_coords.env_suffix == "-preview-custom-slot"
-

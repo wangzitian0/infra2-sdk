@@ -376,4 +376,3 @@ def test_s3_settings_extended_validation() -> None:
 
     with pytest.raises(ValueError, match="S3 prefixes must be non-empty"):
         S3Settings(bucket="valid-bucket", documents_prefix="")
-

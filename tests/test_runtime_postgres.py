@@ -203,10 +203,7 @@ def test_postgres_settings_extended_fields_defaults_and_helpers() -> None:
         "max_overflow": 10,
         "pool_pre_ping": True,
     }
-    assert (
-        settings.migration_pgoptions()
-        == "-c lock_timeout=5000ms -c statement_timeout=30000ms"
-    )
+    assert settings.migration_pgoptions() == "-c lock_timeout=5000ms -c statement_timeout=30000ms"
 
     custom = PostgresSettings(
         dsn="postgresql://user:pass@db.internal:5432/app",
@@ -224,10 +221,7 @@ def test_postgres_settings_extended_fields_defaults_and_helpers() -> None:
         "max_overflow": 20,
         "pool_pre_ping": True,
     }
-    assert (
-        custom.migration_pgoptions()
-        == "-c lock_timeout=8000ms -c statement_timeout=45000ms"
-    )
+    assert custom.migration_pgoptions() == "-c lock_timeout=8000ms -c statement_timeout=45000ms"
 
 
 def test_postgres_settings_extended_validation() -> None:
@@ -276,4 +270,3 @@ def test_redact_postgres_error_with_migrations_dsn() -> None:
     assert "app_pass" not in redacted
     assert "<redacted>" in redacted
     assert "<redacted-postgres-dsn>" in redacted
-

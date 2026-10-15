@@ -251,4 +251,3 @@ def test_identity_commit_sha_fallbacks_from_resource_attributes() -> None:
         }
     )
     assert ident4.commit_sha == "unknown"
-
