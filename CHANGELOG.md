@@ -4,6 +4,20 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.6.0 - 2026-10-15
+
+### Added
+
+- Add `infra2_sdk.runtime.llm.LlmSettings` for LLM runtime configuration and model chain resolution ([#113](https://github.com/wangzitian0/infra2-sdk/issues/113)).
+- Add `PreviewStackCoordinates` dataclass and `derive_preview_coordinates` in `infra2_sdk.routing` and `infra2_sdk.__all__` ([#113](https://github.com/wangzitian0/infra2-sdk/issues/113)).
+- Extend `S3Settings` with public endpoint coordinates, bucket configuration, and object key helpers ([#113](https://github.com/wangzitian0/infra2-sdk/issues/113)).
+- Extend `PostgresSettings` with migration DSN, pool settings, and timeout controls ([#113](https://github.com/wangzitian0/infra2-sdk/issues/113)).
+
+### Changed
+
+- Update `RuntimeIdentity.from_env` and `_resolve_service_identity` to resolve `commit_sha` from `GIT_COMMIT_SHA`, `vcs.ref.head.revision`, or `infra.iac.ref` ([#113](https://github.com/wangzitian0/infra2-sdk/issues/113)).
+- Update scaffold compose template to expose `CONFIGURATION_SHA256` ([#113](https://github.com/wangzitian0/infra2-sdk/issues/113)).
+
 ## 3.5.2 - 2026-10-15
 
 ### Added

@@ -135,8 +135,7 @@ class RuntimeIdentity:
             service_version=resolved.service_version,
             environment=resolved.environment.tier,
             deployment_environment=resolved.deployment_environment or resolved.environment.name,
-            commit_sha=resolve_runtime_env(environ, RuntimeEnvKey.GIT_COMMIT_SHA).value
-            or "unknown",
+            commit_sha=resolved.commit_sha,
             image_digest=resolve_runtime_env(environ, RuntimeEnvKey.IMAGE_DIGEST, default="").value
             or "",
             configuration_sha256=resolve_runtime_env(

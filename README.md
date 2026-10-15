@@ -25,7 +25,7 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.5.2"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.6.0"
 ```
 
 ## Modules
@@ -46,6 +46,7 @@ python -m pip install \
 | `infra2_sdk.runtime.health` | Framework-agnostic readiness checks (`check_health`), probe runners, and dependency declarations |
 | `infra2_sdk.runtime.http` | Standard httpx clients and the HTTP reachability probe |
 | `infra2_sdk.runtime.identity` | OCI/config/release identity, `canonical_sha256`, and OTel resource coordinates |
+| `infra2_sdk.runtime.llm` | Large language model runtime configuration contracts and model chain resolution |
 | `infra2_sdk.runtime.otel` | Explicit OTLP provider bootstrap and env-configured samplers |
 | `infra2_sdk.runtime.postgres` | PostgreSQL DSN normalization and psycopg reachability probe |
 | `infra2_sdk.runtime.s3` | Standard boto3 S3 client, probe, and safe bucket/object primitives |
@@ -73,10 +74,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.5.2'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.6.0'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.5.2'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.6.0'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -206,7 +207,7 @@ Install the published wheel in a fresh Python 3.11+ environment:
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install \
-  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.5.2/infra2_sdk-3.5.2-py3-none-any.whl'
+  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.6.0/infra2_sdk-3.6.0-py3-none-any.whl'
 ```
 
 For a local connectivity exercise, start this server in another terminal:

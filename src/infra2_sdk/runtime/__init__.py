@@ -6,6 +6,7 @@ from infra2_sdk.runtime import (
     health,
     http,
     identity,
+    llm,
     otel,
     postgres,
     s3,
@@ -44,6 +45,9 @@ from infra2_sdk.runtime.http import (
     create_http_client,
     probe_http,
 )
+from infra2_sdk.runtime.llm import (
+    LlmSettings,
+)
 from infra2_sdk.runtime.otel import (
     OtelSettings,
     configure_telemetry,
@@ -72,6 +76,7 @@ __all__ = [
     "health",
     "http",
     "identity",
+    "llm",
     "otel",
     "postgres",
     "s3",
@@ -125,4 +130,6 @@ __all__ = [
     "OtelSettings",
     "configure_telemetry",
     "signal_endpoint",
+    # LLM
+    "LlmSettings",
 ]

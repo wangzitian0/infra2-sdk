@@ -113,6 +113,10 @@ def test_scaffold_compose_yaml_resource_limits(tmp_path: Path):
     # Assert health check start_period is at least 120s (for DB migration safety)
     assert "start_period: 120s" in compose_text
 
+    # Assert configuration hash uses CONFIGURATION_SHA256 instead of IAC_CONFIG_HASH
+    assert "CONFIGURATION_SHA256: ${CONFIGURATION_SHA256:-}" in compose_text
+    assert "IAC_CONFIG_HASH" not in compose_text
+
 
 def test_scaffold_compose_yaml_db_environment(tmp_path: Path):
     out_pg = tmp_path / "pg_svc"

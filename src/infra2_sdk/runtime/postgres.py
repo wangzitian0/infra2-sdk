@@ -21,6 +21,12 @@ class PostgresSettings:
     dsn: str = field(repr=False)
     connect_timeout_seconds: int = 5
     statement_timeout_seconds: int = 5
+    migrations_dsn: str | None = field(default=None, repr=False)
+    pool_size: int = 5
+    pool_max_overflow: int = 10
+    migration_lock_budget_seconds: float = 15.0
+    migration_lock_timeout_seconds: float = 5.0
+    migration_statement_timeout_seconds: float = 30.0
 
     def __post_init__(self) -> None:
         normalized = normalize_postgres_dsn(self.dsn)
@@ -30,10 +36,46 @@ class PostgresSettings:
             raise ValueError("connect_timeout_seconds must be between 1 and 60")
         if not 1 <= self.statement_timeout_seconds <= 60:
             raise ValueError("statement_timeout_seconds must be between 1 and 60")
+        if self.migrations_dsn is not None and not normalize_postgres_dsn(
+            self.migrations_dsn
+        ).startswith(("postgresql://", "postgres://")):
+            raise ValueError("migrations_dsn must use PostgreSQL")
+        if self.pool_size < 1:
+            raise ValueError("pool_size must be at least 1")
+        if self.pool_max_overflow < 0:
+            raise ValueError("pool_max_overflow must be non-negative")
+        if (
+            self.migration_lock_budget_seconds <= 0
+            or self.migration_lock_timeout_seconds <= 0
+            or self.migration_statement_timeout_seconds <= 0
+        ):
+            raise ValueError("migration timeouts must be positive")
+        if self.migration_lock_timeout_seconds >= self.migration_statement_timeout_seconds:
+            raise ValueError(
+                "migration_lock_timeout_seconds must be less than "
+                "migration_statement_timeout_seconds"
+            )
 
     @property
     def psycopg_dsn(self) -> str:
         return normalize_postgres_dsn(self.dsn)
+
+    @property
+    def effective_migrations_dsn(self) -> str:
+        return normalize_postgres_dsn(self.migrations_dsn or self.dsn)
+
+    def sqlalchemy_engine_kwargs(self) -> dict[str, Any]:
+        return {
+            "pool_size": self.pool_size,
+            "max_overflow": self.pool_max_overflow,
+            "pool_pre_ping": True,
+        }
+
+    def migration_pgoptions(self) -> str:
+        return (
+            f"-c lock_timeout={int(self.migration_lock_timeout_seconds * 1000)}ms "
+            f"-c statement_timeout={int(self.migration_statement_timeout_seconds * 1000)}ms"
+        )
 
 
 def normalize_postgres_dsn(dsn: str) -> str:
@@ -96,16 +138,20 @@ def _elapsed(started: float) -> float:
 def redact_postgres_error(detail: str, settings: PostgresSettings) -> str:
     """Redact DSN and password from PostgreSQL error strings."""
     redacted = detail
-    for dsn in sorted({settings.dsn, settings.psycopg_dsn}, key=len, reverse=True):
+    targets = {settings.dsn, settings.psycopg_dsn, settings.effective_migrations_dsn}
+    if settings.migrations_dsn:
+        targets.add(settings.migrations_dsn)
+    for dsn in sorted(targets, key=len, reverse=True):
         if dsn:
             redacted = redacted.replace(dsn, "<redacted-postgres-dsn>")
-    try:
-        password = urlsplit(settings.psycopg_dsn).password
-    except ValueError:
-        password = None
-    if password:
-        redacted = redacted.replace(password, "<redacted>")
-        redacted = redacted.replace(unquote(password), "<redacted>")
+    for dsn_to_check in (settings.psycopg_dsn, settings.effective_migrations_dsn):
+        try:
+            password = urlsplit(dsn_to_check).password
+        except ValueError:
+            password = None
+        if password:
+            redacted = redacted.replace(password, "<redacted>")
+            redacted = redacted.replace(unquote(password), "<redacted>")
     return redacted
 
 

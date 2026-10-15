@@ -187,3 +187,93 @@ def test_postgres_module_has_no_private_redact_error_alias() -> None:
     assert callable(postgres.redact_postgres_error)
     assert not hasattr(postgres, "_redact_error")
     assert "_redact_error" not in postgres.__all__
+
+
+def test_postgres_settings_extended_fields_defaults_and_helpers() -> None:
+    settings = PostgresSettings("postgresql://user:pass@db.internal:5432/app")
+    assert settings.migrations_dsn is None
+    assert settings.effective_migrations_dsn == "postgresql://user:pass@db.internal:5432/app"
+    assert settings.pool_size == 5
+    assert settings.pool_max_overflow == 10
+    assert settings.migration_lock_budget_seconds == 15.0
+    assert settings.migration_lock_timeout_seconds == 5.0
+    assert settings.migration_statement_timeout_seconds == 30.0
+    assert settings.sqlalchemy_engine_kwargs() == {
+        "pool_size": 5,
+        "max_overflow": 10,
+        "pool_pre_ping": True,
+    }
+    assert (
+        settings.migration_pgoptions()
+        == "-c lock_timeout=5000ms -c statement_timeout=30000ms"
+    )
+
+    custom = PostgresSettings(
+        dsn="postgresql://user:pass@db.internal:5432/app",
+        migrations_dsn="postgresql+asyncpg://admin:admin-secret@db.internal:5432/app",
+        pool_size=12,
+        pool_max_overflow=20,
+        migration_lock_budget_seconds=20.0,
+        migration_lock_timeout_seconds=8.0,
+        migration_statement_timeout_seconds=45.0,
+    )
+    assert custom.effective_migrations_dsn == "postgresql://admin:admin-secret@db.internal:5432/app"
+    assert "admin-secret" not in repr(custom)
+    assert custom.sqlalchemy_engine_kwargs() == {
+        "pool_size": 12,
+        "max_overflow": 20,
+        "pool_pre_ping": True,
+    }
+    assert (
+        custom.migration_pgoptions()
+        == "-c lock_timeout=8000ms -c statement_timeout=45000ms"
+    )
+
+
+def test_postgres_settings_extended_validation() -> None:
+    with pytest.raises(ValueError, match="migrations_dsn must use PostgreSQL"):
+        PostgresSettings(
+            dsn="postgresql://user:pass@db/app",
+            migrations_dsn="mysql://user:pass@db/app",
+        )
+
+    with pytest.raises(ValueError, match="pool_size must be at least 1"):
+        PostgresSettings(dsn="postgresql://user:pass@db/app", pool_size=0)
+
+    with pytest.raises(ValueError, match="pool_max_overflow must be non-negative"):
+        PostgresSettings(dsn="postgresql://user:pass@db/app", pool_max_overflow=-1)
+
+    with pytest.raises(ValueError, match="migration timeouts must be positive"):
+        PostgresSettings(
+            dsn="postgresql://user:pass@db/app",
+            migration_lock_budget_seconds=0,
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="migration_lock_timeout_seconds must be less than",
+    ):
+        PostgresSettings(
+            dsn="postgresql://user:pass@db/app",
+            migration_lock_timeout_seconds=30.0,
+            migration_statement_timeout_seconds=10.0,
+        )
+
+
+def test_redact_postgres_error_with_migrations_dsn() -> None:
+    from infra2_sdk.runtime.postgres import redact_postgres_error
+
+    settings = PostgresSettings(
+        dsn="postgresql://app_user:app_pass@db.internal:5432/app",
+        migrations_dsn="postgresql://migrator:mig_pass@db.internal:5432/app",
+    )
+    error = (
+        "Migration failed on postgresql://migrator:mig_pass@db.internal:5432/app "
+        "with password mig_pass and app dsn postgresql://app_user:app_pass@db.internal:5432/app"
+    )
+    redacted = redact_postgres_error(error, settings)
+    assert "mig_pass" not in redacted
+    assert "app_pass" not in redacted
+    assert "<redacted>" in redacted
+    assert "<redacted-postgres-dsn>" in redacted
+
