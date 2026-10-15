@@ -48,12 +48,8 @@ class DeployType(StrEnum):
     CANARY = "canary"
 
 
-class DeployState(StrEnum):
-    ACCEPTED = "accepted"
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    REJECTED = "rejected"
+#: Maximum age in seconds of a production deploy request at the receiver (24 min, #1253).
+PRODUCTION_REQUEST_MAX_AGE_SECONDS = 24 * 60
 
 
 @dataclass(frozen=True)
@@ -904,11 +900,11 @@ __all__ = [
     "DeployEvidence",
     "DeployOperation",
     "DeployRequest",
-    "DeployState",
     "DeployType",
     "EVIDENCE_POLICY_CONTRACT_VERSION",
     "HealthCheckResult",
     "PRODUCTION_EVIDENCE_POLICY_PATH",
+    "PRODUCTION_REQUEST_MAX_AGE_SECONDS",
     "ProductionEvidencePolicy",
     "ReceiverRun",
     "RunEvidenceExpectation",

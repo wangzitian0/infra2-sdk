@@ -39,6 +39,7 @@ from infra2_sdk.delivery import (
     make_stage_result,
 )
 from infra2_sdk.deploy import (
+    PRODUCTION_REQUEST_MAX_AGE_SECONDS,
     DeployOperation,
     DeployRequest,
     DeployType,
@@ -108,6 +109,7 @@ __all__ = [
     "DeployOperation",
     "DeployRequest",
     "DeployType",
+    "PRODUCTION_REQUEST_MAX_AGE_SECONDS",
     "canonical_json",
     "verify_production_evidence",
     # Deploy health polling

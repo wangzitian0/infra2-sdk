@@ -15,9 +15,7 @@ __all__ = [
     "PipelineStage",
     "StageResult",
     "StageStatus",
-    "acceleration_allowed",
     "classify_budget",
-    "detect_disagreement",
     "make_stage_result",
     "validate_stage_result",
 ]
@@ -214,37 +212,3 @@ def validate_stage_result(result: StageResult) -> None:
         raise ValueError("skipped stages must include skipped_reason or suppressed_reason")
     if result.current_stage_age_ms < 0:
         raise ValueError("current_stage_age_ms must be non-negative")
-
-
-def acceleration_allowed(result: StageResult) -> bool:
-    if result.status != StageStatus.SKIP:
-        return False
-    if result.environment == EnvironmentTier.PRODUCTION:
-        return False
-    if not (result.skipped_reason or result.suppressed_reason):
-        return False
-    return result.stage in {
-        PipelineStage.FULL_UT,
-        PipelineStage.INTEGRATION,
-        PipelineStage.REGRESSION_E2E,
-        PipelineStage.IMAGE_BUILD,
-        PipelineStage.PROVIDER_GATE,
-    }
-
-
-def detect_disagreement(results: list[StageResult]) -> DisagreementKind:
-    if _has_pass(results, PipelineStage.WATCHDOG) and _has_fail(
-        results, FailureDomain.TRAEFIK_PUBLIC_ROUTE
-    ):
-        return DisagreementKind.INTERNAL_HEALTH_PUBLIC_ROUTE
-    return DisagreementKind.NONE
-
-
-def _has_pass(results: list[StageResult], stage: PipelineStage) -> bool:
-    return any(result.stage == stage and result.status == StageStatus.PASS for result in results)
-
-
-def _has_fail(results: list[StageResult], domain: FailureDomain) -> bool:
-    return any(
-        result.status == StageStatus.FAIL and result.failure_domain == domain for result in results
-    )

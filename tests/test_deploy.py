@@ -10,10 +10,10 @@ import pytest
 
 from infra2_sdk.deploy import (
     INFRA_REPOSITORY,
+    PRODUCTION_REQUEST_MAX_AGE_SECONDS,
     DeployEvidence,
     DeployOperation,
     DeployRequest,
-    DeployState,
     DeployType,
     HealthCheckResult,
     ProductionEvidencePolicy,
@@ -133,16 +133,12 @@ def test_contract_version_fails_closed() -> None:
         request(contract_version=True)
 
 
-def test_deploy_state_values_are_stable() -> None:
-    # infra2 compares SyncAction.FAILED with DeployState.FAILED.value. The removed
-    # DeployStatus tests were the only SDK test of these values.
-    assert {state.name: state.value for state in DeployState} == {
-        "ACCEPTED": "accepted",
-        "RUNNING": "running",
-        "SUCCEEDED": "succeeded",
-        "FAILED": "failed",
-        "REJECTED": "rejected",
-    }
+def test_production_request_max_age_seconds_is_twenty_four_minutes() -> None:
+    import infra2_sdk
+
+    assert type(PRODUCTION_REQUEST_MAX_AGE_SECONDS) is int
+    assert PRODUCTION_REQUEST_MAX_AGE_SECONDS == 1440
+    assert infra2_sdk.PRODUCTION_REQUEST_MAX_AGE_SECONDS == 1440
 
 
 def test_source_sha_is_lowercase_and_full_length() -> None:

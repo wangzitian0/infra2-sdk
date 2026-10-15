@@ -163,7 +163,6 @@ LEFT_THE_PACKAGES = {
         "deploy": [
             "CONTRACT_VERSION",
             "DeployEvidence",
-            "DeployState",
             "HealthCheckResult",
             "ProductionEvidencePolicy",
             "fetch_production_evidence_policy",
@@ -231,7 +230,7 @@ def test_the_readme_lists_the_names_that_left_the_packages_by_module() -> None:
     count, grouped = _readme_left_the_packages()
 
     assert grouped == LEFT_THE_PACKAGES
-    assert count == len(_LEFT) == 27
+    assert count == len(_LEFT) == 26
 
 
 @pytest.mark.parametrize(

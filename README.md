@@ -25,7 +25,7 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.5.1"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.5.2"
 ```
 
 ## Modules
@@ -73,10 +73,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.5.1'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.5.2'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.5.1'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.5.2'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -206,7 +206,7 @@ Install the published wheel in a fresh Python 3.11+ environment:
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install \
-  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.5.1/infra2_sdk-3.5.1-py3-none-any.whl'
+  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.5.2/infra2_sdk-3.5.2-py3-none-any.whl'
 ```
 
 For a local connectivity exercise, start this server in another terminal:
@@ -439,8 +439,7 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   - `capacity.LEVELS`, `capacity.onepassword_capacity`, `capacity.OnePasswordCapacityReport` and
     `capacity.Runner`;
   - `delivery.PREVIEW_RELEVANT_STAGES`;
-  - `deploy.DeployStatus` (no replacement: build the record you need in your own code;
-    `DeployState` stays);
+  - `deploy.DeployStatus` (no replacement: build the record you need in your own code);
   - `refs.resolve_release_identity` (use `refs.resolve_image_ref` and
     `refs.resolve_image_digest`);
   - `refs.verify_runtime_identity` (no replacement: compare the two records in your own code);
@@ -530,20 +529,20 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
 - In v3.4.0, `init_service` raises `ValueError` for a blank `name` before it changes the app. A
   strict check that fails leaves no marker and no probe route. A failure while the providers
   start is the one exception. The `init_service` documentation describes it.
-- In v3.4.0, 27 names left `__all__` of `infra2_sdk` and `infra2_sdk.runtime` and are no longer
-  attributes of these packages (`RuntimeIdentity` left `infra2_sdk.runtime.__all__` in v3.5.1; five
-  other names that left `__all__` in v3.4.0 were deleted in v3.5.1 and are listed in the v3.5.1
-  note below). No consumer imports them from the package, and no recorded decision holds them. Six
+- In v3.4.0, 26 names left `__all__` of `infra2_sdk` and `infra2_sdk.runtime` and are no longer
+  attributes of these packages (`RuntimeIdentity` left `infra2_sdk.runtime.__all__` in v3.5.1; six
+  other names that left `__all__` in v3.4.0 were deleted in v3.5.1 and v3.5.2 and are listed in the
+  notes below). No consumer imports them from the package, and no recorded decision holds them. Five
   of them are imported from their module in test code. In infra2 these are `BudgetStatus`,
-  `DeployState`, `DisagreementKind`, `PipelineStage` and `validate_gate`. In finance_report and
-  truealpha it is `ProductionEvidencePolicy`. That import works as before. All 27 names below stay
-  defined in their modules. Import them from the module, for example
-  `from infra2_sdk.deploy import DeployState`:
+  `DisagreementKind`, `PipelineStage` and `validate_gate`. In finance_report and truealpha it is
+  `ProductionEvidencePolicy`. That import works as before. All 26 names below stay defined in their
+  modules. Import them from the module, for example
+  `from infra2_sdk.deploy import ProductionEvidencePolicy`:
   - in `infra2_sdk`:
     - `capacity`: `CapacityLimit`;
     - `ci`: `validate_gate`;
     - `delivery`: `BudgetStatus`, `DisagreementKind`, `PipelineStage`, `validate_stage_result`;
-    - `deploy`: `CONTRACT_VERSION`, `DeployEvidence`, `DeployState`, `HealthCheckResult`,
+    - `deploy`: `CONTRACT_VERSION`, `DeployEvidence`, `HealthCheckResult`,
       `ProductionEvidencePolicy`, `fetch_production_evidence_policy`;
     - `routing`: `DEFAULT_BASE_DOMAIN`;
     - `secrets`: `SecretsBackend`, `TokenStatus`;
@@ -564,6 +563,9 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   `runtime.environment.to_deploy_type`, `runtime.environment.APP_OWNED_TIERS`,
   `runtime.health.health_response`, and `runtime.otel.OtelSettings.from_identity`. In addition,
   `RuntimeIdentity` left `infra2_sdk.runtime.__all__` and stays in `infra2_sdk.runtime.identity`.
+- In v3.5.2, the SDK added `PRODUCTION_REQUEST_MAX_AGE_SECONDS = 1440` in `infra2_sdk.deploy` (and
+  `infra2_sdk.__all__`) and removed the remaining 3 zero-caller public symbols (`deploy.DeployState`,
+  `delivery.acceleration_allowed`, and `delivery.detect_disagreement`).
 - `tests/surface.json` records the reason for each name in `__all__`: a consumer imports it, the
   README documents it, or a recorded decision holds it.
 - `to_environment_tier` maps `DeployType` values to `EnvironmentTier`.

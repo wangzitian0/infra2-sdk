@@ -4,6 +4,18 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.5.2 - 2026-10-15
+
+### Added
+
+- Add `PRODUCTION_REQUEST_MAX_AGE_SECONDS = 1440` (`24 * 60`) in `infra2_sdk.deploy` and `infra2_sdk.__all__` as the single source of truth for the production deploy request and approval window ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102), [infra2#1253](https://github.com/wangzitian0/infra2/issues/1253)).
+
+### Removed
+
+- Remove 3 public symbols with zero production and test callers across `infra2`, `finance_report`, and `truealpha` ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)):
+  - `deploy.DeployState`;
+  - `delivery.acceleration_allowed` and `delivery.detect_disagreement`.
+
 ## 3.5.1 - 2026-10-14
 
 ### Changed

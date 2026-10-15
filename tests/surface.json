@@ -23,6 +23,7 @@
     "DeployOperation": "consumer: finance_report, infra2, truealpha",
     "DeployRequest": "consumer: finance_report, infra2, truealpha",
     "DeployType": "consumer: finance_report, infra2, truealpha",
+    "PRODUCTION_REQUEST_MAX_AGE_SECONDS": "consumer: finance_report, infra2",
     "canonical_json": "consumer: truealpha",
     "verify_production_evidence": "consumer: infra2",
     "poll_until_healthy": "consumer: finance_report, infra2, truealpha",
