@@ -25,7 +25,7 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.5.0"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.5.1"
 ```
 
 ## Modules
@@ -33,14 +33,13 @@ python -m pip install \
 | Module | Ownership |
 |---|---|
 | `infra2_sdk.capacity` | Capacity limits and readings, `evaluate` (a level per item: ok, warn, exceeded or unknown), and the collector for Cloudflare analytics |
-| `infra2_sdk.cli.scaffold` | Command-line interface for microservice scaffolding |
 | `infra2_sdk.ci` | Delivery-stage vocabulary and CI gate inventory validation |
 | `infra2_sdk.delivery` | Environment/stage evidence and failure taxonomy |
-| `infra2_sdk.deploy` | Deploy lifecycle wire contracts, dispatch client, health poller, and production evidence policies; CLI at `python -m infra2_sdk.deploy` |
+| `infra2_sdk.deploy` | Deploy lifecycle wire contracts, dispatch client, health poller, and production evidence policies |
 | `infra2_sdk.fastapi` | `init_service`: /livez, /readyz and /health routes for a FastAPI app, plus OTLP telemetry bootstrap |
 | `infra2_sdk.manifests` | Settings manifest driver (`--write`, `--check`, `--validate-env`) wrapping application configuration models |
 | `infra2_sdk.refs` | Git ref resolution, PR heads, registry image digests, remote ref queries, and credential redaction |
-| `infra2_sdk.routing` | Canonical domain and routing SSOT: `AppRoutePreference`, hostname resolution, and service URL resolution |
+| `infra2_sdk.routing` | Canonical domain and routing SSOT: `CANARY_SLOT`, hostname resolution, and service URL resolution |
 | `infra2_sdk.rules.compose` | Pure compose-file rules (memory ceilings, bare `:latest` image refs); CLI at `python -m infra2_sdk.rules` |
 | `infra2_sdk.runtime.config_schema` | JSON Schema 2020-12 and environment injection manifests |
 | `infra2_sdk.runtime.environment` | Canonical six-tier environment vocabulary, variable resolution, and contract definitions |
@@ -50,7 +49,7 @@ python -m pip install \
 | `infra2_sdk.runtime.otel` | Explicit OTLP provider bootstrap and env-configured samplers |
 | `infra2_sdk.runtime.postgres` | PostgreSQL DSN normalization and psycopg reachability probe |
 | `infra2_sdk.runtime.s3` | Standard boto3 S3 client, probe, and safe bucket/object primitives |
-| `infra2_sdk.scaffold` | Zero-compromise scaffolding engine producing compose, deployer, and entrypoint assets |
+| `infra2_sdk.scaffold` | Zero-compromise scaffolding engine producing compose, deployer, and entrypoint assets; CLI at `python -m infra2_sdk.scaffold` |
 | `infra2_sdk.secrets` | Secret-store adapters (Vault KV, 1Password), manifest-driven `SecretsResolver`, and Vault template renderers |
 | `infra2_sdk.transport` | Minimal injectable HTTP transport (`HttpTransport`, `HttpResponse`, `urllib_transport`) shared by adapters |
 
@@ -74,10 +73,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.5.0'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.5.1'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.5.0'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.5.1'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -123,6 +122,13 @@ opts out of the handler). Calling it again returns the active installation. With
 settings (standard `OTEL_TRACES_SAMPLER` names; `OTEL_TRACES_SAMPLER_ARG` for the ratio
 samplers); ambient `os.environ` is only read by `from_env()`.
 
+Pass `require_issued_identity=True` to `OtelSettings.from_env` or `init_service` when a
+deployment platform issues identity through `OTEL_RESOURCE_ATTRIBUTES`. When
+`require_issued_identity=True`, the SDK ignores `ENVIRONMENT`, `ENV`, and `APP_ENV` and derives the
+runtime tier from `deployment.environment.name`. When an OTLP endpoint is active, it requires
+`OTEL_SERVICE_NAME` and the four `REQUIRED_IDENTITY_ATTRIBUTES` (`deployment.environment.name`,
+`infra.service.id`, `service.version`, `infra.iac.ref`).
+
 ```python
 from infra2_sdk.runtime import ProbeResult, check_health
 from infra2_sdk.runtime.http import probe_http
@@ -157,7 +163,8 @@ its own provider chain. That chain reads variables such as `AWS_ACCESS_KEY_ID`,
 ```python
 import os
 
-from infra2_sdk.runtime import RuntimeIdentity, environment_from_env
+from infra2_sdk.runtime import environment_from_env
+from infra2_sdk.runtime.identity import RuntimeIdentity
 from infra2_sdk.runtime.postgres import PostgresSettings
 from infra2_sdk.runtime.s3 import S3Settings, create_s3_client
 
@@ -199,7 +206,7 @@ Install the published wheel in a fresh Python 3.11+ environment:
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install \
-  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.5.0/infra2_sdk-3.5.0-py3-none-any.whl'
+  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.5.1/infra2_sdk-3.5.1-py3-none-any.whl'
 ```
 
 For a local connectivity exercise, start this server in another terminal:
@@ -274,6 +281,11 @@ This single call registers three standardized endpoints and starts telemetry
 
 An `OTEL_EXPORTER_OTLP_ENDPOINT` that is not a valid http(s) URL also stops the start, unless `OTEL_SDK_DISABLED=true`. These checks run with or without an endpoint. `OTEL_SDK_DISABLED=true` does not skip the four checks above. `enable_otel=False` skips every telemetry check; the blank-name check always runs. The SDK does not read `OTEL_EXPORTER_OTLP_TIMEOUT`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_BSP_*` or `OTEL_EXPORTER_OTLP_PROTOCOL`, so it never checks them.
 
+When `require_issued_identity=True`, `init_service` ignores `ENVIRONMENT`, `ENV`, and `APP_ENV`
+and derives the tier from `deployment.environment.name`. When an OTLP endpoint is active, it
+requires `OTEL_SERVICE_NAME` and the four `REQUIRED_IDENTITY_ATTRIBUTES`
+(`deployment.environment.name`, `infra.service.id`, `service.version`, `infra.iac.ref`).
+
 One strict failure is different: a failure while the providers start, for example when the exporter package is not installed. It happens after the probe routes exist. A retry on the same app raises `RuntimeError: init_service was already called for this app`.
 
 With `strict_otel=False`, a telemetry problem never stops the service. A missing tier counts as `local_dev`. A problem is reported in one of two ways:
@@ -289,13 +301,11 @@ Generate standard microservice skeletons with a single command:
 
 ```bash
 # Generate pure 12-factor standalone service (.env, compose without Vault)
-infra2-scaffold my-service --profile standalone --db postgres --port 8000
+python -m infra2_sdk.scaffold my-service --profile standalone --db postgres --port 8000
 
 # Or generate Dokploy/Vault sidecar service for the infra2 cluster
-infra2-scaffold my-service --profile infra2 --project apps --db postgres --port 8000
+python -m infra2_sdk.scaffold my-service --profile infra2 --project apps --db postgres --port 8000
 ```
-
-Both `infra2-scaffold` and `infra2-sdk scaffold` CLI invocations are supported.
 
 Generated assets include:
 - `compose.yaml`: Hardened Docker Compose declaration with explicit memory ceilings and health check intervals.
@@ -415,8 +425,7 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   `ls_remote_rows`, `refs._redact_repo` is `redact_repo`.
 - In v2.4.0, the private module `infra2_sdk._transport` was removed; import `infra2_sdk.transport`.
 - In v3.3.0, the six compatibility shim modules were removed. Import the canonical module:
-  - `infra2_sdk.dispatch` and `infra2_sdk.deploy_health`: use `infra2_sdk.deploy`. The CLIs are
-    `python -m infra2_sdk.deploy dispatch` and `python -m infra2_sdk.deploy deploy-health`;
+  - `infra2_sdk.dispatch` and `infra2_sdk.deploy_health`: use `infra2_sdk.deploy`;
   - `infra2_sdk.release`: use `infra2_sdk.refs`;
   - `infra2_sdk.runtime.environ`: use `infra2_sdk.runtime.environment`;
   - `infra2_sdk.runtime.dependencies` and `infra2_sdk.runtime.probes`: use
@@ -521,34 +530,43 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
 - In v3.4.0, `init_service` raises `ValueError` for a blank `name` before it changes the app. A
   strict check that fails leaves no marker and no probe route. A failure while the providers
   start is the one exception. The `init_service` documentation describes it.
-- In v3.4.0, 31 names left `__all__` of `infra2_sdk` and `infra2_sdk.runtime` and are no longer
-  attributes of these packages. No consumer imports them from the package, and no recorded
-  decision holds them. Six of them are imported from their module in test code. In infra2 these
-  are `BudgetStatus`, `DeployState`, `DisagreementKind`, `PipelineStage` and `validate_gate`.
-  In finance_report and truealpha it is `ProductionEvidencePolicy`. That import works as
-  before. All 31 stay defined in their modules. Import them from the module, for example
+- In v3.4.0, 27 names left `__all__` of `infra2_sdk` and `infra2_sdk.runtime` and are no longer
+  attributes of these packages (`RuntimeIdentity` left `infra2_sdk.runtime.__all__` in v3.5.1; five
+  other names that left `__all__` in v3.4.0 were deleted in v3.5.1 and are listed in the v3.5.1
+  note below). No consumer imports them from the package, and no recorded decision holds them. Six
+  of them are imported from their module in test code. In infra2 these are `BudgetStatus`,
+  `DeployState`, `DisagreementKind`, `PipelineStage` and `validate_gate`. In finance_report and
+  truealpha it is `ProductionEvidencePolicy`. That import works as before. All 27 names below stay
+  defined in their modules. Import them from the module, for example
   `from infra2_sdk.deploy import DeployState`:
   - in `infra2_sdk`:
     - `capacity`: `CapacityLimit`;
     - `ci`: `validate_gate`;
     - `delivery`: `BudgetStatus`, `DisagreementKind`, `PipelineStage`, `validate_stage_result`;
     - `deploy`: `CONTRACT_VERSION`, `DeployEvidence`, `DeployState`, `HealthCheckResult`,
-      `ProductionEvidencePolicy`, `build_deploy_request`, `derive_release_evidence`,
-      `fetch_production_evidence_policy`;
-    - `routing`: `DEFAULT_BASE_DOMAIN`, `RouteEndpoint`;
+      `ProductionEvidencePolicy`, `fetch_production_evidence_policy`;
+    - `routing`: `DEFAULT_BASE_DOMAIN`;
     - `secrets`: `SecretsBackend`, `TokenStatus`;
   - in `infra2_sdk.runtime`:
     - `config_schema`: `EnvironmentValidation`, `validate_environment`;
-    - `environment`: `APP_OWNED_TIERS`, `EnvironmentConflictError`, `PLATFORM_OWNED_TIERS`,
+    - `environment`: `EnvironmentConflictError`, `PLATFORM_OWNED_TIERS`,
       `ResolvedEnvValue`, `RuntimeEnvSpec`, `UnknownEnvironmentPolicy`,
       `normalize_deployment_environment`, `resolve_env`, `strict_environment_from_env`;
-    - `health`: `HealthStatus`, `health_response`.
+    - `health`: `HealthStatus`;
+    - `identity`: `RuntimeIdentity`.
 - In v3.4.0, `infra2_sdk.__version__` left `infra2_sdk.__all__` and stays importable. The root
   package no longer exposes `version` and `PackageNotFoundError`, which it imported from
   `importlib.metadata`.
+- In v3.5.1, the SDK removed 12 zero-caller public symbols across `infra2`, `finance_report`, and
+  `truealpha`: `cli.scaffold.main` (and the `infra2_sdk.cli` package), `deploy.build_deploy_request`,
+  `deploy.derive_release_evidence`, `deploy.main`, `deploy.dispatch_main`,
+  `deploy.deploy_health_main`, `routing.RouteEndpoint`, `routing.AppRoutePreference`,
+  `runtime.environment.to_deploy_type`, `runtime.environment.APP_OWNED_TIERS`,
+  `runtime.health.health_response`, and `runtime.otel.OtelSettings.from_identity`. In addition,
+  `RuntimeIdentity` left `infra2_sdk.runtime.__all__` and stays in `infra2_sdk.runtime.identity`.
 - `tests/surface.json` records the reason for each name in `__all__`: a consumer imports it, the
   README documents it, or a recorded decision holds it.
-- `to_environment_tier` and `to_deploy_type` provide canonical bridging mappings across `EnvironmentTier` and `DeployType`.
+- `to_environment_tier` maps `DeployType` values to `EnvironmentTier`.
 - `CommandRunner` protocol is exported from `infra2_sdk.refs` for subprocess runner injection.
 
 ## Development

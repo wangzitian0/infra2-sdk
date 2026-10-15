@@ -178,13 +178,6 @@ class UnknownEnvironmentPolicy(StrEnum):
     PRODUCTION = "production"
 
 
-APP_OWNED_TIERS = frozenset(
-    {
-        EnvironmentTier.LOCAL_DEV,
-        EnvironmentTier.LOCAL_TEST,
-        EnvironmentTier.GITHUB_CI,
-    }
-)
 PLATFORM_OWNED_TIERS = frozenset(
     {
         EnvironmentTier.PREVIEW,
@@ -451,41 +444,7 @@ def normalize_deployment_environment(
     return resolved_tier.value
 
 
-def to_deploy_type(
-    value: str | EnvironmentTier | Any,
-    *,
-    preview_variant: str = "branch",
-) -> Any:
-    """Map an environment representation to canonical DeployType."""
-    from infra2_sdk.deploy import DeployType
-
-    if isinstance(value, DeployType):
-        return value
-    if isinstance(value, str):
-        cleaned = value.strip().lower()
-        try:
-            return DeployType(cleaned)
-        except ValueError:
-            pass
-    tier = to_environment_tier(value)
-    if tier is EnvironmentTier.STAGING:
-        return DeployType.STAGING
-    if tier is EnvironmentTier.PRODUCTION:
-        return DeployType.PRODUCTION
-    if tier is EnvironmentTier.PREVIEW:
-        variant = preview_variant.lower().strip()
-        if variant == "pr":
-            return DeployType.PREVIEW_PR
-        if variant == "commit":
-            return DeployType.PREVIEW_COMMIT
-        if variant == "tag":
-            return DeployType.PREVIEW_TAG
-        return DeployType.PREVIEW_BRANCH
-    raise ValueError(f"cannot map non-deployable tier {tier} to DeployType")
-
-
 __all__ = [
-    "APP_OWNED_TIERS",
     "CANARY_SLOT",
     "EnvironmentConflictError",
     "EnvironmentTier",
@@ -507,6 +466,5 @@ __all__ = [
     "runtime_env_contract",
     "runtime_env_spec",
     "strict_environment_from_env",
-    "to_deploy_type",
     "to_environment_tier",
 ]

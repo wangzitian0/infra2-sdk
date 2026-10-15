@@ -15,9 +15,9 @@ from infra2_sdk.runtime.health import (
     DependencyStatus,
     HealthStatus,
     ProbeResult,
+    _health_response,
     _run_sync_probe,
     check_health,
-    health_response,
     run_probes,
 )
 
@@ -200,17 +200,17 @@ async def test_misuse_raises_instead_of_reporting_a_green() -> None:
 def test_health_response_summarizes_finished_probe_results_synchronously() -> None:
     present = ProbeResult("database", DependencyStatus.PRESENT, "ok", 2.0)
     absent = ProbeResult("cache", DependencyStatus.ABSENT, "refused", 3.0)
-    assert health_response([present], required={"database"})[0] == 200
-    code, body = health_response([present, absent], required={"database", "cache"})
+    assert _health_response([present], required={"database"})[0] == 200
+    code, body = _health_response([present, absent], required={"database", "cache"})
     assert (code, body["status"], body["reasons"]) == (503, "unhealthy", ["cache: refused"])
     with pytest.raises(ValueError, match="duplicate probe result name"):
-        health_response([present, present], required=set())
+        _health_response([present, present], required=set())
     with pytest.raises(ValueError, match="nothing to report on"):
-        health_response([], required=[])
+        _health_response([], required=[])
 
 
-def test_an_absent_result_without_detail_still_explains_itself() -> None:
-    _, body = health_response([ProbeResult("database", DependencyStatus.ABSENT)], required=set())
+async def test_an_absent_result_without_detail_still_explains_itself() -> None:
+    _, body = await check_health([Check("database", present=False, detail="")], required=set())
     assert body["reasons"] == ["database: absent"]
 
 
@@ -310,11 +310,23 @@ class _SlowCheck:
         return ProbeResult(self.name, DependencyStatus.PRESENT)
 
 
-class _SlowSyncCheck:
+class _BlockedSyncCheck:
     name = "slow-sync"
 
-    def probe(self):
-        time.sleep(0.25)
+    def __init__(
+        self,
+        started: threading.Event,
+        release: threading.Event,
+        finished: threading.Event,
+    ) -> None:
+        self._started = started
+        self._release = release
+        self._finished = finished
+
+    def probe(self) -> ProbeResult:
+        self._started.set()
+        self._release.wait(timeout=1.0)
+        self._finished.set()
         return ProbeResult(self.name, DependencyStatus.PRESENT)
 
 
@@ -347,12 +359,20 @@ async def test_runner_supports_sync_async_errors_and_timeouts() -> None:
 
 
 def test_sync_probe_timeout_does_not_delay_cli_event_loop_shutdown() -> None:
-    started = time.perf_counter()
-    results = asyncio.run(run_probes((_SlowSyncCheck(),), timeout_seconds=0.01))
-    elapsed = time.perf_counter() - started
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    check = _BlockedSyncCheck(started, release, finished)
+    try:
+        results = asyncio.run(run_probes((check,), timeout_seconds=0.01))
+        assert started.wait(timeout=1.0)
+        assert not finished.is_set()
+    finally:
+        release.set()
+        if started.is_set():
+            assert finished.wait(timeout=1.0)
     assert results[0].status is DependencyStatus.ABSENT
     assert "timed out" in results[0].detail
-    assert elapsed < 0.1
 
 
 async def test_sync_probe_preserves_caller_context() -> None:

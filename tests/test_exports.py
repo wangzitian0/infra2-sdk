@@ -189,9 +189,6 @@ HELD = {
     "RUNTIME_ENV_CONTRACT_VERSION": "held: issue #102 decision 7 (adopt, do not delete)",
     "RUNTIME_ENV_SPECS": "held: issue #102 decision 7 (adopt, do not delete)",
     "runtime_env_contract": "held: issue #102 decision 7 (adopt, do not delete)",
-    "RuntimeIdentity": (
-        "held: infra2 docs/ssot/core.environments.md identity decision (not adopted yet)"
-    ),
 }
 
 

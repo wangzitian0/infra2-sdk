@@ -3,7 +3,6 @@ from typing import get_type_hints
 import pytest
 
 from infra2_sdk.runtime.environment import (
-    APP_OWNED_TIERS,
     PLATFORM_OWNED_TIERS,
     RUNTIME_ENV_CONTRACT_VERSION,
     RUNTIME_ENV_SPECS,
@@ -57,9 +56,12 @@ def test_ci_and_unknown_policies_are_explicit() -> None:
         resolve_environment_tier(1)  # type: ignore[arg-type]
 
 
-def test_ownership_sets_cover_every_tier_once() -> None:
-    assert APP_OWNED_TIERS.isdisjoint(PLATFORM_OWNED_TIERS)
-    assert frozenset(EnvironmentTier) == APP_OWNED_TIERS | PLATFORM_OWNED_TIERS
+def test_platform_owned_tiers_are_the_three_deployed_tiers() -> None:
+    assert set(PLATFORM_OWNED_TIERS) == {
+        EnvironmentTier.PREVIEW,
+        EnvironmentTier.STAGING,
+        EnvironmentTier.PRODUCTION,
+    }
 
 
 @pytest.mark.parametrize(
@@ -136,31 +138,6 @@ def test_to_environment_tier_conversions() -> None:
         to_environment_tier(123)
     with pytest.raises(ValueError, match="unknown environment"):
         to_environment_tier("unknown_val")
-
-
-def test_to_deploy_type_conversions() -> None:
-    from infra2_sdk.deploy import DeployType
-    from infra2_sdk.runtime.environment import to_deploy_type
-
-    assert to_deploy_type(EnvironmentTier.STAGING) is DeployType.STAGING
-    assert to_deploy_type(EnvironmentTier.PRODUCTION) is DeployType.PRODUCTION
-    assert to_deploy_type(EnvironmentTier.PREVIEW) is DeployType.PREVIEW_BRANCH
-    assert to_deploy_type(EnvironmentTier.PREVIEW, preview_variant="pr") is DeployType.PREVIEW_PR
-    assert (
-        to_deploy_type(EnvironmentTier.PREVIEW, preview_variant="commit")
-        is DeployType.PREVIEW_COMMIT
-    )
-    assert to_deploy_type(EnvironmentTier.PREVIEW, preview_variant="tag") is DeployType.PREVIEW_TAG
-    assert to_deploy_type(DeployType.STAGING) is DeployType.STAGING
-    assert to_deploy_type("preview/commit") is DeployType.PREVIEW_COMMIT
-    assert to_deploy_type("canary") is DeployType.CANARY
-    assert to_deploy_type("prod") is DeployType.PRODUCTION
-    assert to_deploy_type("staging") is DeployType.STAGING
-
-    with pytest.raises(ValueError, match="cannot map non-deployable tier"):
-        to_deploy_type(EnvironmentTier.LOCAL_DEV)
-    with pytest.raises(ValueError, match="cannot map non-deployable tier"):
-        to_deploy_type(EnvironmentTier.GITHUB_CI)
 
 
 def test_the_canary_slot_is_a_preview_tier_and_routing_shares_the_definition() -> None:

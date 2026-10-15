@@ -293,20 +293,11 @@ def test_scaffold_requirement_rejects_a_version_without_a_release_part(
         generate_requirements_txt(db="none")
 
 
-def test_scaffold_cli_subcommand_forwarding_and_wrapper(tmp_path: Path):
-    from infra2_sdk.cli.scaffold import main as cli_main
-
-    # 1. Forwarded 'scaffold' subcommand
+def test_scaffold_cli_subcommand_forwarding(tmp_path: Path):
     out1 = tmp_path / "sub_test"
     code1 = main(["scaffold", "forwarded-svc", "--out-dir", str(out1), "--profile", "standalone"])
     assert code1 == 0
     assert (out1 / ".env.example").exists()
-
-    # 2. CLI wrapper execution
-    out2 = tmp_path / "cli_wrapper_test"
-    code2 = cli_main(["scaffold", "wrapped-svc", "--out-dir", str(out2)])
-    assert code2 == 0
-    assert (out2 / "compose.yaml").exists()
 
 
 def test_scaffold_secrets_template_comes_from_the_sdk_renderer(tmp_path: Path):

@@ -27,7 +27,6 @@ from infra2_sdk.runtime.environment import (
     resolve_runtime_env,
     runtime_env_contract,
     runtime_env_spec,
-    to_deploy_type,
     to_environment_tier,
 )
 from infra2_sdk.runtime.health import (
@@ -44,9 +43,6 @@ from infra2_sdk.runtime.http import (
     HttpClientSettings,
     create_http_client,
     probe_http,
-)
-from infra2_sdk.runtime.identity import (
-    RuntimeIdentity,
 )
 from infra2_sdk.runtime.otel import (
     OtelSettings,
@@ -84,7 +80,6 @@ __all__ = [
     "RuntimeEnvironment",
     "environment_from_env",
     "resolve_environment_tier",
-    "to_deploy_type",
     "to_environment_tier",
     # Environment variables
     "RUNTIME_ENV_CONTRACT_VERSION",
@@ -93,8 +88,6 @@ __all__ = [
     "resolve_runtime_env",
     "runtime_env_contract",
     "runtime_env_spec",
-    # Identity
-    "RuntimeIdentity",
     # Config schema
     "EnvironmentField",
     "EnvironmentManifest",

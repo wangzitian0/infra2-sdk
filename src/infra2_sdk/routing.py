@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 
 from infra2_sdk.runtime.environment import (
     CANARY_SLOT,
@@ -16,47 +15,10 @@ from infra2_sdk.runtime.environment import (
 DEFAULT_BASE_DOMAIN = "zitian.party"
 
 _SLUG_RE = re.compile(r"\A[a-z0-9][a-z0-9_-]*\Z")
-_HOSTNAME_RE = re.compile(
-    r"\A[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\Z"
-)
-
-
-@dataclass(frozen=True)
-class RouteEndpoint:
-    """One routing endpoint exposed by a service compose."""
-
-    port: int
-    path: str = "/"
-    service_name: str | None = None
-
-    def __post_init__(self) -> None:
-        if not (1 <= self.port <= 65535):
-            raise ValueError(f"port must be between 1 and 65535, got {self.port}")
-        if not self.path.startswith("/"):
-            raise ValueError(f"path must start with '/', got {self.path!r}")
-
-
-@dataclass(frozen=True)
-class AppRoutePreference:
-    """App-level routing preference declared by an application or service."""
-
-    slug: str
-    endpoints: tuple[RouteEndpoint, ...] = (RouteEndpoint(port=3000),)
-    custom_prod_domain: str | None = None
-
-    def __post_init__(self) -> None:
-        if not _SLUG_RE.match(self.slug):
-            raise ValueError(f"invalid slug {self.slug!r}: must match {_SLUG_RE.pattern}")
-        if not self.endpoints:
-            raise ValueError("endpoints must not be empty")
-        if self.custom_prod_domain:
-            cleaned = self.custom_prod_domain.strip().lower()
-            if not _HOSTNAME_RE.match(cleaned):
-                raise ValueError(f"invalid custom_prod_domain {self.custom_prod_domain!r}")
 
 
 def resolve_app_hostname(
-    slug_or_preference: str | AppRoutePreference,
+    slug: str,
     tier: EnvironmentTier | str,
     *,
     base_domain: str = DEFAULT_BASE_DOMAIN,
@@ -80,14 +42,9 @@ def resolve_app_hostname(
          integer PR number as ``slot_id``): ``f"{slug}-{alias}.{base_domain}"``
        - Other slot: ``f"{slug}-preview-{slot_id}.{base_domain}"``
     """
-    if isinstance(slug_or_preference, AppRoutePreference):
-        slug = slug_or_preference.slug
-        if custom_prod_domain is None:
-            custom_prod_domain = slug_or_preference.custom_prod_domain
-    else:
-        slug = str(slug_or_preference).strip().lower()
-        if not _SLUG_RE.match(slug):
-            raise ValueError(f"invalid slug {slug!r}")
+    slug = str(slug).strip().lower()
+    if not _SLUG_RE.match(slug):
+        raise ValueError(f"invalid slug {slug!r}")
 
     # Check for canary
     raw_tier = str(tier).strip().lower() if not isinstance(tier, EnvironmentTier) else tier.value
@@ -127,7 +84,7 @@ def resolve_app_hostname(
 
 
 def resolve_service_url(
-    slug_or_preference: str | AppRoutePreference,
+    slug: str,
     tier: EnvironmentTier | str,
     *,
     base_domain: str = DEFAULT_BASE_DOMAIN,
@@ -138,7 +95,7 @@ def resolve_service_url(
 ) -> str:
     """Compute the concrete public URL for a service endpoint."""
     host = resolve_app_hostname(
-        slug_or_preference,
+        slug,
         tier,
         base_domain=base_domain,
         slot_id=slot_id,
@@ -146,3 +103,11 @@ def resolve_service_url(
     )
     clean_path = path if path.startswith("/") else f"/{path}"
     return f"{scheme}://{host}{clean_path}"
+
+
+__all__ = [
+    "CANARY_SLOT",
+    "DEFAULT_BASE_DOMAIN",
+    "resolve_app_hostname",
+    "resolve_service_url",
+]
