@@ -222,15 +222,16 @@ def test_runtime_env_registry_is_versioned_unique_and_platform_neutral() -> None
         assert forbidden not in serialized
 
 
-def test_contract_version_is_two_and_lists_ten_variables() -> None:
+def test_contract_version_is_two_because_3_4_0_removed_20_variables() -> None:
     # Version 1 listed 34 variables. A receiver that requires version 1 must reject the
-    # version 2 document.
+    # 3.4.0 document. An additive variable keeps version 2: then change this count and the
+    # README compatibility note together.
     # A receiver must require an integer. The value 2.0 equals 2 and is not an integer.
     assert type(RUNTIME_ENV_CONTRACT_VERSION) is int and RUNTIME_ENV_CONTRACT_VERSION == 2
     contract = runtime_env_contract()
     assert type(contract["contract_version"]) is int
     assert contract["contract_version"] == RUNTIME_ENV_CONTRACT_VERSION
-    assert len(contract["variables"]) == 10
+    assert len(contract["variables"]) == 14
 
 
 def test_typed_env_helper_accepts_registry_keys_in_the_public_contract() -> None:

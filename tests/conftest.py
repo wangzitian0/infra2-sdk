@@ -75,7 +75,7 @@ def resolver_calls(monkeypatch) -> list[dict]:
         return real(*args, **kwargs)
 
     holders = _patch_everywhere(monkeypatch, "_resolve_service_identity", counting)
-    assert holders >= 2, "environment and otel must hold the resolver: nothing is counted"
+    assert holders >= 3, "environment, otel and identity must hold the resolver: nothing is counted"
     return calls
 
 
@@ -92,7 +92,7 @@ def environment_reads(monkeypatch) -> list[str]:
         return real(environ, key, **kwargs)
 
     holders = _patch_everywhere(monkeypatch, "resolve_runtime_env", recording)
-    assert holders >= 2, "no module holds resolve_runtime_env: nothing is counted"
+    assert holders >= 3, "no module holds resolve_runtime_env: nothing is counted"
     return reads
 
 

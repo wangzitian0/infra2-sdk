@@ -47,8 +47,6 @@ EXPECTED_REMOVED_NAMES = frozenset(
         "infra2_sdk.runtime.http:retryable_request",
         "infra2_sdk.runtime.http:parse_retry_after",
         "infra2_sdk.runtime.http:HttpCheck",
-        "infra2_sdk.runtime.identity:RuntimeIdentity",
-        "infra2_sdk.runtime.identity:canonical_sha256",
         "infra2_sdk.runtime.identity:runtime_identity_fingerprint",
         "infra2_sdk.runtime.otel:inject_trace_context",
         "infra2_sdk.runtime.otel:extract_trace_context",
@@ -100,10 +98,6 @@ EXPECTED_REMOVED_ENV_MEMBERS = frozenset(
         "DATABASE_URL",
         "DATABASE_CONNECT_TIMEOUT_SECONDS",
         "DATABASE_STATEMENT_TIMEOUT_SECONDS",
-        "GIT_COMMIT_SHA",
-        "IMAGE_DIGEST",
-        "CONFIGURATION_SHA256",
-        "RELEASE_ID",
     ]
 )
 EXPECTED_REMOVED_ENV_NAMES = frozenset(
@@ -137,10 +131,6 @@ EXPECTED_REMOVED_ENV_NAMES = frozenset(
         "DATABASE_CONNECT_TIMEOUT_SECONDS",
         "DATABASE_STATEMENT_TIMEOUT_SECONDS",
         "SERVICE_NAME",
-        "GIT_COMMIT_SHA",
-        "IMAGE_DIGEST",
-        "CONFIGURATION_SHA256",
-        "RELEASE_ID",
     ]
 )
 
@@ -153,18 +143,15 @@ ALLOWED_REUSE: dict[tuple[str, str], str] = {
         "secrets.py defines its own type alias for subprocess.run, unrelated to the "
         "removed alias capacity.Runner"
     ),
-    ("infra2_sdk._wire", "canonical_sha256"): (
-        "_wire.py is the private module that owns canonical_sha256 for runtime.config_schema"
-    ),
 }
 # A removed module has no owner to look into. Its names are checked by the other tests.
 _LIVE_OWNER = [pair for pair in REMOVED_NAMES if pair[0] not in REMOVED_MODULES]
 
 
 def test_removed_name_lists_have_unique_entries() -> None:
-    assert len(REMOVED_NAMES) == len(set(REMOVED_NAMES)) == 42
-    assert len(REMOVED_ENV_MEMBERS) == len(set(REMOVED_ENV_MEMBERS)) == 24
-    assert len(REMOVED_ENV_NAMES) == len(set(REMOVED_ENV_NAMES)) == 33
+    assert len(REMOVED_NAMES) == len(set(REMOVED_NAMES)) == 40
+    assert len(REMOVED_ENV_MEMBERS) == len(set(REMOVED_ENV_MEMBERS)) == 20
+    assert len(REMOVED_ENV_NAMES) == len(set(REMOVED_ENV_NAMES)) == 29
 
 
 def test_removed_name_lists_equal_the_independent_literal_sets() -> None:
@@ -301,7 +288,7 @@ def test_the_stale_reuse_check_reports_each_kind_of_problem() -> None:
 def test_the_removed_simple_names_are_the_undotted_entries() -> None:
     assert _REMOVED_SIMPLE_NAMES, "no removed simple name: the module check would check nothing"
     assert all("." not in name for name in _REMOVED_SIMPLE_NAMES)
-    assert len(_REMOVED_SIMPLE_NAMES) == 39
+    assert len(_REMOVED_SIMPLE_NAMES) == 37
 
 
 def _strings(value: object):
@@ -338,10 +325,10 @@ def test_removed_environment_name_is_not_in_the_contract(name: str) -> None:
 @pytest.mark.parametrize(
     ("smoke", "attribute", "expected"),
     [
-        ("smoke_package_data", "REMOVED_MODULES", 9),
-        ("smoke_removed_names", "REMOVED_NAMES", 42),
-        ("smoke_removed_names", "REMOVED_ENV_MEMBERS", 24),
-        ("smoke_removed_names", "REMOVED_ENV_NAMES", 33),
+        ("smoke_package_data", "REMOVED_MODULES", 8),
+        ("smoke_removed_names", "REMOVED_NAMES", 40),
+        ("smoke_removed_names", "REMOVED_ENV_MEMBERS", 20),
+        ("smoke_removed_names", "REMOVED_ENV_NAMES", 29),
     ],
 )
 def test_the_wheel_smoke_names_the_list_that_changed_size(

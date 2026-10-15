@@ -16,7 +16,7 @@ from wheel_smoke import REMOVED_MODULES
 import infra2_sdk
 import infra2_sdk.runtime
 
-# Second, independent copy of the nine names. It is the oracle for the list imported above.
+# Second, independent copy of the eight names. It is the oracle for the list imported above.
 EXPECTED_REMOVED_MODULES = frozenset(
     {
         "infra2_sdk.cli",
@@ -25,20 +25,19 @@ EXPECTED_REMOVED_MODULES = frozenset(
         "infra2_sdk.release",
         "infra2_sdk.runtime.environ",
         "infra2_sdk.runtime.dependencies",
-        "infra2_sdk.runtime.identity",
         "infra2_sdk.runtime.probes",
         "infra2_sdk.snapshot",
     }
 )
 
 
-def test_removed_module_list_has_nine_unique_names() -> None:
-    assert len(REMOVED_MODULES) == 9
-    assert len(set(REMOVED_MODULES)) == 9
+def test_removed_module_list_has_eight_unique_names() -> None:
+    assert len(REMOVED_MODULES) == 8
+    assert len(set(REMOVED_MODULES)) == 8
 
 
 def test_removed_module_list_equals_the_independent_literal_set() -> None:
-    assert len(EXPECTED_REMOVED_MODULES) == 9
+    assert len(EXPECTED_REMOVED_MODULES) == 8
     assert set(REMOVED_MODULES) == EXPECTED_REMOVED_MODULES
 
 

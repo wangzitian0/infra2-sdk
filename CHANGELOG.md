@@ -10,17 +10,11 @@ backfill from the merged pull requests.
 
 - Add `PRODUCTION_REQUEST_MAX_AGE_SECONDS = 1440` (`24 * 60`) in `infra2_sdk.deploy` and `infra2_sdk.__all__` as the single source of truth for the production deploy request and approval window ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102), [infra2#1253](https://github.com/wangzitian0/infra2/issues/1253)).
 
-### Changed
-
-- `runtime_env_contract()` lists 10 variables (was 14) and keeps `contract_version` 2. `RuntimeEnvKey` has 10 members ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)).
-
 ### Removed
 
-- Remove the remaining 5 public symbols with zero production and test callers across `infra2`, `finance_report`, and `truealpha` ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)):
+- Remove 3 public symbols with zero production and test callers across `infra2`, `finance_report`, and `truealpha` ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)):
   - `deploy.DeployState`;
-  - `delivery.acceleration_allowed` and `delivery.detect_disagreement`;
-  - `runtime.identity.RuntimeIdentity` and `runtime.identity.canonical_sha256` (and the `infra2_sdk.runtime.identity` module).
-- Remove the 4 `RuntimeEnvKey` members that only `RuntimeIdentity.from_env` read (`GIT_COMMIT_SHA`, `IMAGE_DIGEST`, `CONFIGURATION_SHA256`, `RELEASE_ID`) from `RuntimeEnvKey` and `runtime_env_contract()` ([#102](https://github.com/wangzitian0/infra2-sdk/issues/102)).
+  - `delivery.acceleration_allowed` and `delivery.detect_disagreement`.
 
 ## 3.5.1 - 2026-10-14
 

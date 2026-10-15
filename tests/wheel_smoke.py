@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
 
-# Modules removed in 3.3.0 (#90), 3.4.0 (#102), 3.5.1 (#108), and 3.5.2 (#102).
+# Modules removed in 3.3.0 (#90), 3.4.0 (#102), and 3.5.1 (#108).
 # One frozen list: tests/test_removed_modules.py imports it.
 REMOVED_MODULES = (
     "infra2_sdk.cli",
@@ -21,7 +21,6 @@ REMOVED_MODULES = (
     "infra2_sdk.release",
     "infra2_sdk.runtime.environ",
     "infra2_sdk.runtime.dependencies",
-    "infra2_sdk.runtime.identity",
     "infra2_sdk.runtime.probes",
     "infra2_sdk.snapshot",  # 3.4.0: no user was left after infra2 #1206
 )
@@ -42,8 +41,6 @@ REMOVED_NAMES = (
     ("infra2_sdk.runtime.http", "retryable_request"),
     ("infra2_sdk.runtime.http", "parse_retry_after"),
     ("infra2_sdk.runtime.http", "HttpCheck"),
-    ("infra2_sdk.runtime.identity", "RuntimeIdentity"),
-    ("infra2_sdk.runtime.identity", "canonical_sha256"),
     ("infra2_sdk.runtime.identity", "runtime_identity_fingerprint"),
     ("infra2_sdk.runtime.otel", "inject_trace_context"),
     ("infra2_sdk.runtime.otel", "extract_trace_context"),
@@ -78,7 +75,7 @@ REMOVED_NAMES = (
     ("infra2_sdk.snapshot", "SnapshotProducer"),
 )
 
-# RuntimeEnvKey members removed in 3.4.0 and 3.5.2 (issue #102).
+# RuntimeEnvKey members removed in 3.4.0 (issue #102, decision 2).
 REMOVED_ENV_MEMBERS = (
     "HTTP_TIMEOUT_SECONDS",
     "HTTP_CONNECT_TIMEOUT_SECONDS",
@@ -100,14 +97,10 @@ REMOVED_ENV_MEMBERS = (
     "DATABASE_URL",
     "DATABASE_CONNECT_TIMEOUT_SECONDS",
     "DATABASE_STATEMENT_TIMEOUT_SECONDS",
-    "GIT_COMMIT_SHA",
-    "IMAGE_DIGEST",
-    "CONFIGURATION_SHA256",
-    "RELEASE_ID",
 )
 
-# Environment variable names removed from runtime_env_contract() in 3.4.0 and 3.5.2 (issue #102):
-# the canonical names, their aliases, and the dead alias SERVICE_NAME.
+# Environment variable names removed from runtime_env_contract() in 3.4.0 (issue #102,
+# decisions 2 and 3): the canonical names, their aliases, and the dead alias SERVICE_NAME.
 REMOVED_ENV_NAMES = (
     "HTTP_TIMEOUT_SECONDS",
     "HTTP_CONNECT_TIMEOUT_SECONDS",
@@ -138,10 +131,6 @@ REMOVED_ENV_NAMES = (
     "DATABASE_CONNECT_TIMEOUT_SECONDS",
     "DATABASE_STATEMENT_TIMEOUT_SECONDS",
     "SERVICE_NAME",
-    "GIT_COMMIT_SHA",
-    "IMAGE_DIGEST",
-    "CONFIGURATION_SHA256",
-    "RELEASE_ID",
 )
 
 
@@ -182,8 +171,8 @@ def smoke_package_data() -> None:
         pass
     else:
         raise AssertionError("infra2_sdk.images was removed in 3.0.0 and must not be importable")
-    assert len(REMOVED_MODULES) == 9, (
-        f"REMOVED_MODULES has {len(REMOVED_MODULES)} entries, expected 9"
+    assert len(REMOVED_MODULES) == 8, (
+        f"REMOVED_MODULES has {len(REMOVED_MODULES)} entries, expected 8"
     )
     for module in REMOVED_MODULES:
         try:
@@ -201,9 +190,9 @@ def smoke_removed_names() -> None:
     import infra2_sdk.runtime
     from infra2_sdk.runtime.environment import RuntimeEnvKey, runtime_env_contract
 
-    assert len(REMOVED_NAMES) == 42 and len(set(REMOVED_NAMES)) == 42, (
+    assert len(REMOVED_NAMES) == 40 and len(set(REMOVED_NAMES)) == 40, (
         f"REMOVED_NAMES has {len(REMOVED_NAMES)} entries ({len(set(REMOVED_NAMES))} unique), "
-        "expected 42"
+        "expected 40"
     )
     for module, dotted in REMOVED_NAMES:
         *parents, leaf = dotted.split(".")
@@ -217,9 +206,9 @@ def smoke_removed_names() -> None:
                 assert not hasattr(package, leaf), f"{package.__name__}.{leaf} was removed"
                 assert leaf not in package.__all__, f"{package.__name__}.__all__ lists {leaf}"
 
-    assert len(REMOVED_ENV_MEMBERS) == 24 and len(REMOVED_ENV_NAMES) == 33, (
-        f"REMOVED_ENV_MEMBERS has {len(REMOVED_ENV_MEMBERS)} entries, expected 24; "
-        f"REMOVED_ENV_NAMES has {len(REMOVED_ENV_NAMES)} entries, expected 33"
+    assert len(REMOVED_ENV_MEMBERS) == 20 and len(REMOVED_ENV_NAMES) == 29, (
+        f"REMOVED_ENV_MEMBERS has {len(REMOVED_ENV_MEMBERS)} entries, expected 20; "
+        f"REMOVED_ENV_NAMES has {len(REMOVED_ENV_NAMES)} entries, expected 29"
     )
     present = [member for member in REMOVED_ENV_MEMBERS if hasattr(RuntimeEnvKey, member)]
     assert not present, f"RuntimeEnvKey still has removed members: {present}"
@@ -527,9 +516,9 @@ def smoke_all() -> None:
     import opentelemetry.sdk.trace  # noqa: F401
     import psycopg  # noqa: F401
 
-    from infra2_sdk.runtime.otel import OtelSettings
+    from infra2_sdk.runtime.identity import RuntimeIdentity
 
-    assert OtelSettings.from_env({"OTEL_SERVICE_NAME": "all-smoke"}).service_name == "all-smoke"
+    assert RuntimeIdentity.from_env({"OTEL_SERVICE_NAME": "all-smoke"}).service_name == "all-smoke"
 
 
 SMOKES = {
