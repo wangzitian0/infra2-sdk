@@ -425,8 +425,7 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   `ls_remote_rows`, `refs._redact_repo` is `redact_repo`.
 - In v2.4.0, the private module `infra2_sdk._transport` was removed; import `infra2_sdk.transport`.
 - In v3.3.0, the six compatibility shim modules were removed. Import the canonical module:
-  - `infra2_sdk.dispatch` and `infra2_sdk.deploy_health`: use `infra2_sdk.deploy`. The CLIs are
-    `python -m infra2_sdk.deploy dispatch` and `python -m infra2_sdk.deploy deploy-health`;
+  - `infra2_sdk.dispatch` and `infra2_sdk.deploy_health`: use `infra2_sdk.deploy`;
   - `infra2_sdk.release`: use `infra2_sdk.refs`;
   - `infra2_sdk.runtime.environ`: use `infra2_sdk.runtime.environment`;
   - `infra2_sdk.runtime.dependencies` and `infra2_sdk.runtime.probes`: use
