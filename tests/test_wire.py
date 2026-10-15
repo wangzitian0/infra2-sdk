@@ -54,9 +54,9 @@ def test_json_schema_dialect_has_one_definition_in_the_source_tree() -> None:
 
 
 def test_json_schema_dialect_is_the_same_value_in_every_schema_emitter() -> None:
-    from infra2_sdk.runtime import config_schema, health, identity
+    from infra2_sdk.runtime import config_schema, health
 
-    for module in (config_schema, health, identity):
+    for module in (config_schema, health):
         assert module.JSON_SCHEMA_DIALECT is _wire.JSON_SCHEMA_DIALECT, module.__name__
 
 
@@ -68,12 +68,10 @@ def test_canonical_sha256_is_key_order_independent_and_matches_the_runtime_helpe
     import hashlib
 
     from infra2_sdk._wire import canonical_json_bytes, canonical_sha256
-    from infra2_sdk.runtime import identity
 
     left = {"b": [1, 2], "a": {"y": 1, "x": "é"}}
     right = {"a": {"x": "é", "y": 1}, "b": [1, 2]}
     assert canonical_json_bytes(left) == canonical_json_bytes(right)
     assert canonical_json_bytes(left) == b'{"a":{"x":"\\u00e9","y":1},"b":[1,2]}'
     assert canonical_sha256(left) == hashlib.sha256(canonical_json_bytes(left)).hexdigest()
-    assert identity.canonical_sha256(left) == canonical_sha256(left)
     assert canonical_sha256({"a": 1}) != canonical_sha256({"a": 2})

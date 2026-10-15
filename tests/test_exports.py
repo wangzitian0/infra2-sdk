@@ -102,7 +102,6 @@ def test_infra2_sdk_runtime_submodules_accessible() -> None:
         "environment",
         "health",
         "http",
-        "identity",
         "otel",
         "postgres",
         "s3",

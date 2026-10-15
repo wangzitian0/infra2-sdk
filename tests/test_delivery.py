@@ -7,9 +7,7 @@ from infra2_sdk.delivery import (
     PipelineStage,
     StageResult,
     StageStatus,
-    acceleration_allowed,
     classify_budget,
-    detect_disagreement,
     make_stage_result,
     validate_stage_result,
 )
@@ -38,18 +36,6 @@ def test_failure_requires_a_failure_domain() -> None:
             target="finance_report/app",
             status=StageStatus.FAIL,
         )
-
-
-def test_skip_acceleration_is_never_allowed_in_production() -> None:
-    result = make_stage_result(
-        source="app",
-        environment="production",
-        stage=PipelineStage.FULL_UT,
-        target="release",
-        status="skip",
-        skipped_reason="covered by immutable release evidence",
-    )
-    assert acceleration_allowed(result) is False
 
 
 def test_budget_classification() -> None:
@@ -100,49 +86,6 @@ def test_skip_requires_a_reason() -> None:
             target="change",
             status="skip",
         )
-
-
-def test_acceleration_allows_reasoned_non_prod_skip() -> None:
-    result = make_stage_result(
-        source="app",
-        environment="pr",
-        stage="full-ut",
-        target="change",
-        status="skip",
-        suppressed_reason="unaffected",
-    )
-    assert acceleration_allowed(result) is True
-    assert (
-        acceleration_allowed(
-            make_stage_result(
-                source="app",
-                environment="pr",
-                stage="full-ut",
-                target="change",
-                status="pass",
-            )
-        )
-        is False
-    )
-
-
-def test_disagreement_classification() -> None:
-    def result(stage: str, status: str, domain: str = "none"):
-        return make_stage_result(
-            source="infra2",
-            environment="staging",
-            stage=stage,
-            target="app",
-            status=status,
-            failure_domain=domain,
-        )
-
-    route_failure = result("deploy-status", "fail", "traefik-public-route")
-    healthy_watchdog = result("watchdog", "pass")
-    assert detect_disagreement([route_failure, healthy_watchdog]) == (
-        DisagreementKind.INTERNAL_HEALTH_PUBLIC_ROUTE
-    )
-    assert detect_disagreement([healthy_watchdog]) == DisagreementKind.NONE
 
 
 def test_make_stage_result_with_disagreement_kind() -> None:

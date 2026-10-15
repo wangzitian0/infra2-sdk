@@ -18,10 +18,6 @@ class RuntimeEnvKey(StrEnum):
     ENVIRONMENT = "ENVIRONMENT"
     SERVICE_NAME = "OTEL_SERVICE_NAME"
     SERVICE_VERSION = "SERVICE_VERSION"
-    GIT_COMMIT_SHA = "GIT_COMMIT_SHA"
-    IMAGE_DIGEST = "IMAGE_DIGEST"
-    CONFIGURATION_SHA256 = "CONFIGURATION_SHA256"
-    RELEASE_ID = "RELEASE_ID"
     INSTANCE_ID = "INSTANCE_ID"
     OTEL_EXPORTER_OTLP_ENDPOINT = "OTEL_EXPORTER_OTLP_ENDPOINT"
     OTEL_RESOURCE_ATTRIBUTES = "OTEL_RESOURCE_ATTRIBUTES"
@@ -52,10 +48,6 @@ RUNTIME_ENV_SPECS = (
     RuntimeEnvSpec(RuntimeEnvKey.ENVIRONMENT, ("ENV", "APP_ENV")),
     RuntimeEnvSpec(RuntimeEnvKey.SERVICE_NAME),
     RuntimeEnvSpec(RuntimeEnvKey.SERVICE_VERSION, ("IMAGE_TAG",)),
-    RuntimeEnvSpec(RuntimeEnvKey.GIT_COMMIT_SHA),
-    RuntimeEnvSpec(RuntimeEnvKey.IMAGE_DIGEST),
-    RuntimeEnvSpec(RuntimeEnvKey.CONFIGURATION_SHA256),
-    RuntimeEnvSpec(RuntimeEnvKey.RELEASE_ID),
     RuntimeEnvSpec(RuntimeEnvKey.INSTANCE_ID),
     RuntimeEnvSpec(RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT),
     RuntimeEnvSpec(RuntimeEnvKey.OTEL_RESOURCE_ATTRIBUTES),
@@ -373,8 +365,8 @@ def _resolve_service_identity(
 ) -> _ServiceIdentity:
     """Resolve the tier and the service coordinates of one environment.
 
-    This function is the one reader of these facts. ``OtelSettings.from_env``,
-    ``RuntimeIdentity.from_env`` and ``init_service`` all get them from here.
+    This function is the one reader of these facts. ``OtelSettings.from_env`` and
+    ``init_service`` both get them from here.
 
     - Tier: ``environment_from_env``, or ``strict_environment_from_env`` when ``strict`` is true.
     - Resource attributes: ``OTEL_RESOURCE_ATTRIBUTES``. A malformed value raises ``ValueError``

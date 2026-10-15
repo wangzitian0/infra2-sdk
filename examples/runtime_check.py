@@ -17,7 +17,6 @@ from infra2_sdk.runtime import (
     environment_from_env,
 )
 from infra2_sdk.runtime.http import probe_http
-from infra2_sdk.runtime.identity import RuntimeIdentity
 
 # This is application policy: name the dependency and the tiers that require it.
 # Keep this declaration in your app; the SDK owns validation and probe execution.
@@ -48,7 +47,6 @@ class CatalogCheck:
 async def main() -> int:
     try:
         environment = environment_from_env(required=True)
-        identity = RuntimeIdentity.from_env(strict=True)
         url = os.environ.get("CATALOG_HEALTH_URL", "")
         checks: list[DependencyCheck] = [CatalogCheck(url)] if url else []
         status_code, report = await check_health(
@@ -62,7 +60,7 @@ async def main() -> int:
             json.dumps({"ready": False, "status": report["status"], "reasons": report["reasons"]})
         )
         return 1
-    print(json.dumps({"ready": True, "status": report["status"], "identity": identity.to_dict()}))
+    print(json.dumps({"ready": True, "status": report["status"], "environment": environment.name}))
     return 0
 
 

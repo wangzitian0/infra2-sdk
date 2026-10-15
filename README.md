@@ -25,7 +25,7 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.5.1"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.5.2"
 ```
 
 ## Modules
@@ -45,7 +45,6 @@ python -m pip install \
 | `infra2_sdk.runtime.environment` | Canonical six-tier environment vocabulary, variable resolution, and contract definitions |
 | `infra2_sdk.runtime.health` | Framework-agnostic readiness checks (`check_health`), probe runners, and dependency declarations |
 | `infra2_sdk.runtime.http` | Standard httpx clients and the HTTP reachability probe |
-| `infra2_sdk.runtime.identity` | OCI/config/release identity, `canonical_sha256`, and OTel resource coordinates |
 | `infra2_sdk.runtime.otel` | Explicit OTLP provider bootstrap and env-configured samplers |
 | `infra2_sdk.runtime.postgres` | PostgreSQL DSN normalization and psycopg reachability probe |
 | `infra2_sdk.runtime.s3` | Standard boto3 S3 client, probe, and safe bucket/object primitives |
@@ -63,7 +62,6 @@ python -m pip install \
 | PostgreSQL | `normalize_postgres_dsn`, `probe_postgres` | `infra2_sdk.runtime.postgres` | Psycopg reachability probe with credential redaction and DSN normalization |
 | S3 storage | `create_s3_client`, `probe_s3`, `ensure_bucket` | `infra2_sdk.runtime.s3` | Boto3 client initialization, bucket reachability probe, and idempotent bucket creation |
 | Environment & identity | `environment_from_env` | `infra2_sdk.runtime.environment` | Canonical six-tier environment resolution and contract validation |
-| Identity verification | `RuntimeIdentity` | `infra2_sdk.runtime.identity` | Strict 40-hex commit SHA and deployment release attribute validation |
 | Secret manifests | `render_agent_template`, `render_agent_policy` | `infra2_sdk.secrets` | Manifest-driven Vault Agent Consul template and HCL policy generation |
 
 ## Runtime extras
@@ -73,10 +71,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.5.1'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.5.2'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.5.1'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.5.2'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -164,12 +162,10 @@ its own provider chain. That chain reads variables such as `AWS_ACCESS_KEY_ID`,
 import os
 
 from infra2_sdk.runtime import environment_from_env
-from infra2_sdk.runtime.identity import RuntimeIdentity
 from infra2_sdk.runtime.postgres import PostgresSettings
 from infra2_sdk.runtime.s3 import S3Settings, create_s3_client
 
 runtime = environment_from_env()  # reads os.environ only when called
-identity = RuntimeIdentity.from_env()  # no network or platform lookup
 database = PostgresSettings(dsn=os.environ["DATABASE_URL"])
 s3 = create_s3_client(S3Settings(bucket="my-bucket", endpoint_url=os.environ["S3_ENDPOINT"]))
 ```
@@ -178,25 +174,18 @@ Deployed conformance checks opt into fail-closed loading instead of inheriting l
 
 ```python
 runtime = environment_from_env(required=True)
-identity = RuntimeIdentity.from_env(strict=True)
 ```
 
-Strict identity loading requires a real commit SHA in every deployed tier and the complete
-digest/configuration/release identity in staging and production. Note that `RuntimeIdentity`
-validates that `GIT_COMMIT_SHA` (when not `'unknown'`) is a 40-character lowercase hexadecimal
-string (`^[0-9a-f]{40}$`) in both strict and non-strict modes. Deployments injecting release tags
-(e.g. `v0.1.74`) or short SHAs cannot construct `RuntimeIdentity` with that commit ref and should
-leave `GIT_COMMIT_SHA` unset or rely on platform-managed `ServiceIdentity` attributes. Non-strict
-loaders follow OpenTelemetry's error-handling model: malformed optional OTel resource attributes
-are reported as runtime warnings and discarded instead of blocking an application that has
-telemetry disabled. This holds for `from_env(strict=False)`. `init_service` is strict by default;
-see "Turnkey FastAPI integration".
+Non-strict loaders follow OpenTelemetry's error-handling model: malformed optional OTel resource
+attributes are reported as runtime warnings and discarded instead of blocking an application that
+has telemetry disabled. This holds for `from_env(strict=False)`. `init_service` is strict by
+default; see "Turnkey FastAPI integration".
 
 ## Start an independent app
 
 Copy [examples/runtime_check.py](examples/runtime_check.py) to `runtime_check.py`
 in your own app's root directory, then run the commands below from that directory. It
-loads a required environment, validates runtime identity, probes an HTTP dependency,
+loads a required environment, probes an HTTP dependency,
 and returns nonzero if the required dependency is missing or unhealthy. It uses only
 public SDK imports and ordinary environment variables; no sibling checkout or
 platform credentials are needed.
@@ -206,7 +195,7 @@ Install the published wheel in a fresh Python 3.11+ environment:
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install \
-  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.5.1/infra2_sdk-3.5.1-py3-none-any.whl'
+  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.5.2/infra2_sdk-3.5.2-py3-none-any.whl'
 ```
 
 For a local connectivity exercise, start this server in another terminal:
@@ -332,10 +321,6 @@ block is stale.
 | `ENVIRONMENT` | `ENV`, `APP_ENV` | no |
 | `OTEL_SERVICE_NAME` | none | no |
 | `SERVICE_VERSION` | `IMAGE_TAG` | no |
-| `GIT_COMMIT_SHA` | none | no |
-| `IMAGE_DIGEST` | none | no |
-| `CONFIGURATION_SHA256` | none | no |
-| `RELEASE_ID` | none | no |
 | `INSTANCE_ID` | none | no |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | none | no |
 | `OTEL_RESOURCE_ATTRIBUTES` | none | no |
@@ -352,9 +337,9 @@ contract is sensitive today. The `sensitive` field stays for the wire shape, and
 configuration disables telemetry without affecting application startup.
 `OTEL_SDK_DISABLED=true` takes precedence over the endpoint and ignores it completely.
 
-The table lists the variables that `environment_from_env`, `RuntimeIdentity.from_env` and
-`OtelSettings.from_env` resolve. The settings of the S3, PostgreSQL and HTTP adapters take
-explicit values, so no row of the table belongs to them. Five more fixed names exist outside
+The table lists the variables that `environment_from_env` and `OtelSettings.from_env` resolve.
+The settings of the S3, PostgreSQL and HTTP adapters take explicit values, so no row of the
+table belongs to them. Five more fixed names exist outside
 the table. `environment_from_env` reads `GITHUB_ACTIONS`. `VaultKvBackend.from_environ` reads
 `VAULT_ADDR`, `VAULT_TOKEN`, `VAULT_ROLE_ID` and `VAULT_SECRET_ID` from the mapping you pass.
 Other names come from the caller: the manifest that you pass to `validate_env`, and the token
@@ -439,8 +424,7 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   - `capacity.LEVELS`, `capacity.onepassword_capacity`, `capacity.OnePasswordCapacityReport` and
     `capacity.Runner`;
   - `delivery.PREVIEW_RELEVANT_STAGES`;
-  - `deploy.DeployStatus` (no replacement: build the record you need in your own code;
-    `DeployState` stays);
+  - `deploy.DeployStatus` (no replacement: build the record you need in your own code);
   - `refs.resolve_release_identity` (use `refs.resolve_image_ref` and
     `refs.resolve_image_digest`);
   - `refs.verify_runtime_identity` (no replacement: compare the two records in your own code);
@@ -505,14 +489,14 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   - database: `DATABASE_URL`, `DATABASE_CONNECT_TIMEOUT_SECONDS`,
     `DATABASE_STATEMENT_TIMEOUT_SECONDS`.
 - In v3.4.0, `runtime_env_contract()["contract_version"]` (`RUNTIME_ENV_CONTRACT_VERSION`) is 2,
-  not 1, because the document lost the 20 variables above. Version 2 lists 14 variables. The
+  not 1, because the document lost the 20 variables above. Version 2 lists 10 variables (4 more
+  variables were removed with `RuntimeIdentity` in v3.5.2). The
   field layout is the same. A receiver that requires version 1 rejects version 2, as the rule
   above says, so change it to require version 2.
 - In v3.4.0, the SDK no longer reads `SERVICE_NAME`, the unused alias of `OTEL_SERVICE_NAME`.
   `ENV`, `APP_ENV` and `IMAGE_TAG` stay. A deployment that sets only `SERVICE_NAME` must set
   `OTEL_SERVICE_NAME` instead. Until then:
   - `OtelSettings.from_env` gives the service name `unknown_service` and raises no error;
-  - `RuntimeIdentity.from_env` raises `ValueError: OTEL_SERVICE_NAME is required`;
   - when both variables are set, the SDK uses `OTEL_SERVICE_NAME` and reports no conflict.
     Before 3.4.0, two different values raised `EnvironmentConflictError`.
 - In v3.4.0, a string lookup of a removed variable raises `ValueError`:
@@ -524,26 +508,24 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   The `init_service` documentation lists every strict check.
 - In v3.4.0, the service name of the telemetry is `OTEL_SERVICE_NAME`, then `service.name` in
   `OTEL_RESOURCE_ATTRIBUTES`, then the `name` argument of `init_service`. Before, `init_service`
-  used its `name` argument over the attribute. `RuntimeIdentity.from_env` now also takes
-  `service.name` from the attributes. A padded value is trimmed. A value that is blank after
-  decoding counts as missing.
+  used its `name` argument over the attribute. A padded value is trimmed. A value that is blank
+  after decoding counts as missing.
 - In v3.4.0, `init_service` raises `ValueError` for a blank `name` before it changes the app. A
   strict check that fails leaves no marker and no probe route. A failure while the providers
   start is the one exception. The `init_service` documentation describes it.
-- In v3.4.0, 27 names left `__all__` of `infra2_sdk` and `infra2_sdk.runtime` and are no longer
-  attributes of these packages (`RuntimeIdentity` left `infra2_sdk.runtime.__all__` in v3.5.1; five
-  other names that left `__all__` in v3.4.0 were deleted in v3.5.1 and are listed in the v3.5.1
-  note below). No consumer imports them from the package, and no recorded decision holds them. Six
-  of them are imported from their module in test code. In infra2 these are `BudgetStatus`,
-  `DeployState`, `DisagreementKind`, `PipelineStage` and `validate_gate`. In finance_report and
-  truealpha it is `ProductionEvidencePolicy`. That import works as before. All 27 names below stay
-  defined in their modules. Import them from the module, for example
-  `from infra2_sdk.deploy import DeployState`:
+- In v3.4.0, 25 names left `__all__` of `infra2_sdk` and `infra2_sdk.runtime` and are no longer
+  attributes of these packages (seven other names that left `__all__` in v3.4.0 or v3.5.1 were
+  deleted in v3.5.1 and v3.5.2 and are listed in the notes below). No consumer imports them from
+  the package, and no recorded decision holds them. Five of them are imported from their module in
+  test code. In infra2 these are `BudgetStatus`, `DisagreementKind`, `PipelineStage` and
+  `validate_gate`. In finance_report and truealpha it is `ProductionEvidencePolicy`. That import
+  works as before. All 25 names below stay defined in their modules. Import them from the module,
+  for example `from infra2_sdk.deploy import ProductionEvidencePolicy`:
   - in `infra2_sdk`:
     - `capacity`: `CapacityLimit`;
     - `ci`: `validate_gate`;
     - `delivery`: `BudgetStatus`, `DisagreementKind`, `PipelineStage`, `validate_stage_result`;
-    - `deploy`: `CONTRACT_VERSION`, `DeployEvidence`, `DeployState`, `HealthCheckResult`,
+    - `deploy`: `CONTRACT_VERSION`, `DeployEvidence`, `HealthCheckResult`,
       `ProductionEvidencePolicy`, `fetch_production_evidence_policy`;
     - `routing`: `DEFAULT_BASE_DOMAIN`;
     - `secrets`: `SecretsBackend`, `TokenStatus`;
@@ -552,8 +534,7 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
     - `environment`: `EnvironmentConflictError`, `PLATFORM_OWNED_TIERS`,
       `ResolvedEnvValue`, `RuntimeEnvSpec`, `UnknownEnvironmentPolicy`,
       `normalize_deployment_environment`, `resolve_env`, `strict_environment_from_env`;
-    - `health`: `HealthStatus`;
-    - `identity`: `RuntimeIdentity`.
+    - `health`: `HealthStatus`.
 - In v3.4.0, `infra2_sdk.__version__` left `infra2_sdk.__all__` and stays importable. The root
   package no longer exposes `version` and `PackageNotFoundError`, which it imported from
   `importlib.metadata`.
@@ -562,8 +543,13 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   `deploy.derive_release_evidence`, `deploy.main`, `deploy.dispatch_main`,
   `deploy.deploy_health_main`, `routing.RouteEndpoint`, `routing.AppRoutePreference`,
   `runtime.environment.to_deploy_type`, `runtime.environment.APP_OWNED_TIERS`,
-  `runtime.health.health_response`, and `runtime.otel.OtelSettings.from_identity`. In addition,
-  `RuntimeIdentity` left `infra2_sdk.runtime.__all__` and stays in `infra2_sdk.runtime.identity`.
+  `runtime.health.health_response`, and `runtime.otel.OtelSettings.from_identity`.
+- In v3.5.2, the SDK added `PRODUCTION_REQUEST_MAX_AGE_SECONDS = 1440` in `infra2_sdk.deploy` (and
+  `infra2_sdk.__all__`) and removed the remaining 5 zero-caller public symbols (`deploy.DeployState`,
+  `delivery.acceleration_allowed`, `delivery.detect_disagreement`, `runtime.identity.RuntimeIdentity`,
+  and `runtime.identity.canonical_sha256` with the `infra2_sdk.runtime.identity` module) plus the 4
+  `RuntimeEnvKey` members that only `RuntimeIdentity` read (`GIT_COMMIT_SHA`, `IMAGE_DIGEST`,
+  `CONFIGURATION_SHA256`, `RELEASE_ID`).
 - `tests/surface.json` records the reason for each name in `__all__`: a consumer imports it, the
   README documents it, or a recorded decision holds it.
 - `to_environment_tier` maps `DeployType` values to `EnvironmentTier`.
