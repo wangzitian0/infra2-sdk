@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 from infra2_sdk.runtime.environment import (
     CANARY_SLOT,
@@ -105,9 +106,106 @@ def resolve_service_url(
     return f"{scheme}://{host}{clean_path}"
 
 
+@dataclass(frozen=True)
+class PreviewStackCoordinates:
+    """Resolved coordinate set for one preview or platform stack."""
+
+    slug: str
+    tier: EnvironmentTier
+    deployment_environment: str
+    env_suffix: str
+    env_domain_suffix: str
+    app_host: str
+    preview_url: str
+    cpu_shares: int
+    network_suffix: str
+    ephemeral_database_url: str
+
+
+def derive_preview_coordinates(
+    slug: str,
+    tier: EnvironmentTier | str,
+    *,
+    base_domain: str = DEFAULT_BASE_DOMAIN,
+    slot_id: str | int | None = None,
+    custom_prod_domain: str | None = None,
+    is_canary: bool = False,
+    scheme: str = "https",
+) -> PreviewStackCoordinates:
+    """Derive stack coordinates and ephemeral database URL for one service."""
+    app_host = resolve_app_hostname(
+        slug,
+        tier,
+        base_domain=base_domain,
+        slot_id=slot_id,
+        custom_prod_domain=custom_prod_domain,
+        is_canary=is_canary,
+    )
+    preview_url = f"{scheme}://{app_host}"
+
+    raw_tier = str(tier).strip().lower() if not isinstance(tier, EnvironmentTier) else tier.value
+    slot_str = str(slot_id).strip().lower() if slot_id is not None else None
+
+    if is_canary or raw_tier in ("canary", "deploy-v2-canary") or slot_str == CANARY_SLOT:
+        canonical_tier = EnvironmentTier.PREVIEW
+        deployment_environment = CANARY_SLOT
+        env_suffix = f"-{CANARY_SLOT}"
+        env_domain_suffix = f"-{CANARY_SLOT}"
+        cpu_shares = 256
+        network_suffix = f"-{CANARY_SLOT}"
+    else:
+        canonical_tier = to_environment_tier(tier)
+        if canonical_tier is EnvironmentTier.PRODUCTION:
+            deployment_environment = "production"
+            env_suffix = ""
+            env_domain_suffix = ""
+            cpu_shares = 1024
+            network_suffix = ""
+        elif canonical_tier is EnvironmentTier.STAGING:
+            deployment_environment = "staging"
+            env_suffix = "-staging"
+            env_domain_suffix = "-staging"
+            cpu_shares = 512
+            network_suffix = "-staging"
+        else:
+            if is_preview_alias(raw_tier):
+                slot_label = _canonicalize_preview_alias(raw_tier)
+            elif isinstance(slot_id, int):
+                slot_label = f"pr-{slot_id}"
+            elif slot_str and is_preview_alias(slot_str):
+                slot_label = _canonicalize_preview_alias(slot_str)
+            elif slot_str:
+                slot_label = f"preview-{slot_str}"
+            else:
+                slot_label = "preview"
+            deployment_environment = slot_label
+            env_suffix = f"-{slot_label}"
+            env_domain_suffix = f"-{slot_label}"
+            cpu_shares = 256
+            network_suffix = f"-{slot_label}"
+
+    db_name = re.sub(r"[^a-z0-9_]", "_", slug.lower()) + "_preview"
+    ephemeral_database_url = f"postgresql://ephemeral:ephemeral@postgres:5432/{db_name}"
+
+    return PreviewStackCoordinates(
+        slug=slug,
+        tier=canonical_tier,
+        deployment_environment=deployment_environment,
+        env_suffix=env_suffix,
+        env_domain_suffix=env_domain_suffix,
+        app_host=app_host,
+        preview_url=preview_url,
+        cpu_shares=cpu_shares,
+        network_suffix=network_suffix,
+        ephemeral_database_url=ephemeral_database_url,
+    )
+
+
 __all__ = [
     "CANARY_SLOT",
     "DEFAULT_BASE_DOMAIN",
+    "PreviewStackCoordinates",
+    "derive_preview_coordinates",
     "resolve_app_hostname",
     "resolve_service_url",
 ]

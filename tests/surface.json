@@ -40,6 +40,8 @@
     "resolve_to_sha": "consumer: infra2",
     "ReleaseError": "consumer: infra2, truealpha",
     "CANARY_SLOT": "consumer: infra2",
+    "PreviewStackCoordinates": "consumer: infra2",
+    "derive_preview_coordinates": "consumer: infra2",
     "resolve_app_hostname": "consumer: infra2",
     "resolve_service_url": "consumer: infra2",
     "OnePasswordBackend": "consumer: infra2",
@@ -57,7 +59,8 @@
     "environment": "consumer: finance_report, truealpha",
     "health": "consumer: finance_report, infra2, truealpha",
     "http": "documented: README section Core runtime entrypoints",
-    "identity": "documented: README section Core runtime entrypoints",
+    "identity": "consumer: infra2, truealpha",
+    "llm": "consumer: finance_report, truealpha",
     "otel": "consumer: finance_report, truealpha",
     "postgres": "consumer: infra2, truealpha",
     "s3": "consumer: finance_report, infra2, truealpha",
@@ -100,6 +103,7 @@
     "probe_http": "consumer: finance_report",
     "OtelSettings": "consumer: finance_report, truealpha",
     "configure_telemetry": "consumer: truealpha",
-    "signal_endpoint": "consumer: finance_report"
+    "signal_endpoint": "consumer: finance_report",
+    "LlmSettings": "consumer: finance_report, truealpha"
   }
 }

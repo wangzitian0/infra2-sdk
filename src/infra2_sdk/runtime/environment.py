@@ -344,7 +344,13 @@ def strict_environment_from_env(
 
 
 #: The resource attributes that name a service. A blank one is missing, like a blank variable.
-_IDENTITY_ATTRIBUTES = ("service.name", "service.version", "service.instance.id")
+_IDENTITY_ATTRIBUTES = (
+    "service.name",
+    "service.version",
+    "service.instance.id",
+    "vcs.ref.head.revision",
+    "infra.iac.ref",
+)
 
 
 @dataclass(frozen=True)
@@ -362,6 +368,7 @@ class _ServiceIdentity:
     service_name: str | None
     service_version: str
     instance_id: str
+    commit_sha: str = "unknown"
 
 
 def _resolve_service_identity(
@@ -386,6 +393,8 @@ def _resolve_service_identity(
       ``default_service_name``. The result is ``None`` when all three are missing.
     - Service version: ``SERVICE_VERSION``, then ``service.version``, then ``unknown``.
     - Instance id: ``INSTANCE_ID``, then ``service.instance.id``, then an empty string.
+    - Commit sha: ``GIT_COMMIT_SHA``, then ``vcs.ref.head.revision``, then ``infra.iac.ref``,
+      then ``unknown``.
     """
 
     if ignore_environment:
@@ -416,6 +425,13 @@ def _resolve_service_identity(
                 del attributes[key]
     version = resolve_runtime_env(environ, RuntimeEnvKey.SERVICE_VERSION).value
     instance = resolve_runtime_env(environ, RuntimeEnvKey.INSTANCE_ID).value
+    commit = resolve_runtime_env(environ, RuntimeEnvKey.GIT_COMMIT_SHA).value
+    commit_sha = (
+        commit
+        or attributes.get("vcs.ref.head.revision")
+        or attributes.get("infra.iac.ref")
+        or "unknown"
+    )
     return _ServiceIdentity(
         environment=runtime,
         environment_is_set=environment_is_set,
@@ -424,6 +440,7 @@ def _resolve_service_identity(
         service_name=named or attributes.get("service.name") or default_service_name or None,
         service_version=version or attributes.get("service.version", "unknown"),
         instance_id=instance or attributes.get("service.instance.id", ""),
+        commit_sha=commit_sha,
     )
 
 

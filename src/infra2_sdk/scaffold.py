@@ -114,7 +114,7 @@ def generate_compose_yaml(
       VAULT_ROLE_ID: ${{VAULT_ROLE_ID:-}}
       VAULT_SECRET_ID: ${{VAULT_SECRET_ID:-}}
       ENV: ${{ENV}}
-      IAC_CONFIG_HASH: ${{IAC_CONFIG_HASH:-}}
+      CONFIGURATION_SHA256: ${{CONFIGURATION_SHA256:-}}
     volumes:
       - ./vault-agent.hcl:/etc/vault/vault-agent.hcl:ro
       - ./secrets.ctmpl:/etc/vault/secrets.ctmpl:ro

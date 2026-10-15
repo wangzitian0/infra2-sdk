@@ -290,3 +290,89 @@ def test_unowned_client_is_not_closed(operation: str) -> None:
         assert result.status is DependencyStatus.PRESENT
         assert calls == [{"Bucket": "runtime-canary"}]
     assert closed == [], f"unowned S3 client must not be closed by {operation}"
+
+
+def test_s3_settings_extended_fields_and_fallbacks() -> None:
+    settings = S3Settings(
+        bucket="my-private-bucket",
+        endpoint_url="https://s3.internal:9000",
+        access_key_id="internal-key",
+        secret_access_key="internal-secret",
+    )
+    assert settings.effective_public_bucket == "my-private-bucket"
+    assert settings.effective_public_endpoint_url == "https://s3.internal:9000"
+    assert settings.effective_public_access_key_id == "internal-key"
+    assert settings.effective_public_secret_access_key == "internal-secret"
+    assert settings.presign_expiry_seconds == 900
+    assert settings.raw_prefix == "raw"
+    assert settings.documents_prefix == "documents"
+
+    override = S3Settings(
+        bucket="my-private-bucket",
+        endpoint_url="https://s3.internal:9000",
+        access_key_id="internal-key",
+        secret_access_key="internal-secret",
+        public_bucket="my-public-bucket",
+        public_endpoint_url="https://s3.public:9000",
+        public_access_key_id="pub-key",
+        public_secret_access_key="pub-secret",
+        presign_expiry_seconds=1800,
+        raw_prefix="custom-raw",
+        documents_prefix="custom-docs",
+    )
+    assert override.effective_public_bucket == "my-public-bucket"
+    assert override.effective_public_endpoint_url == "https://s3.public:9000"
+    assert override.effective_public_access_key_id == "pub-key"
+    assert override.effective_public_secret_access_key == "pub-secret"
+    assert override.presign_expiry_seconds == 1800
+    assert "pub-secret" not in repr(override)
+
+
+def test_s3_settings_object_key_helpers() -> None:
+    settings = S3Settings(bucket="my-bucket")
+    assert settings.raw_object_key("dataset", "item.json") == "raw/dataset/item.json"
+    assert settings.raw_object_key("/dataset/", "/item.json") == "raw/dataset/item.json"
+    assert settings.raw_object_key() == "raw"
+    assert (
+        settings.document_object_key("invoices", "2026", "inv1.pdf")
+        == "documents/invoices/2026/inv1.pdf"
+    )
+    assert settings.document_object_key() == "documents"
+
+
+def test_s3_settings_extended_validation() -> None:
+    with pytest.raises(ValueError, match="public_bucket must be a lowercase S3-compatible name"):
+        S3Settings(bucket="valid-bucket", public_bucket="Invalid_Bucket")
+
+    with pytest.raises(ValueError, match="public_bucket must be a lowercase S3-compatible name"):
+        S3Settings(bucket="valid-bucket", public_bucket="bucket..invalid")
+
+    with pytest.raises(
+        ValueError,
+        match="explicit public S3 access key and secret key must be provided together",
+    ):
+        S3Settings(bucket="valid-bucket", public_access_key_id="only-key")
+
+    with pytest.raises(
+        ValueError,
+        match="explicit public S3 access key and secret key must be provided together",
+    ):
+        S3Settings(bucket="valid-bucket", public_secret_access_key="only-secret")
+
+    with pytest.raises(
+        ValueError,
+        match="public S3 endpoint URL must use http:// or https:// with a host",
+    ):
+        S3Settings(bucket="valid-bucket", public_endpoint_url="ftp://invalid")
+
+    with pytest.raises(ValueError, match="public S3 endpoint URL must not contain credentials"):
+        S3Settings(bucket="valid-bucket", public_endpoint_url="https://u:p@host")
+
+    with pytest.raises(ValueError, match="presign_expiry_seconds must be positive"):
+        S3Settings(bucket="valid-bucket", presign_expiry_seconds=0)
+
+    with pytest.raises(ValueError, match="S3 prefixes must be non-empty"):
+        S3Settings(bucket="valid-bucket", raw_prefix="///")
+
+    with pytest.raises(ValueError, match="S3 prefixes must be non-empty"):
+        S3Settings(bucket="valid-bucket", documents_prefix="")

@@ -65,6 +65,8 @@ from infra2_sdk.refs import (
 )
 from infra2_sdk.routing import (
     CANARY_SLOT,
+    PreviewStackCoordinates,
+    derive_preview_coordinates,
     resolve_app_hostname,
     resolve_service_url,
 )
@@ -132,6 +134,8 @@ __all__ = [
     "ReleaseError",
     # Routing
     "CANARY_SLOT",
+    "PreviewStackCoordinates",
+    "derive_preview_coordinates",
     "resolve_app_hostname",
     "resolve_service_url",
     # Secrets

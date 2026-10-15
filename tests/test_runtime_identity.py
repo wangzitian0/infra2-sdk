@@ -207,3 +207,47 @@ def test_canonical_sha256_is_formatting_blind_and_matches_the_estate() -> None:
 def test_runtime_identity_json_schema_declares_the_exact_2020_12_dialect() -> None:
     schema = RuntimeIdentity.json_schema()
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+
+
+def test_identity_commit_sha_fallbacks_from_resource_attributes() -> None:
+    # 1. Fallback to vcs.ref.head.revision when GIT_COMMIT_SHA is missing
+    ident1 = RuntimeIdentity.from_env(
+        {
+            "ENVIRONMENT": "preview",
+            "OTEL_SERVICE_NAME": "api",
+            "OTEL_RESOURCE_ATTRIBUTES": f"vcs.ref.head.revision={SHA}",
+        }
+    )
+    assert ident1.commit_sha == SHA
+
+    # 2. Fallback to infra.iac.ref when GIT_COMMIT_SHA and vcs.ref.head.revision are missing
+    ident2 = RuntimeIdentity.from_env(
+        {
+            "ENVIRONMENT": "preview",
+            "OTEL_SERVICE_NAME": "api",
+            "OTEL_RESOURCE_ATTRIBUTES": f"infra.iac.ref={SHA}",
+        }
+    )
+    assert ident2.commit_sha == SHA
+
+    # 3. GIT_COMMIT_SHA takes precedence over resource attributes
+    other_sha = "f" * 40
+    ident3 = RuntimeIdentity.from_env(
+        {
+            "ENVIRONMENT": "preview",
+            "OTEL_SERVICE_NAME": "api",
+            "GIT_COMMIT_SHA": SHA,
+            "OTEL_RESOURCE_ATTRIBUTES": f"vcs.ref.head.revision={other_sha}",
+        }
+    )
+    assert ident3.commit_sha == SHA
+
+    # 4. Blank attribute values are dropped and fallback to unknown
+    ident4 = RuntimeIdentity.from_env(
+        {
+            "ENVIRONMENT": "local_dev",
+            "OTEL_SERVICE_NAME": "api",
+            "OTEL_RESOURCE_ATTRIBUTES": "vcs.ref.head.revision=%20%20,infra.iac.ref=%20",
+        }
+    )
+    assert ident4.commit_sha == "unknown"
