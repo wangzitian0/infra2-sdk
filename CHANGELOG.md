@@ -4,6 +4,12 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.7.1 - 2026-10-19
+
+### Changed
+
+- Align `infra2_sdk.observability` function signatures and dataclasses (`is_recently_flapping`, `ConsecutiveObservationState`, `evaluate_consecutive_hysteresis`, `PeerVerdict`, `bound_for`, `newest_tick`, `evaluate_peer_liveness`, `CheckVerdict`, `Trail`, `scrub`, `record_verdicts`, `load_trail`, `issue_trail_mode`, `GitHubIssues`, `reconcile_issue_trail`) with `infra2`'s exact contracts ([#115](https://github.com/wangzitian0/infra2-sdk/issues/115)).
+
 ## 3.7.0 - 2026-10-19
 
 ### Added
