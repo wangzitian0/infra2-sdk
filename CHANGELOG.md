@@ -4,6 +4,12 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.7.2 - 2026-10-19
+
+### Fixed
+
+- Replace top-level `uuid4` import in `infra2_sdk.ci` with `os.urandom(16).hex()` so importing `infra2_sdk` on Python 3.11 never triggers stdlib `uuid`'s `platform.system()` lookup when a consumer repository has a top-level `platform/` directory on `sys.path` ([#115](https://github.com/wangzitian0/infra2-sdk/issues/115)).
+
 ## 3.7.1 - 2026-10-19
 
 ### Changed
