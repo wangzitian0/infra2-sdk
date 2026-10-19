@@ -25,7 +25,7 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.8.0"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.8.1"
 ```
 
 ## Modules
@@ -75,10 +75,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.8.0'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.8.1'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.8.0'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.8.1'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -208,7 +208,7 @@ Install the published wheel in a fresh Python 3.11+ environment:
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install \
-  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.8.0/infra2_sdk-3.8.0-py3-none-any.whl'
+  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.8.1/infra2_sdk-3.8.1-py3-none-any.whl'
 ```
 
 For a local connectivity exercise, start this server in another terminal:
@@ -341,10 +341,6 @@ block is stale.
 | `INSTANCE_ID` | none | no |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | none | no |
 | `OTEL_RESOURCE_ATTRIBUTES` | none | no |
-| `OTEL_SDK_DISABLED` | none | no |
-| `OTEL_METRIC_EXPORT_INTERVAL` | none | no |
-| `OTEL_TRACES_SAMPLER` | none | no |
-| `OTEL_TRACES_SAMPLER_ARG` | none | no |
 <!-- env-contract:end -->
 
 Canonical and alias values may coexist only when equal. A conflict between a canonical name and
@@ -355,12 +351,13 @@ configuration disables telemetry without affecting application startup.
 `OTEL_SDK_DISABLED=true` takes precedence over the endpoint and ignores it completely.
 
 The table lists the variables that `environment_from_env`, `RuntimeIdentity.from_env` and
-`OtelSettings.from_env` resolve. The settings of the S3, PostgreSQL and HTTP adapters take
-explicit values, so no row of the table belongs to them. Five more fixed names exist outside
-the table. `environment_from_env` reads `GITHUB_ACTIONS`. `VaultKvBackend.from_environ` reads
-`VAULT_ADDR`, `VAULT_TOKEN`, `VAULT_ROLE_ID` and `VAULT_SECRET_ID` from the mapping you pass.
-Other names come from the caller: the manifest that you pass to `validate_env`, and the token
-variable that a CLI option names.
+`OtelSettings.from_env` resolve through `RuntimeEnvKey`. The settings of the S3, PostgreSQL and
+HTTP adapters take explicit values, so no row of the table belongs to them. Nine more fixed names
+exist outside the table. `environment_from_env` reads `GITHUB_ACTIONS`. `OtelSettings.from_env`
+reads `OTEL_SDK_DISABLED`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_TRACES_SAMPLER` and
+`OTEL_TRACES_SAMPLER_ARG`. `VaultKvBackend.from_environ` reads `VAULT_ADDR`, `VAULT_TOKEN`,
+`VAULT_ROLE_ID` and `VAULT_SECRET_ID` from the mapping you pass. Other names come from the caller:
+the manifest that you pass to `validate_env`, and the token variable that a CLI option names.
 
 `ENVIRONMENT` has two dimensions. `RuntimeEnvironment.tier` controls behavior using the six
 portable tiers. `RuntimeEnvironment.name` preserves the deployment display identity. Therefore
@@ -506,7 +503,7 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   - database: `DATABASE_URL`, `DATABASE_CONNECT_TIMEOUT_SECONDS`,
     `DATABASE_STATEMENT_TIMEOUT_SECONDS`.
 - In v3.4.0, `runtime_env_contract()["contract_version"]` (`RUNTIME_ENV_CONTRACT_VERSION`) is 2,
-  not 1, because the document lost the 20 variables above. Version 2 lists 14 variables. The
+  not 1, because the document lost the 20 variables above. Version 2 lists 10 variables. The
   field layout is the same. A receiver that requires version 1 rejects version 2, as the rule
   above says, so change it to require version 2.
 - In v3.4.0, the SDK no longer reads `SERVICE_NAME`, the unused alias of `OTEL_SERVICE_NAME`.

@@ -231,7 +231,14 @@ def test_contract_version_is_two_because_3_4_0_removed_20_variables() -> None:
     contract = runtime_env_contract()
     assert type(contract["contract_version"]) is int
     assert contract["contract_version"] == RUNTIME_ENV_CONTRACT_VERSION
-    assert len(contract["variables"]) == 14
+    assert len(contract["variables"]) == 10
+    for unused_otel_key in (
+        "OTEL_SDK_DISABLED",
+        "OTEL_METRIC_EXPORT_INTERVAL",
+        "OTEL_TRACES_SAMPLER",
+        "OTEL_TRACES_SAMPLER_ARG",
+    ):
+        assert unused_otel_key not in RuntimeEnvKey.__members__
 
 
 def test_typed_env_helper_accepts_registry_keys_in_the_public_contract() -> None:
