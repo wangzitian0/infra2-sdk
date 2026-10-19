@@ -4,6 +4,12 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.8.4 - 2026-10-19
+
+### Changed
+
+- Reference `infra2_sdk.observability.largest_gap` directly in the empty-cron `ScheduleError` message instead of a consumer-specific file path ([#115](https://github.com/wangzitian0/infra2-sdk/issues/115)).
+
 ## 3.8.3 - 2026-10-19
 
 ### Changed
