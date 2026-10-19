@@ -10,7 +10,6 @@ from datetime import UTC, datetime
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 from xml.etree import ElementTree
 
 import yaml
@@ -286,9 +285,9 @@ def write_github_output(
                 print(f"{key}={value}", file=handle)
                 continue
 
-            delimiter = f"FINANCE_REPORT_OUTPUT_{uuid4().hex}"
+            delimiter = f"FINANCE_REPORT_OUTPUT_{os.urandom(16).hex()}"
             while delimiter in value.splitlines():
-                delimiter = f"FINANCE_REPORT_OUTPUT_{uuid4().hex}"
+                delimiter = f"FINANCE_REPORT_OUTPUT_{os.urandom(16).hex()}"
             print(f"{key}<<{delimiter}", file=handle)
             print(value, file=handle)
             print(delimiter, file=handle)
