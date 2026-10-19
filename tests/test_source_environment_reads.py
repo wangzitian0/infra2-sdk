@@ -63,6 +63,7 @@ ALLOWED_LITERALS = {
 # Fixed variable names that the source reads and that are not in the runtime env contract.
 FIXED_READS = {
     "GITHUB_ACTIONS": "environment_from_env: the mapping that the caller passes",
+    "INSTANCE_ID": "_resolve_service_identity: OpenTelemetry service.instance.id fallback",
     "OTEL_METRIC_EXPORT_INTERVAL": "OtelSettings.from_env: OpenTelemetry metric export interval",
     "OTEL_SDK_DISABLED": "OtelSettings.from_env: OpenTelemetry SDK disable switch",
     "OTEL_TRACES_SAMPLER": "OtelSettings.from_env: OpenTelemetry trace sampler name",
@@ -322,7 +323,7 @@ j = os.environ.pop("LLLL_TWELVE", None)
 k = os.environ.setdefault("MMMM_THIRTEEN", "1")
 l = "NNNN_FOURTEEN" not in values
 m = resolve_runtime_env(env, RuntimeEnvKey.SERVICE_NAME)
-n = env_int(env, key=RuntimeEnvKey.INSTANCE_ID, default=1)
+n = env_int(env, key=RuntimeEnvKey.GIT_COMMIT_SHA, default=1)
 o = resolve_runtime_env(env, Other.SERVICE_NAME)
 p = resolve_runtime_env(env, RuntimeEnvKey.NO_SUCH_MEMBER)
 not_a_name = other.get("lower_case")
@@ -360,7 +361,7 @@ def test_the_read_site_scan_finds_each_kind_of_read_in_a_synthetic_source() -> N
         "MMMM_THIRTEEN",
         "NNNN_FOURTEEN",
         "OTEL_SERVICE_NAME",
-        "INSTANCE_ID",
+        "GIT_COMMIT_SHA",
         "OOOO_KEYWORD",
         "PPPP_GETATTR",
         "QQQQ_BYTES",

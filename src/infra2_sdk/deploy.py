@@ -85,7 +85,7 @@ class DeployRequest:
     contract_version: int = CONTRACT_VERSION
 
     def __post_init__(self) -> None:
-        validate_deploy_request(self)
+        _validate_deploy_request(self)
 
     def to_dict(self) -> dict[str, object]:
         data = asdict(self)
@@ -116,7 +116,7 @@ class DeployRequest:
         )
 
 
-def validate_deploy_request(request: DeployRequest) -> None:
+def _validate_deploy_request(request: DeployRequest) -> None:
     require_contract_version(
         request.contract_version,
         CONTRACT_VERSION,
@@ -148,7 +148,7 @@ def validate_deploy_request(request: DeployRequest) -> None:
         raise ValueError("remove is limited to preview and canary targets")
 
 
-def validate_wire_shape(raw: Mapping[str, Any]) -> None:
+def _validate_wire_shape(raw: Mapping[str, Any]) -> None:
     """Fail closed unless ``raw``'s keys are EXACTLY the DeployRequest v1 wire shape.
 
     ``DeployRequest.from_dict`` is deliberately lenient about extra/missing keys —
@@ -193,7 +193,7 @@ def validate_wire_shape(raw: Mapping[str, Any]) -> None:
 # hardcoded per-app dict in infra2, so a CI-layout change and its contract update
 # land in the same PR in the same repo.
 
-EVIDENCE_POLICY_CONTRACT_VERSION = 1
+_EVIDENCE_POLICY_CONTRACT_VERSION = 1
 PRODUCTION_EVIDENCE_POLICY_PATH = "tools/production_evidence_policy.json"
 
 _WORKFLOW_PATH_RE = re.compile(r"\A\.github/workflows/[A-Za-z0-9._-]+\.ya?ml\Z")
@@ -202,7 +202,7 @@ _RUN_EVENTS = frozenset({"push", "workflow_dispatch"})
 
 
 @dataclass(frozen=True)
-class RunEvidenceExpectation:
+class _RunEvidenceExpectation:
     """What one evidence run (release-image build, or staging deploy) must look like.
 
     ``display_title_template`` is a literal string supporting ``{version_ref}``
@@ -245,7 +245,7 @@ class RunEvidenceExpectation:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, raw: Mapping[str, Any]) -> RunEvidenceExpectation:
+    def from_dict(cls, raw: Mapping[str, Any]) -> _RunEvidenceExpectation:
         require_head_sha = raw.get("require_head_sha", True)
         if type(require_head_sha) is not bool:
             raise ValueError("require_head_sha must be a boolean")
@@ -266,15 +266,15 @@ class ProductionEvidencePolicy:
     """
 
     service: str
-    source: RunEvidenceExpectation
-    staging: RunEvidenceExpectation
+    source: _RunEvidenceExpectation
+    staging: _RunEvidenceExpectation
     review_base_ref: str
-    contract_version: int = EVIDENCE_POLICY_CONTRACT_VERSION
+    contract_version: int = _EVIDENCE_POLICY_CONTRACT_VERSION
 
     def __post_init__(self) -> None:
         require_contract_version(
             self.contract_version,
-            EVIDENCE_POLICY_CONTRACT_VERSION,
+            _EVIDENCE_POLICY_CONTRACT_VERSION,
             description="evidence policy contract_version",
         )
         if not _SERVICE_RE.match(self.service):
@@ -289,7 +289,7 @@ class ProductionEvidencePolicy:
     def from_dict(cls, raw: Mapping[str, Any]) -> ProductionEvidencePolicy:
         contract_version = parse_contract_version(
             raw,
-            EVIDENCE_POLICY_CONTRACT_VERSION,
+            _EVIDENCE_POLICY_CONTRACT_VERSION,
             description="evidence policy contract_version",
         )
         source = raw.get("source")
@@ -301,8 +301,8 @@ class ProductionEvidencePolicy:
         return cls(
             contract_version=contract_version,
             service=parse_string(raw, "service"),
-            source=RunEvidenceExpectation.from_dict(source),
-            staging=RunEvidenceExpectation.from_dict(staging),
+            source=_RunEvidenceExpectation.from_dict(source),
+            staging=_RunEvidenceExpectation.from_dict(staging),
             review_base_ref=parse_string(raw, "review_base_ref"),
         )
 
@@ -320,7 +320,7 @@ def canonical_json(request: DeployRequest) -> str:
     )
 
 
-def default_github_json_fetcher(
+def _default_github_json_fetcher(
     *,
     token: str = "",
     token_env: str = "GITHUB_TOKEN",
@@ -531,7 +531,7 @@ def fetch_production_evidence_policy(
 ) -> ProductionEvidencePolicy:
     """Fetch and validate the production evidence policy for a request."""
     where = f"{request.source_repository}:{PRODUCTION_EVIDENCE_POLICY_PATH}@{request.source_sha}"
-    fetch = fetch_json or default_github_json_fetcher()
+    fetch = fetch_json or _default_github_json_fetcher()
     try:
         payload = fetch(
             f"/repos/{request.source_repository}/contents/"
@@ -554,7 +554,7 @@ def verify_production_evidence(
     fetch_json: Callable[[str], Any] | None = None,
 ) -> None:
     """Verify production evidence runs and pull requests against GitHub API."""
-    fetch = fetch_json or default_github_json_fetcher()
+    fetch = fetch_json or _default_github_json_fetcher()
     _validate_evidence_urls(request)
     source_run_id = _github_evidence_number(
         request.evidence.source_run_url,
@@ -620,10 +620,10 @@ def verify_production_evidence(
 # --- Deploy Dispatch ---------------------------------------------------------
 
 INFRA_REPOSITORY = "wangzitian0/infra2"
-RECEIVER_WORKFLOW_FILE = "app-deploy-request.yml"
-RECEIVER_EVENT_TYPE = "app-deploy-request"
+_RECEIVER_WORKFLOW_FILE = "app-deploy-request.yml"
+_RECEIVER_EVENT_TYPE = "app-deploy-request"
 _RUNS_PATH = (
-    f"/repos/{INFRA_REPOSITORY}/actions/workflows/{RECEIVER_WORKFLOW_FILE}/runs"
+    f"/repos/{INFRA_REPOSITORY}/actions/workflows/{_RECEIVER_WORKFLOW_FILE}/runs"
     "?event=repository_dispatch&per_page=30"
 )
 
@@ -654,7 +654,7 @@ def dispatch_and_wait(
     api(
         "POST",
         f"/repos/{INFRA_REPOSITORY}/dispatches",
-        {"event_type": RECEIVER_EVENT_TYPE, "client_payload": canonical},
+        {"event_type": _RECEIVER_EVENT_TYPE, "client_payload": canonical},
     )
 
     seen: list[str] = []
@@ -1016,7 +1016,7 @@ def validate_sender_request(
     supported_set = frozenset(supported_deploy_types)
 
     def _check(mapping: Mapping[str, Any]) -> None:
-        validate_wire_shape(mapping)
+        _validate_wire_shape(mapping)
         contract_version = mapping.get("contract_version")
         if isinstance(contract_version, bool) or contract_version != CONTRACT_VERSION:
             raise ValueError(f"contract_version must be {CONTRACT_VERSION}")

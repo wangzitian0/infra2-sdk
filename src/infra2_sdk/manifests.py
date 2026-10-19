@@ -79,7 +79,7 @@ class ManifestSpec:
         )
 
 
-def render(manifest: EnvironmentManifest) -> str:
+def _render(manifest: EnvironmentManifest) -> str:
     """The canonical file form: two-space JSON, trailing newline, no extra envelope."""
     return json.dumps(manifest.to_dict(), indent=2, ensure_ascii=False) + "\n"
 
@@ -104,7 +104,7 @@ def check(
     specs = tuple(specs)
     problems: list[str] = []
     for spec in specs:
-        expected = render(spec.build())
+        expected = _render(spec.build())
         target = root / spec.path
         if not target.exists() or target.read_text(encoding="utf-8") != expected:
             problems.append(f"{spec.path}: stale, regenerate with --write")
@@ -113,20 +113,20 @@ def check(
     return problems
 
 
-def write(
+def _write(
     *, root: Path, specs: Iterable[ManifestSpec], echo: Callable[[str], None] = print
 ) -> list[str]:
     written: list[str] = []
     for spec in specs:
         target = root / spec.path
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(render(spec.build()), encoding="utf-8")
+        target.write_text(_render(spec.build()), encoding="utf-8")
         written.append(spec.path)
         echo(f"wrote {spec.path}")
     return written
 
 
-def validate_env(
+def _validate_env(
     manifest: EnvironmentManifest | str | Path,
     environ: Mapping[str, str] | None = None,
     *,
@@ -154,7 +154,7 @@ def assert_environment(
         raise RuntimeError(
             f"environment manifest {path} is not in the image; boot validation cannot run (#759)"
         )
-    missing = validate_env(
+    missing = _validate_env(
         path,
         os.environ if environ is None else environ,
         require_injected=require_injected,
@@ -191,7 +191,7 @@ def main(
     args = parser.parse_args(list(argv) if argv is not None else None)
     specs = tuple(specs)
     if args.write:
-        write(root=root, specs=specs, echo=echo)
+        _write(root=root, specs=specs, echo=echo)
         return 0
     if args.check:
         problems = check(root=root, specs=specs, hand_written=hand_written)
@@ -199,7 +199,7 @@ def main(
             echo(problem)
         echo("env manifests: ok" if not problems else f"env manifests: {len(problems)} problem(s)")
         return 1 if problems else 0
-    missing = validate_env(
+    missing = _validate_env(
         args.validate_env, root=root, require_injected=not args.no_require_injected
     )
     for name in missing:
@@ -214,6 +214,7 @@ __all__ = [
     "assert_environment",
     "check",
     "load",
+    "main",
 ]
 
 if __name__ == "__main__":  # pragma: no cover - a repository wraps main() with its specs

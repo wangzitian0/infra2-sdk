@@ -5,12 +5,12 @@ from pathlib import Path
 import pytest
 
 from infra2_sdk.rules.compose import (
-    ComposeReport,
+    _ComposeReport,
+    _main,
     find_bare_latest_violations,
     inspect_compose,
     inspect_service_resource_limits,
     is_memory_ceiling,
-    main,
     tag_of_image_ref,
 )
 
@@ -91,7 +91,7 @@ services:
     image: postgres:16-alpine
 """
     report = inspect_compose(compose)
-    assert isinstance(report, ComposeReport)
+    assert isinstance(report, _ComposeReport)
     assert report.bare_latest_violations == ("myrepo/app:latest",)
     assert report.compliant_services == ("app",)
     assert report.unlimited_services == ("db",)
@@ -120,12 +120,12 @@ services:
 def test_compose_main_cli(tmp_path: Path) -> None:
     file_path = tmp_path / "compose.yaml"
     file_path.write_text("services:\n  bad:\n    image: app:latest\n", encoding="utf-8")
-    assert main([str(file_path)]) == 1
-    assert main([str(file_path), "--allow-unlimited", "bad"]) == 1  # still has bare latest
+    assert _main([str(file_path)]) == 1
+    assert _main([str(file_path), "--allow-unlimited", "bad"]) == 1  # still has bare latest
 
     content = "services:\n  ok:\n    image: app:1.0\n    mem_limit: 256m\n"
     file_path.write_text(content, encoding="utf-8")
-    assert main([str(file_path)]) == 0
+    assert _main([str(file_path)]) == 0
 
 
 def test_inspect_compose_missing_file(tmp_path: Path) -> None:

@@ -20,8 +20,8 @@ def _yaml() -> Any:
 
 
 # 512m, 1.5g, 2G, 1073741824. A bare 0, "0", "0b" or prose is not a ceiling.
-SIZE_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([kmgtb]?b?)\s*$", re.I)
-UNITS = {
+_SIZE_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([kmgtb]?b?)\s*$", re.I)
+_UNITS = {
     "": 1,
     "b": 1,
     "k": 2**10,
@@ -45,10 +45,10 @@ def is_memory_ceiling(value: object) -> bool:
         return value > 0
     if not isinstance(value, str):
         return False
-    match = SIZE_RE.match(value)
+    match = _SIZE_RE.match(value)
     if not match:
         return False
-    return float(match.group(1)) * UNITS.get(match.group(2).lower(), 0) > 0
+    return float(match.group(1)) * _UNITS.get(match.group(2).lower(), 0) > 0
 
 
 def tag_of_image_ref(ref: str) -> str:
@@ -77,7 +77,7 @@ def find_bare_latest_violations(compose_text: str) -> list[str]:
 
 
 @dataclass(frozen=True)
-class ComposeReport:
+class _ComposeReport:
     """Inspection report for a single compose file or fragment."""
 
     path: str
@@ -131,7 +131,7 @@ def inspect_service_resource_limits(
     return compliant, non_compliant
 
 
-def inspect_compose(path_or_text: str | Path) -> ComposeReport:
+def inspect_compose(path_or_text: str | Path) -> _ComposeReport:
     """Parse and inspect a compose file or text for both bare latest tags and resource limits."""
     path_str = str(path_or_text)
     is_path = isinstance(path_or_text, Path) or (
@@ -148,7 +148,7 @@ def inspect_compose(path_or_text: str | Path) -> ComposeReport:
         try:
             text = Path(path_or_text).read_text(encoding="utf-8")
         except OSError as exc:
-            return ComposeReport(
+            return _ComposeReport(
                 path=path_str,
                 bare_latest_violations=(),
                 compliant_services=(),
@@ -165,7 +165,7 @@ def inspect_compose(path_or_text: str | Path) -> ComposeReport:
     try:
         docs = [d for d in yaml.safe_load_all(text) if d]
     except yaml.YAMLError as exc:
-        return ComposeReport(
+        return _ComposeReport(
             path=path_str,
             bare_latest_violations=bare_violations,
             compliant_services=(),
@@ -188,7 +188,7 @@ def inspect_compose(path_or_text: str | Path) -> ComposeReport:
         compliant.extend(comp)
         unlimited.extend(unlim)
 
-    return ComposeReport(
+    return _ComposeReport(
         path=path_str,
         bare_latest_violations=bare_violations,
         compliant_services=tuple(sorted(compliant)),
@@ -196,7 +196,7 @@ def inspect_compose(path_or_text: str | Path) -> ComposeReport:
     )
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def _main(argv: Sequence[str] | None = None) -> int:
     """CLI runner for compose linting."""
     parser = argparse.ArgumentParser(
         description="Lint Compose files for resource limits and image pin rules."
@@ -268,7 +268,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_main())
 
 
 __all__ = [

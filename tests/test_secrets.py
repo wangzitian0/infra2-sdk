@@ -8,9 +8,9 @@ from infra2_sdk.secrets import (
     OnePasswordBackend,
     SecretsError,
     SecretsResolver,
-    SyncReport,
     VaultKvBackend,
     WriteResult,
+    _SyncReport,
     op_item,
     render_agent_policy,
     render_agent_template,
@@ -163,7 +163,7 @@ def test_ensure_runtime_generates_only_absent_required_values() -> None:
         store=MemoryBackend(),
         generator=lambda f: "gen",
     )
-    assert quiet.ensure_runtime() == SyncReport(unchanged=("BRIDGE_PASSWORD",))
+    assert quiet.ensure_runtime() == _SyncReport(unchanged=("BRIDGE_PASSWORD",))
     assert store.paths["truealpha/staging/data_engine"] == {
         "SECRET_KEY": "keep",
         "ADMIN_PASSWORD": "generated-ADMIN_PASSWORD",
@@ -467,7 +467,7 @@ def test_store_key_maps_an_environment_name_to_a_lowercase_store_key() -> None:
     )
     # bootstrap_password is empty_ok: an optional value is never generated, only mirrored
     # once someone (the deployment's own provisioning) has written it.
-    assert resolver.ensure_runtime() == SyncReport(unchanged=("bootstrap_password", "secret_key"))
+    assert resolver.ensure_runtime() == _SyncReport(unchanged=("bootstrap_password", "secret_key"))
     assert resolver.mirror().missing == ("bootstrap_password",)
     store.paths["platform/staging/authentik"]["bootstrap_password"] = "pw"
     assert resolver.mirror().changed == ("bootstrap_password",)

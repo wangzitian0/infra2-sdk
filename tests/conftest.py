@@ -75,7 +75,7 @@ def resolver_calls(monkeypatch) -> list[dict]:
         return real(*args, **kwargs)
 
     holders = _patch_everywhere(monkeypatch, "_resolve_service_identity", counting)
-    assert holders >= 3, "environment, otel and identity must hold the resolver: nothing is counted"
+    assert holders >= 2, "environment and otel must hold the resolver: nothing is counted"
     return calls
 
 

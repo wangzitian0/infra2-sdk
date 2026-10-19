@@ -20,8 +20,8 @@ def _yaml() -> Any:
     return yaml
 
 
-GATE_ID_RE = re.compile(r"\A[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+\Z")
-REQUIRED_GATE_FIELDS = ("id", "stage", "task_category", "workflow", "job")
+_GATE_ID_RE = re.compile(r"\A[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+\Z")
+_REQUIRED_GATE_FIELDS = ("id", "stage", "task_category", "workflow", "job")
 
 # --- Cross-repo CI testing hierarchy and compute budgets (#788, #840) --------
 
@@ -320,12 +320,12 @@ def validate_gate(
     id_prefix: str | None = None,
 ) -> list[str]:
     errors: list[str] = []
-    for field in REQUIRED_GATE_FIELDS:
+    for field in _REQUIRED_GATE_FIELDS:
         if not str(raw.get(field, "")).strip():
             errors.append(f"missing required field {field!r}")
     gate_id = str(raw.get("id", ""))
-    if gate_id and not GATE_ID_RE.match(gate_id):
-        errors.append(f"gate id {gate_id!r} must match {GATE_ID_RE.pattern}")
+    if gate_id and not _GATE_ID_RE.match(gate_id):
+        errors.append(f"gate id {gate_id!r} must match {_GATE_ID_RE.pattern}")
     if id_prefix and gate_id and not gate_id.startswith(id_prefix):
         errors.append(f"gate id {gate_id!r} must carry the repo prefix {id_prefix!r}")
     stage = raw.get("stage")
@@ -366,7 +366,7 @@ def validate_manifest_offline(manifest: Any) -> list[str]:
     ``injected`` (the deployment must supply it) or ``empty_ok``.
     """
 
-    from infra2_sdk.runtime.config_schema import COMPOSE_SOURCES, FieldSource
+    from infra2_sdk.runtime.config_schema import _COMPOSE_SOURCES, _FieldSource
 
     errors: list[str] = []
     declared = {field.env for field in manifest.fields}
@@ -375,11 +375,11 @@ def validate_manifest_offline(manifest: Any) -> list[str]:
         settled = field.empty_ok or field.required or field.injected
         if field.store_backed and field.has_default and not settled:
             errors.append(f"{name}: {field.source} value must be required, injected or empty_ok")
-        if field.source in COMPOSE_SOURCES and not field.injected:
+        if field.source in _COMPOSE_SOURCES and not field.injected:
             errors.append(f"{name}: {field.source} value must be injected by the deployment")
-        if field.sensitive and field.source == FieldSource.CODE and not field.provided_by:
+        if field.sensitive and field.source == _FieldSource.CODE and not field.provided_by:
             errors.append(f"{name}: a sensitive value cannot be a code default")
-        if field.source == FieldSource.BOOTSTRAP:
+        if field.source == _FieldSource.BOOTSTRAP:
             errors.append(f"{name}: bootstrap values never enter an application manifest")
         for key in field.composed_keys:
             provider_key = field.provided_by.split(":", 1)[1] if field.provided_by else ""

@@ -24,7 +24,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import infra2_sdk
-from infra2_sdk.runtime.config_schema import EnvironmentField, EnvironmentManifest, FieldSource
+from infra2_sdk.runtime.config_schema import EnvironmentField, EnvironmentManifest, _FieldSource
 from infra2_sdk.secrets import render_agent_policy, render_agent_template
 
 
@@ -33,7 +33,7 @@ def _clean_ident(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_]", "_", value.strip().lower())
 
 
-def generate_compose_yaml(
+def _generate_compose_yaml(
     service_name: str,
     project: str,
     port: int,
@@ -46,7 +46,7 @@ def generate_compose_yaml(
     container_prefix = f"{clean_project}-{clean_service}"
     db_env = "      DATABASE_URL: ${DATABASE_URL:-}\n" if db == "postgres" else ""
     # A manifest without fields renders an empty .env, so the sidecar check tests existence.
-    env_file_test = "-s" if scaffold_manifest(service_name, project, db).fields else "-e"
+    env_file_test = "-s" if _scaffold_manifest(service_name, project, db).fields else "-e"
 
     if profile == "standalone":
         return f"""services:
@@ -191,7 +191,7 @@ networks:
 """
 
 
-def generate_deploy_py(
+def _generate_deploy_py(
     service_name: str,
     project: str,
     port: int,
@@ -264,7 +264,9 @@ if shared_tasks:
 '''
 
 
-def scaffold_manifest(service_name: str, project: str, db: str = "postgres") -> EnvironmentManifest:
+def _scaffold_manifest(
+    service_name: str, project: str, db: str = "postgres"
+) -> EnvironmentManifest:
     """Declare the secrets the generated app reads.
 
     ``infra2_sdk.secrets`` renders the Vault Agent template and policy from this manifest.
@@ -279,14 +281,14 @@ def scaffold_manifest(service_name: str, project: str, db: str = "postgres") -> 
                 has_default=False,
                 sensitive=True,
                 group="Database",
-                source=FieldSource.HUMAN,
+                source=_FieldSource.HUMAN,
             ),
         )
     source = f"scaffold:{_clean_ident(project)}/{_clean_ident(service_name)}"
     return EnvironmentManifest(source=source, fields=fields)
 
 
-def generate_vault_agent_hcl() -> str:
+def _generate_vault_agent_hcl() -> str:
     """Generate platform canonical Vault Agent configuration."""
     return """vault {
   address = "${VAULT_ADDR}"
@@ -323,7 +325,7 @@ template {
 """
 
 
-def generate_entrypoint_sh(port: int, profile: str = "infra2") -> str:
+def _generate_entrypoint_sh(port: int, profile: str = "infra2") -> str:
     """Generate entrypoint script waiting for tmpfs secrets and executing migrations."""
     if profile == "standalone":
         return f"""#!/bin/sh
@@ -375,7 +377,7 @@ exec "$@"
 """
 
 
-def generate_env_example(service_name: str, port: int, db: str = "postgres") -> str:
+def _generate_env_example(service_name: str, port: int, db: str = "postgres") -> str:
     """Generate 12-factor environment template."""
     clean_service = _clean_ident(service_name)
     lines = [
@@ -389,7 +391,7 @@ def generate_env_example(service_name: str, port: int, db: str = "postgres") -> 
     return "\n".join(lines) + "\n"
 
 
-def generate_fastapi_app(service_name: str, db: str = "postgres", profile: str = "infra2") -> str:
+def _generate_fastapi_app(service_name: str, db: str = "postgres", profile: str = "infra2") -> str:
     """Generate starter FastAPI application with 1-liner init_service.
 
     The infra2 profile keeps the default ``strict_otel=True``: its compose file passes ``ENV``
@@ -460,7 +462,7 @@ def read_root():
 '''
 
 
-def generate_dockerfile(port: int) -> str:
+def _generate_dockerfile(port: int) -> str:
     """Generate standard lightweight Dockerfile."""
     return f"""FROM python:3.12-slim
 
@@ -497,7 +499,7 @@ def _sdk_release_version() -> str:
     return match.group()
 
 
-def generate_requirements_txt(template: str = "fastapi", db: str = "postgres") -> str:
+def _generate_requirements_txt(template: str = "fastapi", db: str = "postgres") -> str:
     """Generate minimum starter dependencies.
 
     The lower bound of ``infra2-sdk`` is the release part of the SDK version that runs
@@ -531,22 +533,22 @@ def scaffold_service(
     created: list[str] = []
 
     files: dict[str, str] = {
-        "compose.yaml": generate_compose_yaml(name, project, port, db, profile=profile),
-        "entrypoint.sh": generate_entrypoint_sh(port, profile=profile),
-        "Dockerfile": generate_dockerfile(port),
-        "requirements.txt": generate_requirements_txt(template=template, db=db),
-        "app.py": generate_fastapi_app(name, db=db, profile=profile),
+        "compose.yaml": _generate_compose_yaml(name, project, port, db, profile=profile),
+        "entrypoint.sh": _generate_entrypoint_sh(port, profile=profile),
+        "Dockerfile": _generate_dockerfile(port),
+        "requirements.txt": _generate_requirements_txt(template=template, db=db),
+        "app.py": _generate_fastapi_app(name, db=db, profile=profile),
     }
 
     if profile == "infra2":
-        manifest = scaffold_manifest(name, project, db)
+        manifest = _scaffold_manifest(name, project, db)
         vault_names = {"project": _clean_ident(project), "service": _clean_ident(name)}
-        files["deploy.py"] = generate_deploy_py(name, project, port)
+        files["deploy.py"] = _generate_deploy_py(name, project, port)
         files["secrets.ctmpl"] = render_agent_template(manifest, **vault_names)
         files["vault-policy.hcl"] = render_agent_policy(manifest, **vault_names)
-        files["vault-agent.hcl"] = generate_vault_agent_hcl()
+        files["vault-agent.hcl"] = _generate_vault_agent_hcl()
     elif profile == "standalone":
-        files[".env.example"] = generate_env_example(name, port, db)
+        files[".env.example"] = _generate_env_example(name, port, db)
 
     for rel_path, content in files.items():
         file_path = target_dir / rel_path
@@ -615,4 +617,7 @@ if __name__ == "__main__":
     sys.exit(main())
 
 
-__all__ = ()
+__all__ = [
+    "main",
+    "scaffold_service",
+]

@@ -32,7 +32,7 @@ from infra2_sdk.runtime.environment import (
     strict_environment_from_env,
 )
 from infra2_sdk.runtime.health import (
-    HTTP_OK,
+    _HTTP_OK,
     DependencyStatus,
     HealthStatus,
     ProbeResult,
@@ -42,7 +42,7 @@ from infra2_sdk.runtime.health import (
 if TYPE_CHECKING:
     from infra2_sdk.runtime.otel import OtelSettings
 
-logger = logging.getLogger("infra2_sdk.fastapi")
+_logger = logging.getLogger("infra2_sdk.fastapi")
 
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 _INITIALIZED_ATTRIBUTE = "infra2_service_name"
@@ -132,7 +132,7 @@ def _with_relax_hint(exc: ValueError) -> ValueError:
 
 def _log_missing_endpoint(*, deployed: bool) -> None:
     level = logging.WARNING if deployed else logging.DEBUG
-    logger.log(
+    _logger.log(
         level,
         "%s is not set; OpenTelemetry export is off",
         RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT.value,
@@ -176,10 +176,10 @@ def _resolve_telemetry(
         if resolve_runtime_env(None, RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT).value is None:
             _log_missing_endpoint(deployed=_in_deployed_tier())
         else:
-            logger.warning("Could not initialize OpenTelemetry: %s", exc)
+            _logger.warning("Could not initialize OpenTelemetry: %s", exc)
         return None
     if settings.sdk_disabled:
-        logger.debug("OpenTelemetry is disabled by the environment")
+        _logger.debug("OpenTelemetry is disabled by the environment")
         return None
     if settings.endpoint is None:
         # The tier that from_env resolved, also when it inferred the tier from the attribute
@@ -216,13 +216,13 @@ def _start_telemetry(
                 providers.shutdown()
 
         app.router.lifespan_context = lifespan
-        logger.info(
+        _logger.info(
             "OpenTelemetry started for '%s' -> %s", settings.service_name, settings.endpoint
         )
     except Exception as exc:
         if strict:
             raise
-        logger.warning("Could not initialize OpenTelemetry: %s", exc)
+        _logger.warning("Could not initialize OpenTelemetry: %s", exc)
 
 
 def init_service(
@@ -334,7 +334,7 @@ def init_service(
 
     async def report() -> tuple[int, dict[str, Any]]:
         if db_checker is None:
-            return HTTP_OK, {"status": HealthStatus.HEALTHY.value, "checks": {}, "reasons": []}
+            return _HTTP_OK, {"status": HealthStatus.HEALTHY.value, "checks": {}, "reasons": []}
         return await check_health(
             [_DatabaseCheck(db_checker)], timeout_seconds=check_timeout_seconds
         )
@@ -351,7 +351,7 @@ def init_service(
     @app.get("/readyz", tags=["Observability"], include_in_schema=False)
     async def readyz():
         status_code, body = await report()
-        if status_code == HTTP_OK:
+        if status_code == _HTTP_OK:
             return JSONResponse(content={"status": "ready", "service": name})
         return JSONResponse(
             status_code=status_code,

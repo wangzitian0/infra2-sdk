@@ -6,9 +6,9 @@ from infra2_sdk.runtime.config_schema import (
     JSON_SCHEMA_DIALECT,
     EnvironmentField,
     EnvironmentManifest,
+    _reconcile,
     environment_manifest_from_model,
     manifest_config_fingerprint,
-    reconcile,
     validate_environment,
 )
 from infra2_sdk.runtime.environment import EnvironmentConflictError
@@ -213,7 +213,7 @@ def test_reconcile_reports_names_only() -> None:
             EnvironmentField("e", "E", source="release", injected=True),
         ),
     )
-    report = reconcile(
+    report = _reconcile(
         manifest,
         {"A": "old", "C": " ", "D": "x", "E": "sha", "ZOMBIE": "1", "_probe": ""},
         expected={"A": "new"},
@@ -225,8 +225,8 @@ def test_reconcile_reports_names_only() -> None:
         "stale": ["A"],
     }
     assert not report.ok
-    assert reconcile(manifest, {"A": "v", "C": "v"}).ok
-    assert reconcile(manifest, {"C": "v"}).missing == ("A",)
+    assert _reconcile(manifest, {"A": "v", "C": "v"}).ok
+    assert _reconcile(manifest, {"C": "v"}).missing == ("A",)
 
 
 def test_manifest_config_fingerprint_is_stable_and_value_blind() -> None:

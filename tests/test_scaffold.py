@@ -13,9 +13,9 @@ from packaging.version import Version
 import infra2_sdk
 from infra2_sdk.ci import validate_manifest_offline
 from infra2_sdk.scaffold import (
-    generate_requirements_txt,
+    _generate_requirements_txt,
+    _scaffold_manifest,
     main,
-    scaffold_manifest,
     scaffold_service,
 )
 
@@ -265,8 +265,8 @@ def test_scaffold_requirements_txt_includes_extras(tmp_path: Path):
 def test_scaffold_requirement_follows_the_sdk_version(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(infra2_sdk, "__version__", "9.8.7")
 
-    assert "infra2-sdk[fastapi,otel,postgres]>=9.8.7\n" in generate_requirements_txt(db="postgres")
-    assert "infra2-sdk[fastapi,otel]>=9.8.7\n" in generate_requirements_txt(db="none")
+    assert "infra2-sdk[fastapi,otel,postgres]>=9.8.7\n" in _generate_requirements_txt(db="postgres")
+    assert "infra2-sdk[fastapi,otel]>=9.8.7\n" in _generate_requirements_txt(db="none")
 
 
 @pytest.mark.parametrize(
@@ -285,7 +285,7 @@ def test_scaffold_requirement_keeps_only_the_release_part(
 ):
     monkeypatch.setattr(infra2_sdk, "__version__", sdk_version)
 
-    assert generate_requirements_txt(db="none").endswith(f"infra2-sdk[fastapi,otel]>={bound}\n")
+    assert _generate_requirements_txt(db="none").endswith(f"infra2-sdk[fastapi,otel]>={bound}\n")
 
 
 def test_scaffold_requirement_rejects_a_version_without_a_release_part(
@@ -294,7 +294,7 @@ def test_scaffold_requirement_rejects_a_version_without_a_release_part(
     monkeypatch.setattr(infra2_sdk, "__version__", "not-a-version")
 
     with pytest.raises(ValueError, match="not-a-version"):
-        generate_requirements_txt(db="none")
+        _generate_requirements_txt(db="none")
 
 
 def test_scaffold_cli_subcommand_forwarding(tmp_path: Path):
@@ -473,7 +473,7 @@ def test_infra2_app_starts_with_a_known_tier(tmp_path: Path):
 def test_scaffold_manifest_declares_the_database_url_as_a_required_sensitive_human_secret():
     # The Vault renderers ignore `sensitive`. The flag changes the JSON schema and how
     # validate_environment compares values, so those are the observable outputs.
-    manifest = scaffold_manifest("demo-service", "apps", "postgres")
+    manifest = _scaffold_manifest("demo-service", "apps", "postgres")
 
     schema = manifest.to_json_schema()
 
@@ -485,7 +485,7 @@ def test_scaffold_manifest_declares_the_database_url_as_a_required_sensitive_hum
 
 
 def test_scaffold_manifest_without_database_declares_no_field():
-    manifest = scaffold_manifest("demo-service", "apps", "none")
+    manifest = _scaffold_manifest("demo-service", "apps", "none")
 
     assert manifest.fields == ()
     assert manifest.to_json_schema()["properties"] == {}
@@ -577,16 +577,16 @@ def test_generated_postgres_app_uses_a_set_database_url(tmp_path: Path, profile:
 @pytest.mark.parametrize("profile", ["infra2", "standalone"])
 def test_scaffold_compose_passes_the_sdk_memory_lint(tmp_path: Path, profile: str) -> None:
     from infra2_sdk.rules.compose import inspect_compose
-    from infra2_sdk.scaffold import generate_compose_yaml
+    from infra2_sdk.scaffold import _generate_compose_yaml
 
-    report = inspect_compose(generate_compose_yaml("web-app", "apps", 8000, profile=profile))
+    report = inspect_compose(_generate_compose_yaml("web-app", "apps", 8000, profile=profile))
     assert report.is_valid, report
 
 
 def test_scaffold_deploy_py_declares_compose_path_and_public_route() -> None:
-    from infra2_sdk.scaffold import generate_deploy_py
+    from infra2_sdk.scaffold import _generate_deploy_py
 
-    tree = ast.parse(generate_deploy_py("web-app", "apps", 8000))
+    tree = ast.parse(_generate_deploy_py("web-app", "apps", 8000))
     imports = [
         alias.name
         for node in ast.walk(tree)

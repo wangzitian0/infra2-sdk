@@ -73,11 +73,11 @@ def test_hand_written_manifests_go_through_the_offline_gate(tmp_path: Path) -> N
 def test_validate_env_names_only_what_is_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    manifests.write(root=tmp_path, specs=(SPEC,), echo=lambda _: None)
+    manifests._write(root=tmp_path, specs=(SPEC,), echo=lambda _: None)
     environ = {"DATABASE_URL": "postgresql://real", "API_KEY": ""}
-    missing = manifests.validate_env(SPEC.path, environ, root=tmp_path)
+    missing = manifests._validate_env(SPEC.path, environ, root=tmp_path)
     assert missing == ["GIT_COMMIT_SHA"]  # injected by the deployment, absent here
-    assert manifests.validate_env(SPEC.path, environ, root=tmp_path, require_injected=False) == []
+    assert manifests._validate_env(SPEC.path, environ, root=tmp_path, require_injected=False) == []
     echoed: list[str] = []
     for key, value in environ.items():
         monkeypatch.setenv(key, value)
@@ -135,6 +135,6 @@ def test_invalid_named_overrides_fail_before_writing(
     reference = f"{module.__name__}:{attribute}"
     spec = ManifestSpec("env.json", Settings, overrides=reference)
     with pytest.raises(ValueError, match=reference) as error:
-        manifests.write(root=tmp_path, specs=(spec,))
+        manifests._write(root=tmp_path, specs=(spec,))
     assert "sensitive-value" not in str(error.value)
     assert not (tmp_path / "env.json").exists()

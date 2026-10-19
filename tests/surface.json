@@ -62,7 +62,6 @@
     "environment": "consumer: finance_report, truealpha",
     "health": "consumer: finance_report, infra2, truealpha",
     "http": "documented: README section Core runtime entrypoints",
-    "identity": "consumer: infra2, truealpha",
     "llm": "consumer: finance_report, truealpha",
     "otel": "consumer: finance_report, truealpha",
     "postgres": "consumer: infra2, truealpha",

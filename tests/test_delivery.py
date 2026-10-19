@@ -7,9 +7,9 @@ from infra2_sdk.delivery import (
     PipelineStage,
     StageResult,
     StageStatus,
+    _validate_stage_result,
     classify_budget,
     make_stage_result,
-    validate_stage_result,
 )
 from infra2_sdk.runtime.environment import EnvironmentTier
 
@@ -74,7 +74,7 @@ def test_stage_validation_rejects_incomplete_evidence(changes: dict, message: st
     }
     values.update(changes)
     with pytest.raises(ValueError, match=message):
-        validate_stage_result(StageResult(**values))
+        _validate_stage_result(StageResult(**values))
 
 
 def test_skip_requires_a_reason() -> None:
@@ -167,4 +167,4 @@ def test_validate_stage_result_rejects_non_environment_tier() -> None:
         evidence_url="",
     )
     with pytest.raises(TypeError, match="EnvironmentTier"):
-        validate_stage_result(result)
+        _validate_stage_result(result)

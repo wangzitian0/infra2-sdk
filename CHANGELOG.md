@@ -4,6 +4,17 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.8.2 - 2026-10-19
+
+### Changed
+
+- Remove `INSTANCE_ID` from `RuntimeEnvKey` and `RUNTIME_ENV_SPECS` while retaining internal `resolve_env(environ, "INSTANCE_ID")` resolution in `_resolve_service_identity` ([#126](https://github.com/wangzitian0/infra2-sdk/issues/126)).
+- Prefix module-internal helpers and constants with `_` so `public_defs()` and `sdk_module_exports()` converge, and restore `__all__ = ["main", "scaffold_service"]` in `infra2_sdk.scaffold` and `"main"` in `infra2_sdk.manifests.__all__` ([#126](https://github.com/wangzitian0/infra2-sdk/issues/126)).
+
+### Removed
+
+- Remove `infra2_sdk.runtime.identity` (`RuntimeIdentity` and the duplicate `canonical_sha256` wrapper) and `infra2_sdk.delivery.validate_stage_result` ([#126](https://github.com/wangzitian0/infra2-sdk/issues/126)).
+
 ## 3.8.1 - 2026-10-19
 
 ### Changed
