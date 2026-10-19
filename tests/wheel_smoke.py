@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
 
-# Modules removed in 3.3.0 (#90), 3.4.0 (#102), 3.5.1 (#108), and 3.8.1 (#126).
+# Modules removed in 3.3.0 (#90), 3.4.0 (#102), 3.5.1 (#108), and 3.8.2 (#126).
 # One frozen list: tests/test_removed_modules.py imports it.
 REMOVED_MODULES = (
     "infra2_sdk.cli",
@@ -26,7 +26,7 @@ REMOVED_MODULES = (
     "infra2_sdk.snapshot",  # 3.4.0: no user was left after infra2 #1206
 )
 
-# Names removed in 3.4.0, 3.5.2 (#102), and 3.8.1 (#126), as (module, dotted name).
+# Names removed in 3.4.0, 3.5.2 (#102), and 3.8.2 (#126), as (module, dotted name).
 # A dotted name is a method. One frozen list: tests/test_removed_names.py imports it.
 REMOVED_NAMES = (
     ("infra2_sdk.capacity", "LEVELS"),
@@ -79,7 +79,7 @@ REMOVED_NAMES = (
     ("infra2_sdk.snapshot", "SnapshotProducer"),
 )
 
-# RuntimeEnvKey members removed in 3.4.0 (issue #102, decision 2) and 3.8.1 (#126).
+# RuntimeEnvKey members removed in 3.4.0 (issue #102, decision 2) and 3.8.2 (#126).
 REMOVED_ENV_MEMBERS = (
     "HTTP_TIMEOUT_SECONDS",
     "HTTP_CONNECT_TIMEOUT_SECONDS",

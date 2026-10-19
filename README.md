@@ -25,7 +25,7 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.8.1"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.8.2"
 ```
 
 ## Modules
@@ -73,10 +73,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.8.1'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.8.2'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.8.1'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.8.2'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -200,7 +200,7 @@ Install the published wheel in a fresh Python 3.11+ environment:
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install \
-  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.8.1/infra2_sdk-3.8.1-py3-none-any.whl'
+  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.8.2/infra2_sdk-3.8.2-py3-none-any.whl'
 ```
 
 For a local connectivity exercise, start this server in another terminal:
@@ -494,7 +494,7 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   - database: `DATABASE_URL`, `DATABASE_CONNECT_TIMEOUT_SECONDS`,
     `DATABASE_STATEMENT_TIMEOUT_SECONDS`.
 - In v3.4.0, `runtime_env_contract()["contract_version"]` (`RUNTIME_ENV_CONTRACT_VERSION`) is 2,
-  not 1, because the document lost the 21 variables removed in 3.4.0 and 3.8.1. Version 2 lists 9
+  not 1, because the document lost the 21 variables removed in 3.4.0 and 3.8.2. Version 2 lists 9
   variables. The field layout is the same. A receiver that requires version 1 rejects version 2, as
   the rule above says, so change it to require version 2.
 - In v3.4.0, the SDK no longer reads `SERVICE_NAME`, the unused alias of `OTEL_SERVICE_NAME`.
@@ -519,7 +519,7 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   start is the one exception. The `init_service` documentation describes it.
 - In v3.4.0, 24 names left `__all__` of `infra2_sdk` and `infra2_sdk.runtime` and are no longer
   attributes of these packages (eight other names that left `__all__` in v3.4.0 or v3.5.1 were
-  deleted in v3.5.1, v3.5.2, and v3.8.1 and are listed in the notes below). No consumer imports them
+  deleted in v3.5.1, v3.5.2, and v3.8.2 and are listed in the notes below). No consumer imports them
   from the package, and no recorded decision holds them. Five of them are imported from their module
   in test code. In infra2 these are `BudgetStatus`, `DisagreementKind`, `PipelineStage` and
   `validate_gate`. In finance_report and truealpha it is `ProductionEvidencePolicy`. That import
@@ -551,7 +551,7 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
 - In v3.5.2, the SDK added `PRODUCTION_REQUEST_MAX_AGE_SECONDS = 1440` in `infra2_sdk.deploy` (and
   `infra2_sdk.__all__`) and removed the remaining 3 zero-caller public symbols (`deploy.DeployState`,
   `delivery.acceleration_allowed`, and `delivery.detect_disagreement`).
-- In v3.8.1, the SDK retired `infra2_sdk.runtime.identity` (`RuntimeIdentity` and
+- In v3.8.2, the SDK retired `infra2_sdk.runtime.identity` (`RuntimeIdentity` and
   `canonical_sha256`), `delivery.validate_stage_result`, and `RuntimeEnvKey.INSTANCE_ID` after all
   consumers converged on `OtelSettings(require_issued_identity=True)`. `INSTANCE_ID` remains a fixed
   environment read for `OtelSettings.from_env`.
