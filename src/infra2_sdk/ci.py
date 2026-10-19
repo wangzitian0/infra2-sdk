@@ -181,7 +181,7 @@ def read_coverage_summary(xml_path: Path) -> dict[str, float | int]:
     if not xml_path.is_file():
         raise CoverageArtifactMissing(
             f"required coverage artifact is missing (expected {xml_path}); "
-            "run `pytest --cov=libs --cov=tools --cov-report=xml:...` first"
+            "run `pytest --cov=common --cov=tools --cov-report=xml:...` first"
         )
     try:
         root = ElementTree.parse(xml_path).getroot()

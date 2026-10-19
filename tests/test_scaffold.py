@@ -590,7 +590,7 @@ def test_scaffold_deploy_py_declares_compose_path_and_public_route() -> None:
     imports = [
         alias.name
         for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom) and node.module == "libs.core.facets"
+        if isinstance(node, ast.ImportFrom) and node.module == "common.core.facets"
         for alias in node.names
     ]
     assert "PublicRouteFacet" in imports

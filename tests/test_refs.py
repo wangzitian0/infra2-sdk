@@ -6,8 +6,8 @@ import pytest
 
 from infra2_sdk.refs import (
     ReleaseError,
+    _ls_remote_rows,
     classify_ref,
-    ls_remote_rows,
     redact_repo,
     resolve_image_digest,
     resolve_image_ref,
@@ -126,7 +126,7 @@ def test_command_runner_protocol() -> None:
     assert resolve_to_sha("main", repo=REPO, runner=c) == "custom"
 
 
-def test_ls_remote_rows_is_public_and_passes_the_command_through() -> None:
+def test_ls_remote_rows_passes_the_command_through() -> None:
     seen: list[list[str]] = []
 
     def run(command, **kwargs):
@@ -135,14 +135,14 @@ def test_ls_remote_rows_is_public_and_passes_the_command_through() -> None:
         assert kwargs["timeout"] == 30
         return SimpleNamespace(stdout=f"{SHA}\trefs/heads/main\n\nmalformed\n\trefs/x\n")
 
-    rows = ls_remote_rows(REPO, "refs/heads/main", "refs/tags/v1.0.0", runner=run)
+    rows = _ls_remote_rows(REPO, "refs/heads/main", "refs/tags/v1.0.0", runner=run)
     assert rows == [(SHA, "refs/heads/main")]
     assert seen == [["git", "ls-remote", REPO, "refs/heads/main", "refs/tags/v1.0.0"]]
-    assert ls_remote_rows(REPO, runner=lambda *a, **k: SimpleNamespace(stdout=None)) == []
+    assert _ls_remote_rows(REPO, runner=lambda *a, **k: SimpleNamespace(stdout=None)) == []
 
 
 def test_ls_remote_rows_defaults_to_subprocess_run_like_the_other_resolvers() -> None:
-    assert ls_remote_rows.__kwdefaults__["runner"] is subprocess.run
+    assert _ls_remote_rows.__kwdefaults__["runner"] is subprocess.run
 
 
 @pytest.mark.parametrize(
@@ -158,7 +158,7 @@ def test_ls_remote_rows_defaults_to_subprocess_run_like_the_other_resolvers() ->
 def test_ls_remote_rows_wraps_failures_and_never_leaks_embedded_credentials(error) -> None:
     authenticated = "https://user:secret-token@github.com/o/r.git"
     with pytest.raises(ValueError, match="git ls-remote failed") as exc_info:
-        ls_remote_rows(authenticated, "refs/heads/main", runner=runner(error=error))
+        _ls_remote_rows(authenticated, "refs/heads/main", runner=runner(error=error))
     assert "secret-token" not in str(exc_info.value)
     assert "<redacted>@github.com" in str(exc_info.value)
 

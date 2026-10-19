@@ -209,8 +209,8 @@ from __future__ import annotations
 import sys
 from invoke import task
 
-from libs.core.facets import ProbeFacet, PublicRouteFacet, SecretsFacet, SignalFacet
-from libs.deploy.deployer import Deployer, make_tasks
+from common.core.facets import ProbeFacet, PublicRouteFacet, SecretsFacet, SignalFacet
+from common.deploy.deployer import Deployer, make_tasks
 
 shared_tasks = sys.modules.get("{clean_project}.{clean_service}.shared")
 

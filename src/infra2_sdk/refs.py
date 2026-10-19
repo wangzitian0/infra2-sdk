@@ -99,7 +99,7 @@ def resolve_pr(
     if not (number.isdigit() and int(number) > 0):
         raise ValueError(f"PR number must be a positive integer, got {pr_number!r}")
     remote_ref = f"refs/pull/{number}/head"
-    for sha, name in ls_remote_rows(repo, remote_ref, runner=runner):
+    for sha, name in _ls_remote_rows(repo, remote_ref, runner=runner):
         if name == remote_ref:
             return ResolvedRef(sha=sha, image_ref=sha[:7], form="pr")
     raise ValueError(f"PR #{number} head not found in {redact_repo(repo)}")
@@ -126,7 +126,7 @@ def resolve_branch_to_sha(
         raise ValueError(f"invalid clone branch {branch!r}")
 
     remote_ref = f"refs/heads/{cleaned}"
-    for sha, name in ls_remote_rows(repo, remote_ref, runner=runner):
+    for sha, name in _ls_remote_rows(repo, remote_ref, runner=runner):
         if name == remote_ref:
             return sha
     raise ValueError(f"clone branch {branch!r} ({remote_ref}) not found in {redact_repo(repo)}")
@@ -146,7 +146,7 @@ def _resolve_remote_sha(
     remote_ref = _remote_ref_for(form, cleaned)
     peeled = remote_ref + "^{}" if form == "tag" else None
     query = [remote_ref, peeled] if peeled else [remote_ref]
-    rows = ls_remote_rows(repo, *query, runner=runner)
+    rows = _ls_remote_rows(repo, *query, runner=runner)
     if peeled:
         for sha, name in rows:
             if name == peeled:
@@ -157,7 +157,7 @@ def _resolve_remote_sha(
     return None
 
 
-def ls_remote_rows(
+def _ls_remote_rows(
     repo: str,
     *remote_refs: str,
     runner: CommandRunner = subprocess.run,
@@ -357,7 +357,6 @@ __all__ = [
     "SHORT_SHA_LENGTH",
     "assert_after_on_main",
     "classify_ref",
-    "ls_remote_rows",
     "redact_repo",
     "resolve_branch_to_sha",
     "resolve_image_digest",
