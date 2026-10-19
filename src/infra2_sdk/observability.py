@@ -202,7 +202,7 @@ def largest_gap(crons: Iterable[str]) -> timedelta:
         if (day, month, weekday) != ("*", "*", "*"):
             raise ScheduleError(
                 f"cron {expression!r} is not daily-periodic; teach "
-                "common/observability/scheduler_peer_liveness.py to measure it"
+                "infra2_sdk.observability.largest_gap to measure it"
             )
         minutes = _field(minute, "minute", 0, 59)
         hours = _field(hour, "hour", 0, 23)
