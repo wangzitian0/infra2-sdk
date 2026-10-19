@@ -4,6 +4,17 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.7.0 - 2026-10-19
+
+### Added
+
+- Add `infra2_sdk.observability` with flap hysteresis (`is_recently_flapping`, `ConsecutiveObservationState`, `evaluate_consecutive_hysteresis`), scheduled peer liveness evaluation (`MISSED_TICKS_TOLERATED`, `DELAY_ALLOWANCE`, `PeerReadError`, `ScheduleError`, `PeerVerdict`, `github_getter`, `crons_in`, `largest_gap`, `bound_for`, `parse_bound_cap_hours`, `newest_tick`, `evaluate_peer_liveness`), and self-healing GitHub issue trails (`CheckVerdict`, `Trail`, `ListingFailed`, `WriteFailed`, `IssueApi`, `GitHubIssues`, `title_for`, `check_name`, `scrub`, `record_verdicts`, `load_trail`, `issue_trail_mode`, `reconcile_issue_trail`) ([#115](https://github.com/wangzitian0/infra2-sdk/issues/115)).
+- Extend `infra2_sdk.deploy` with sender request validation and rendering (`validate_sender_request`, `render_sender_request`), approval notice helpers (`PRODUCTION_APPROVAL_MARGIN_SECONDS`, `print_approval_notice`, `announce_approval_wait`), deployed release identity inspection (`VERSION_KEYS`, `ReleaseIdentityError`, `identifier_kind`, `identity_from_body`, `read_deployed_release`), and deploy freshness measurement (`FreshnessFailure`, `Staleness`, `measure_freshness`, `format_freshness_failure`, `check_deploy_freshness`) ([#115](https://github.com/wangzitian0/infra2-sdk/issues/115)).
+- Extend `infra2_sdk.ci` with gate budget constants and workflow step inspection (`SPEC_VERSION`, `GATE_WALL_CLOCK_BUDGET_S`, `SOFT_WARN_S`, `MAX_SINGLE_TEST_S`, `TARGET_PER_SHARD_S`, `SHARD_MIN`, `SHARD_MAX`, `BANNED_IN_GATE_PATTERNS`, `BANNED_GATE_MARKERS`, `GATE_EXEMPT_RE`, `read_workflow`, `workflow_read_error`, `load_workflow`, `defanged_steps`), coverage ratchet verification (`EPSILON`, `CoverageArtifactMissing`, `CoverageBaselineInvalid`, `read_coverage_summary`, `load_baseline`, `write_baseline`, `check_no_regression`), and GitHub Actions helpers (`parse_github_time`, `write_github_output`) ([#115](https://github.com/wangzitian0/infra2-sdk/issues/115)).
+- Extend `infra2_sdk.refs` with `SHORT_SHA_LENGTH`, `short_sha`, and `assert_after_on_main`, and export `MANIFEST_ACCEPT` in `refs.__all__` ([#115](https://github.com/wangzitian0/infra2-sdk/issues/115)).
+- Extend `infra2_sdk.manifests` with `assert_environment` for startup environment variable verification ([#115](https://github.com/wangzitian0/infra2-sdk/issues/115)).
+- Extend `infra2_sdk.secrets` with `VaultTokenTarget`, `normalize_selector`, and `policy_name` for per-service Vault AppRole naming ([#115](https://github.com/wangzitian0/infra2-sdk/issues/115)).
+
 ## 3.6.0 - 2026-10-15
 
 ### Added

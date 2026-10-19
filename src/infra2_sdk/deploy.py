@@ -7,10 +7,13 @@ import binascii
 import json
 import os
 import re
+import subprocess
+import sys
 import time
 import zipfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, fields
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from io import BytesIO
 from typing import Any
@@ -895,6 +898,431 @@ def _version_prefix_matches(actual: str, expected: str) -> bool:
     return actual.startswith(expected) or expected.startswith(actual)
 
 
+PRODUCTION_APPROVAL_MARGIN_SECONDS = 120
+_RELEASE_REF_RE = re.compile(r"\Av[0-9]+\.[0-9]+\.[0-9]+\Z")
+_COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
+_SAFE_REF_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._/-]{0,199}$")
+VERSION_KEYS = ("git_sha", "version")
+
+
+def print_approval_notice(message: str) -> None:
+    """Show the notice in the run log, and as an annotation in GitHub Actions."""
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        print(f"::notice title=Production approval needed::{message}", file=sys.stderr)
+    print(message, file=sys.stderr, flush=True)
+
+
+def _approval_times(value: object) -> tuple[datetime, datetime] | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        created = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if created.tzinfo is None:
+            return None
+        created = created.astimezone(UTC)
+        deadline = created + timedelta(
+            seconds=PRODUCTION_REQUEST_MAX_AGE_SECONDS - PRODUCTION_APPROVAL_MARGIN_SECONDS
+        )
+    except (ValueError, OverflowError):
+        return None
+    return created, deadline
+
+
+def _approval_notice(run: Mapping[str, Any], version_ref: str) -> str:
+    times = _approval_times(run.get("created_at"))
+    if times is None:
+        when = (
+            "The approval deadline is unknown: the run has no usable creation time. "
+            "Approve at once."
+        )
+    else:
+        created, deadline = times
+        when = (
+            f"Approve before {deadline:%Y-%m-%d %H:%M:%S}Z. "
+            f"The receiver refuses a request that is older than "
+            f"{PRODUCTION_REQUEST_MAX_AGE_SECONDS} s when its check runs, within one minute "
+            f"after the approval. The run was created at {created:%Y-%m-%d %H:%M:%S}Z."
+        )
+    return (
+        f"Approval needed: {run.get('html_url')} waits for the owner to approve "
+        f"the 'production' environment. {when} "
+        f"Dispatch the release again for {version_ref} if the receiver refuses the request."
+    )
+
+
+def announce_approval_wait(
+    api: Api,
+    request_id: str,
+    version_ref: str,
+    announce: Callable[[str], None] = print_approval_notice,
+) -> Api:
+    """Wrap ``api`` to announce once when the receiver run for ``request_id`` awaits approval."""
+    announced = False
+
+    def watching_api(method: str, path: str, body: object = None) -> object:
+        nonlocal announced
+        payload = api(method, path, body)
+        if method == "GET" and not announced:
+            runs = payload.get("workflow_runs") if isinstance(payload, Mapping) else None
+            for run in runs if isinstance(runs, list) else []:
+                if (
+                    isinstance(run, Mapping)
+                    and request_id in str(run.get("display_title", ""))
+                    and run.get("status") == "waiting"
+                ):
+                    announce(_approval_notice(run, version_ref))
+                    announced = True
+                    break
+        return payload
+
+    return watching_api
+
+
+def _github_path_match(url: str, pattern: re.Pattern[str], message: str) -> re.Match[str]:
+    parsed = urlparse(url)
+    path_match = pattern.fullmatch(parsed.path)
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != "github.com"
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+        or path_match is None
+    ):
+        raise ValueError(message)
+    return path_match
+
+
+def validate_sender_request(
+    raw: Mapping[str, Any],
+    *,
+    service: str,
+    source_repository: str,
+    repo_label: str,
+    supported_deploy_types: Sequence[str] = (
+        DeployType.STAGING.value,
+        DeployType.PRODUCTION.value,
+    ),
+    version_ref_error: str = "version_ref must be a release tag like vX.Y.Z",
+    prod_staging_required_error: str = "evidence.staging_run_url is required for prod",
+    prod_review_required_error: str = "evidence.reviewed_change_url is required for prod",
+    prod_staging_url_error: str | None = None,
+    prod_review_url_error: str | None = None,
+    non_prod_evidence_error: str | None = None,
+) -> DeployRequest:
+    """Validate and deserialize a sender-side DeployRequest under repository authority rules."""
+    source_run_re = re.compile(rf"\A/{re.escape(source_repository)}/actions/runs/([1-9][0-9]*)\Z")
+    review_re = re.compile(rf"\A/{re.escape(source_repository)}/pull/([1-9][0-9]*)\Z")
+    supported_set = frozenset(supported_deploy_types)
+
+    def _check(mapping: Mapping[str, Any]) -> None:
+        validate_wire_shape(mapping)
+        contract_version = mapping.get("contract_version")
+        if isinstance(contract_version, bool) or contract_version != CONTRACT_VERSION:
+            raise ValueError(f"contract_version must be {CONTRACT_VERSION}")
+        if mapping.get("service") != service:
+            raise ValueError(f"service must be {service}")
+        if mapping.get("source_repository") != source_repository:
+            raise ValueError(f"source_repository must be {source_repository}")
+        if mapping.get("operation") != DeployOperation.DEPLOY.value:
+            raise ValueError("operation must be deploy")
+
+        deploy_type = mapping.get("deploy_type")
+        if not isinstance(deploy_type, str) or deploy_type not in supported_set:
+            if DeployType.PREVIEW_TAG.value in supported_set:
+                raise ValueError("deploy_type must be preview/tag, staging, or prod")
+            raise ValueError("deploy_type must be staging or prod")
+
+        version_ref = mapping.get("version_ref")
+        if not isinstance(version_ref, str):
+            if DeployType.PREVIEW_TAG.value in supported_set:
+                raise ValueError("version_ref must be a string")
+            raise ValueError(version_ref_error)
+        if _RELEASE_REF_RE.fullmatch(version_ref) is None:
+            raise ValueError(version_ref_error)
+
+        source_sha = mapping.get("source_sha")
+        if not isinstance(source_sha, str) or _SHA40_RE.fullmatch(source_sha) is None:
+            raise ValueError("source_sha must be a lowercase 40-hex commit sha")
+
+        evidence = mapping.get("evidence")
+        assert isinstance(evidence, Mapping)
+        source_run_url = evidence.get("source_run_url")
+        if not isinstance(source_run_url, str) or not source_run_url:
+            raise ValueError("evidence.source_run_url is required")
+        path_match = _github_path_match(
+            source_run_url,
+            source_run_re,
+            f"evidence.source_run_url must point to the {repo_label} GitHub Actions run",
+        )
+        source_run_id = evidence.get("source_run_id")
+        if not isinstance(source_run_id, str) or not source_run_id:
+            raise ValueError("evidence.source_run_id is required")
+        if source_run_id != path_match.group(1):
+            raise ValueError("evidence.source_run_id must match source_run_url")
+
+        staging_run_url = evidence.get("staging_run_url")
+        reviewed_change_url = evidence.get("reviewed_change_url")
+        if staging_run_url is not None and not isinstance(staging_run_url, str):
+            raise ValueError("evidence.staging_run_url must be a string")
+        if reviewed_change_url is not None and not isinstance(reviewed_change_url, str):
+            raise ValueError("evidence.reviewed_change_url must be a string")
+
+        if deploy_type == DeployType.PRODUCTION.value:
+            if not isinstance(staging_run_url, str) or not staging_run_url:
+                raise ValueError(prod_staging_required_error)
+            _github_path_match(
+                staging_run_url,
+                source_run_re,
+                prod_staging_url_error
+                or f"evidence.staging_run_url must be a canonical {repo_label} GitHub URL",
+            )
+            if not isinstance(reviewed_change_url, str) or not reviewed_change_url:
+                raise ValueError(prod_review_required_error)
+            _github_path_match(
+                reviewed_change_url,
+                review_re,
+                prod_review_url_error
+                or f"evidence.reviewed_change_url must be a canonical {repo_label} GitHub URL",
+            )
+            return
+
+        if non_prod_evidence_error is not None:
+            if staging_run_url or reviewed_change_url:
+                raise ValueError(non_prod_evidence_error)
+        else:
+            for field_name, value in (
+                ("staging_run_url", staging_run_url),
+                ("reviewed_change_url", reviewed_change_url),
+            ):
+                if value != "":
+                    raise ValueError(f"evidence.{field_name} must be empty for staging")
+
+    _check(raw)
+    request = DeployRequest.from_dict(raw)
+    _check(request.to_dict())
+    return request
+
+
+def render_sender_request(
+    *,
+    service: str,
+    source_repository: str,
+    repo_label: str,
+    request_id: str,
+    version_ref: str,
+    source_sha: str,
+    source_run_url: str,
+    source_run_id: str,
+    deploy_type: str = DeployType.STAGING.value,
+    staging_run_url: str = "",
+    reviewed_change_url: str = "",
+    supported_deploy_types: Sequence[str] = (
+        DeployType.STAGING.value,
+        DeployType.PRODUCTION.value,
+    ),
+    version_ref_error: str = "version_ref must be a release tag like vX.Y.Z",
+    prod_staging_required_error: str = "evidence.staging_run_url is required for prod",
+    prod_review_required_error: str = "evidence.reviewed_change_url is required for prod",
+    prod_staging_url_error: str | None = None,
+    prod_review_url_error: str | None = None,
+    non_prod_evidence_error: str | None = None,
+) -> DeployRequest:
+    """Build and validate a sender-side DeployRequest."""
+    return validate_sender_request(
+        {
+            "contract_version": CONTRACT_VERSION,
+            "request_id": request_id,
+            "operation": DeployOperation.DEPLOY.value,
+            "service": service,
+            "deploy_type": deploy_type,
+            "version_ref": version_ref,
+            "source_repository": source_repository,
+            "source_sha": source_sha,
+            "evidence": {
+                "source_run_url": source_run_url,
+                "source_run_id": source_run_id,
+                "staging_run_url": staging_run_url,
+                "reviewed_change_url": reviewed_change_url,
+            },
+        },
+        service=service,
+        source_repository=source_repository,
+        repo_label=repo_label,
+        supported_deploy_types=supported_deploy_types,
+        version_ref_error=version_ref_error,
+        prod_staging_required_error=prod_staging_required_error,
+        prod_review_required_error=prod_review_required_error,
+        prod_staging_url_error=prod_staging_url_error,
+        prod_review_url_error=prod_review_url_error,
+        non_prod_evidence_error=non_prod_evidence_error,
+    )
+
+
+class ReleaseIdentityError(RuntimeError):
+    """The environment's release identity could not be established."""
+
+
+def identifier_kind(value: str) -> str:
+    """Name the kind of release identifier, for a message a human can act on."""
+    if not value or value == "unknown":
+        return "unset"
+    if _COMMIT_SHA_RE.match(value):
+        return "commit sha"
+    if _RELEASE_REF_RE.match(value):
+        return "release tag"
+    return "unrecognised"
+
+
+def identity_from_body(body: str, *, url: str = "") -> str:
+    """Extract the release identity from a health payload or raise ReleaseIdentityError."""
+    where = url or "the health endpoint"
+    try:
+        payload = json.loads(body)
+    except (TypeError, ValueError) as exc:
+        raise ReleaseIdentityError(f"{where} did not answer JSON: {body[:120]!r}") from exc
+    if not isinstance(payload, dict):
+        raise ReleaseIdentityError(f"{where} answered JSON that is not an object: {body[:120]!r}")
+
+    for key in VERSION_KEYS:
+        value = payload.get(key)
+        if isinstance(value, str) and value and value != "unknown":
+            break
+    else:
+        raise ReleaseIdentityError(
+            f"{where} does not report a release identity (body {body[:120]!r}); nothing about "
+            f"the deployed release can be judged until the deployer threads GIT_COMMIT_SHA through"
+        )
+
+    if not _SAFE_REF_RE.match(value):
+        raise ReleaseIdentityError(
+            f"{where} reports {value!r}, which is not a usable release identifier — a leading "
+            f"'-' would be read by git as an option, and whitespace makes the failure "
+            f"non-deterministic. This value is not used"
+        )
+    return value
+
+
+def read_deployed_release(url: str, http_get: HttpGet) -> str:
+    """Fetch ``url`` and return the release identity it reports, or raise ReleaseIdentityError."""
+    status_code, body = http_get(url)
+    if status_code != 200:
+        raise ReleaseIdentityError(f"{url} answered HTTP {status_code}; its release is unknown")
+    return identity_from_body(body, url=url)
+
+
+class FreshnessFailure(RuntimeError):
+    """The environment could not be confirmed fresh."""
+
+
+@dataclass(frozen=True)
+class Staleness:
+    environment: str
+    deployed_ref: str
+    unreleased_commits: int
+    oldest_unreleased_age: timedelta | None
+    oldest_unreleased_subject: str
+
+
+def _git_freshness(
+    args: Sequence[str],
+    repo: str,
+    run: Callable[..., subprocess.CompletedProcess[str]],
+) -> str:
+    result = run(["git", "-C", repo, *args], capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise FreshnessFailure(f"git {' '.join(args)} failed: {result.stderr.strip()}")
+    return result.stdout.strip()
+
+
+def measure_freshness(
+    environment: str,
+    deployed_ref: str,
+    *,
+    repo: str = ".",
+    now: datetime | None = None,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> Staleness:
+    """Measure how far behind ``origin/main`` the deployed release is."""
+    resolved = run(
+        ["git", "-C", repo, "rev-parse", "--verify", f"{deployed_ref}^{{commit}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if resolved.returncode != 0 or not resolved.stdout.strip():
+        raise FreshnessFailure(
+            f"{environment} reports {deployed_ref!r}, which is not a commit here — fetch tags, "
+            f"or check that the environment reports a ref this repository knows"
+        )
+    log = _git_freshness(
+        ["log", "--reverse", "--format=%cI%x1f%s", f"{deployed_ref}..origin/main"],
+        repo,
+        run,
+    )
+    lines = [line for line in log.splitlines() if line]
+    if not lines:
+        return Staleness(environment, deployed_ref, 0, None, "")
+    oldest_iso, _, subject = lines[0].partition("\x1f")
+    oldest = datetime.fromisoformat(oldest_iso)
+    reference = now or datetime.now(UTC)
+    return Staleness(environment, deployed_ref, len(lines), reference - oldest, subject)
+
+
+def format_freshness_failure(staleness: Staleness, max_age: timedelta) -> str:
+    """Render an actionable one-line staleness failure message."""
+    age = staleness.oldest_unreleased_age
+    assert age is not None
+    return (
+        f"{staleness.environment} is stale: it serves {staleness.deployed_ref} while "
+        f"{staleness.unreleased_commits} commit(s) sit unreleased on main, the oldest merged "
+        f"{age.days}d{age.seconds // 3600}h ago (limit {max_age.days}d) — "
+        f"{staleness.oldest_unreleased_subject[:80]!r}. Finished work is invisible to every user "
+        f"of this environment until a release carries it (#560)."
+    )
+
+
+def check_deploy_freshness(
+    url: str,
+    *,
+    environment: str = "",
+    max_age_days: int = 3,
+    repo: str = ".",
+    http_get: HttpGet | None = None,
+    now: datetime | None = None,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    warn_only: bool = False,
+) -> int:
+    """Evaluate deploy freshness against ``origin/main`` and return a shell exit code."""
+    http_get = http_get or default_http_get()
+    max_age = timedelta(days=max_age_days)
+    try:
+        deployed_ref = read_deployed_release(url, http_get)
+        staleness = measure_freshness(environment or url, deployed_ref, repo=repo, now=now, run=run)
+    except (FreshnessFailure, ReleaseIdentityError) as exc:
+        print(f"freshness check failed: {exc}", file=sys.stderr)
+        return 1
+
+    if staleness.unreleased_commits == 0:
+        print(f"{staleness.environment} is current: serving {deployed_ref}, nothing newer on main")
+        return 0
+    age = staleness.oldest_unreleased_age
+    assert age is not None
+    if age > max_age:
+        failure_msg = format_freshness_failure(staleness, max_age)
+        if warn_only:
+            print(f"::warning::{failure_msg}")
+            return 0
+        print(f"freshness check failed: {failure_msg}", file=sys.stderr)
+        return 1
+    print(
+        f"{staleness.environment} is fresh enough: serving {deployed_ref}, "
+        f"{staleness.unreleased_commits} commit(s) unreleased, oldest {age.days}d "
+        f"(limit {max_age.days}d)"
+    )
+    return 0
+
+
 __all__ = [
     "CONTRACT_VERSION",
     "DeployEvidence",
@@ -902,19 +1330,34 @@ __all__ = [
     "DeployRequest",
     "DeployType",
     "EVIDENCE_POLICY_CONTRACT_VERSION",
+    "FreshnessFailure",
     "HealthCheckResult",
+    "PRODUCTION_APPROVAL_MARGIN_SECONDS",
     "PRODUCTION_EVIDENCE_POLICY_PATH",
     "PRODUCTION_REQUEST_MAX_AGE_SECONDS",
     "ProductionEvidencePolicy",
     "ReceiverRun",
+    "ReleaseIdentityError",
     "RunEvidenceExpectation",
+    "Staleness",
+    "VERSION_KEYS",
+    "announce_approval_wait",
     "canonical_json",
+    "check_deploy_freshness",
     "default_github_json_fetcher",
     "dispatch_and_wait",
     "fetch_production_evidence_policy",
+    "format_freshness_failure",
+    "identifier_kind",
+    "identity_from_body",
+    "measure_freshness",
     "poll_until_healthy",
+    "print_approval_notice",
+    "read_deployed_release",
+    "render_sender_request",
     "validate_deploy_request",
     "validate_evidence_urls",
+    "validate_sender_request",
     "validate_wire_shape",
     "verify_production_evidence",
     "Api",

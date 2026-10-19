@@ -31,6 +31,7 @@ def test_infra2_sdk_submodules_accessible_from_root() -> None:
         "deploy",
         "fastapi",
         "manifests",
+        "observability",
         "refs",
         "routing",
         "rules",

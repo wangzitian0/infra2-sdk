@@ -142,6 +142,30 @@ def validate_env(
     return list(result.missing)
 
 
+def assert_environment(
+    manifest_path: str | Path,
+    *,
+    environ: Mapping[str, str] | None = None,
+    require_injected: bool,
+) -> None:
+    """Raise RuntimeError naming every variable ``manifest_path`` declares and ``environ`` lacks."""
+    path = Path(manifest_path)
+    if not path.is_file():
+        raise RuntimeError(
+            f"environment manifest {path} is not in the image; boot validation cannot run (#759)"
+        )
+    missing = validate_env(
+        path,
+        os.environ if environ is None else environ,
+        require_injected=require_injected,
+    )
+    if missing:
+        raise RuntimeError(
+            f"environment lacks {len(missing)} value(s) {path} declares: {', '.join(missing)} "
+            f"-- names only; the deployment must inject them (#759)"
+        )
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -187,6 +211,7 @@ def main(
 __all__ = [
     "ManifestSpec",
     "all_manifests",
+    "assert_environment",
     "check",
     "load",
     "main",
