@@ -127,6 +127,5 @@ def _elapsed(started: float) -> float:
 
 __all__ = [
     "HttpClientSettings",
-    "create_http_client",
     "probe_http",
 ]

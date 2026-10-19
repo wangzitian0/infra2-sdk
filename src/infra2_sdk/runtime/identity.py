@@ -202,3 +202,8 @@ def canonical_sha256(payload: Any) -> str:
     configuration fingerprints — whatever a writer's JSON library defaults to).
     """
     return _wire_canonical_sha256(payload)
+
+
+__all__ = [
+    "RuntimeIdentity",
+]

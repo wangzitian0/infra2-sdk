@@ -478,3 +478,11 @@ def _boolean(raw: Mapping[str, Any], key: str, *, default: bool = False) -> bool
     if not isinstance(value, bool):
         raise ValueError(f"{key} must be a boolean")
     return value
+
+
+__all__ = [
+    "EnvironmentField",
+    "EnvironmentManifest",
+    "environment_manifest_from_model",
+    "manifest_config_fingerprint",
+]

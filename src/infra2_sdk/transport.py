@@ -38,7 +38,5 @@ def urllib_transport(*, timeout: float = 30.0) -> HttpTransport:
 
 
 __all__ = [
-    "HttpResponse",
-    "HttpTransport",
     "urllib_transport",
 ]
