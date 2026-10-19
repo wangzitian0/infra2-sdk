@@ -9,7 +9,12 @@ backfill from the merged pull requests.
 ### Changed
 
 - Align `infra2_sdk.runtime.llm.LlmSettings` defaults (`base_url`, `ocr_model`, `vision_model`, `json_timeout_seconds`, `json_max_tokens`, `json_seed`, `extract_max_attempts`) with the canonical consumer contract ([#123](https://github.com/wangzitian0/infra2-sdk/issues/123)).
-- Remove the 4 unused OpenTelemetry sampler and metric keys (`OTEL_SDK_DISABLED`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`) from `RuntimeEnvKey` and `RUNTIME_ENV_SPECS` ([#123](https://github.com/wangzitian0/infra2-sdk/issues/123)).
+- Remove the 5 unused OpenTelemetry and instance keys (`INSTANCE_ID`, `OTEL_SDK_DISABLED`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`) from `RuntimeEnvKey` and `RUNTIME_ENV_SPECS` ([#123](https://github.com/wangzitian0/infra2-sdk/issues/123), [#126](https://github.com/wangzitian0/infra2-sdk/issues/126)).
+- Prefix module-internal helpers and constants with `_` so `public_defs()` and `sdk_module_exports()` converge, and restore `__all__ = ["main", "scaffold_service"]` in `infra2_sdk.scaffold` and `"main"` in `infra2_sdk.manifests.__all__` ([#126](https://github.com/wangzitian0/infra2-sdk/issues/126)).
+
+### Removed
+
+- Remove `infra2_sdk.runtime.identity` (`RuntimeIdentity` and the duplicate `canonical_sha256` wrapper) and `infra2_sdk.delivery.validate_stage_result` ([#126](https://github.com/wangzitian0/infra2-sdk/issues/126)).
 
 ## 3.8.0 - 2026-10-19
 

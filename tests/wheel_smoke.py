@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
 
-# Modules removed in 3.3.0 (#90), 3.4.0 (#102), and 3.5.1 (#108).
+# Modules removed in 3.3.0 (#90), 3.4.0 (#102), 3.5.1 (#108), and 3.8.1 (#126).
 # One frozen list: tests/test_removed_modules.py imports it.
 REMOVED_MODULES = (
     "infra2_sdk.cli",
@@ -21,18 +21,20 @@ REMOVED_MODULES = (
     "infra2_sdk.release",
     "infra2_sdk.runtime.environ",
     "infra2_sdk.runtime.dependencies",
+    "infra2_sdk.runtime.identity",
     "infra2_sdk.runtime.probes",
     "infra2_sdk.snapshot",  # 3.4.0: no user was left after infra2 #1206
 )
 
-# Names removed in 3.4.0 and 3.5.2 (#102), as (module, dotted name). A dotted name is a method.
-# One frozen list: tests/test_removed_names.py imports it.
+# Names removed in 3.4.0, 3.5.2 (#102), and 3.8.1 (#126), as (module, dotted name).
+# A dotted name is a method. One frozen list: tests/test_removed_names.py imports it.
 REMOVED_NAMES = (
     ("infra2_sdk.capacity", "LEVELS"),
     ("infra2_sdk.capacity", "onepassword_capacity"),
     ("infra2_sdk.delivery", "PREVIEW_RELEVANT_STAGES"),
     ("infra2_sdk.delivery", "acceleration_allowed"),
     ("infra2_sdk.delivery", "detect_disagreement"),
+    ("infra2_sdk.delivery", "validate_stage_result"),
     ("infra2_sdk.refs", "resolve_release_identity"),
     ("infra2_sdk.refs", "verify_runtime_identity"),
     ("infra2_sdk.routing", "resolve_dokploy_domains"),
@@ -41,6 +43,8 @@ REMOVED_NAMES = (
     ("infra2_sdk.runtime.http", "retryable_request"),
     ("infra2_sdk.runtime.http", "parse_retry_after"),
     ("infra2_sdk.runtime.http", "HttpCheck"),
+    ("infra2_sdk.runtime.identity", "RuntimeIdentity"),
+    ("infra2_sdk.runtime.identity", "canonical_sha256"),
     ("infra2_sdk.runtime.identity", "runtime_identity_fingerprint"),
     ("infra2_sdk.runtime.otel", "inject_trace_context"),
     ("infra2_sdk.runtime.otel", "extract_trace_context"),
@@ -75,7 +79,7 @@ REMOVED_NAMES = (
     ("infra2_sdk.snapshot", "SnapshotProducer"),
 )
 
-# RuntimeEnvKey members removed in 3.4.0 (issue #102, decision 2).
+# RuntimeEnvKey members removed in 3.4.0 (issue #102, decision 2) and 3.8.1 (#126).
 REMOVED_ENV_MEMBERS = (
     "HTTP_TIMEOUT_SECONDS",
     "HTTP_CONNECT_TIMEOUT_SECONDS",
@@ -84,6 +88,7 @@ REMOVED_ENV_MEMBERS = (
     "HTTP_CONNECT_RETRIES",
     "HTTP_USER_AGENT",
     "HTTP_FOLLOW_REDIRECTS",
+    "INSTANCE_ID",
     "OBJECT_STORAGE_PROTOCOL",
     "S3_BUCKET",
     "S3_ENDPOINT_URL",
@@ -172,8 +177,8 @@ def smoke_package_data() -> None:
         pass
     else:
         raise AssertionError("infra2_sdk.images was removed in 3.0.0 and must not be importable")
-    assert len(REMOVED_MODULES) == 8, (
-        f"REMOVED_MODULES has {len(REMOVED_MODULES)} entries, expected 8"
+    assert len(REMOVED_MODULES) == 9, (
+        f"REMOVED_MODULES has {len(REMOVED_MODULES)} entries, expected 9"
     )
     for module in REMOVED_MODULES:
         try:
@@ -185,15 +190,15 @@ def smoke_package_data() -> None:
 
 
 def smoke_removed_names() -> None:
-    """The wheel does not carry the names, members and variables removed in 3.4.0 and 3.5.2."""
+    """The wheel does not carry removed names, members, or variables."""
 
     import infra2_sdk
     import infra2_sdk.runtime
     from infra2_sdk.runtime.environment import RuntimeEnvKey, runtime_env_contract
 
-    assert len(REMOVED_NAMES) == 40 and len(set(REMOVED_NAMES)) == 40, (
+    assert len(REMOVED_NAMES) == 43 and len(set(REMOVED_NAMES)) == 43, (
         f"REMOVED_NAMES has {len(REMOVED_NAMES)} entries ({len(set(REMOVED_NAMES))} unique), "
-        "expected 40"
+        "expected 43"
     )
     for module, dotted in REMOVED_NAMES:
         *parents, leaf = dotted.split(".")
@@ -207,8 +212,8 @@ def smoke_removed_names() -> None:
                 assert not hasattr(package, leaf), f"{package.__name__}.{leaf} was removed"
                 assert leaf not in package.__all__, f"{package.__name__}.__all__ lists {leaf}"
 
-    assert len(REMOVED_ENV_MEMBERS) == 20 and len(REMOVED_ENV_NAMES) == 29, (
-        f"REMOVED_ENV_MEMBERS has {len(REMOVED_ENV_MEMBERS)} entries, expected 20; "
+    assert len(REMOVED_ENV_MEMBERS) == 21 and len(REMOVED_ENV_NAMES) == 29, (
+        f"REMOVED_ENV_MEMBERS has {len(REMOVED_ENV_MEMBERS)} entries, expected 21; "
         f"REMOVED_ENV_NAMES has {len(REMOVED_ENV_NAMES)} entries, expected 29"
     )
     present = [member for member in REMOVED_ENV_MEMBERS if hasattr(RuntimeEnvKey, member)]
@@ -517,9 +522,14 @@ def smoke_all() -> None:
     import opentelemetry.sdk.trace  # noqa: F401
     import psycopg  # noqa: F401
 
-    from infra2_sdk.runtime.identity import RuntimeIdentity
+    from infra2_sdk.runtime.otel import OtelSettings
 
-    assert RuntimeIdentity.from_env({"OTEL_SERVICE_NAME": "all-smoke"}).service_name == "all-smoke"
+    assert (
+        OtelSettings.from_env(
+            {"ENVIRONMENT": "local_dev", "OTEL_SERVICE_NAME": "all-smoke"}
+        ).service_name
+        == "all-smoke"
+    )
 
 
 SMOKES = {

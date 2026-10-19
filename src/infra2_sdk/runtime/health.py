@@ -38,10 +38,10 @@ from infra2_sdk._wire import (
 )
 from infra2_sdk.runtime.environment import EnvironmentTier, resolve_environment_tier
 
-DEPENDENCY_MANIFEST_VERSION = 1
+_DEPENDENCY_MANIFEST_VERSION = 1
 
-HTTP_OK = 200
-HTTP_SERVICE_UNAVAILABLE = 503
+_HTTP_OK = 200
+_HTTP_SERVICE_UNAVAILABLE = 503
 
 
 class DependencyKind(StrEnum):
@@ -111,11 +111,11 @@ class DependencyManifest:
         self,
         dependencies: Iterable[Dependency],
         *,
-        contract_version: int = DEPENDENCY_MANIFEST_VERSION,
+        contract_version: int = _DEPENDENCY_MANIFEST_VERSION,
     ) -> None:
         require_contract_version(
             contract_version,
-            DEPENDENCY_MANIFEST_VERSION,
+            _DEPENDENCY_MANIFEST_VERSION,
             description="dependency manifest version",
         )
         self.contract_version = contract_version
@@ -162,7 +162,7 @@ class DependencyManifest:
     def from_dict(cls, raw: Mapping[str, Any]) -> DependencyManifest:
         version = parse_contract_version(
             raw,
-            DEPENDENCY_MANIFEST_VERSION,
+            _DEPENDENCY_MANIFEST_VERSION,
             description="dependency manifest version",
         )
         dependencies = raw.get("dependencies")
@@ -184,7 +184,7 @@ class DependencyManifest:
             "additionalProperties": False,
             "required": ["contract_version", "dependencies"],
             "properties": {
-                "contract_version": {"const": DEPENDENCY_MANIFEST_VERSION},
+                "contract_version": {"const": _DEPENDENCY_MANIFEST_VERSION},
                 "dependencies": {
                     "type": "array",
                     "items": {
@@ -440,7 +440,7 @@ def _health_response(
         "checks": dict(sorted(checks.items())),
         "reasons": [f"{name}: {checks[name]['detail'] or 'absent'}" for name in absent],
     }
-    return (HTTP_SERVICE_UNAVAILABLE if status is HealthStatus.UNHEALTHY else HTTP_OK), body
+    return (_HTTP_SERVICE_UNAVAILABLE if status is HealthStatus.UNHEALTHY else _HTTP_OK), body
 
 
 async def check_health(

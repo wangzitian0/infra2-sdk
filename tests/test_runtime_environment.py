@@ -231,8 +231,9 @@ def test_contract_version_is_two_because_3_4_0_removed_20_variables() -> None:
     contract = runtime_env_contract()
     assert type(contract["contract_version"]) is int
     assert contract["contract_version"] == RUNTIME_ENV_CONTRACT_VERSION
-    assert len(contract["variables"]) == 10
+    assert len(contract["variables"]) == 9
     for unused_otel_key in (
+        "INSTANCE_ID",
         "OTEL_SDK_DISABLED",
         "OTEL_METRIC_EXPORT_INTERVAL",
         "OTEL_TRACES_SAMPLER",

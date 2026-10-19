@@ -18,16 +18,16 @@ from typing import Any, Protocol
 from infra2_sdk.runtime.config_schema import (
     EnvironmentField,
     EnvironmentManifest,
-    FieldSource,
-    ReconcileReport,
-    reconcile,
+    _FieldSource,
+    _reconcile,
+    _ReconcileReport,
 )
 from infra2_sdk.transport import HttpResponse, HttpTransport, urllib_transport
 
-VAULT_USER_AGENT = "infra2-sdk/secrets (+https://github.com/wangzitian0/infra2-sdk)"
+_VAULT_USER_AGENT = "infra2-sdk/secrets (+https://github.com/wangzitian0/infra2-sdk)"
 
 
-WRITE_MODES = ("patch", "update")
+_WRITE_MODES = ("patch", "update")
 
 
 class SecretsError(RuntimeError):
@@ -82,15 +82,15 @@ class VaultKvBackend:
         token: str,
         mount: str = "secret",
         transport: HttpTransport | None = None,
-        user_agent: str = VAULT_USER_AGENT,
+        user_agent: str = _VAULT_USER_AGENT,
         write_mode: str = "patch",
     ) -> None:
         if not address.startswith(("https://", "http://")):
             raise ValueError("address must be an http(s) URL")
         if not token:
             raise ValueError("token is required")
-        if write_mode not in WRITE_MODES:
-            raise ValueError(f"write_mode must be one of {WRITE_MODES}")
+        if write_mode not in _WRITE_MODES:
+            raise ValueError(f"write_mode must be one of {_WRITE_MODES}")
         self._address = address.rstrip("/")
         self._token = token
         self._mount = mount.strip("/")
@@ -131,7 +131,7 @@ class VaultKvBackend:
         response = send(
             "POST",
             f"{address.rstrip('/')}/v1/auth/approle/login",
-            {"Content-Type": "application/json", "User-Agent": VAULT_USER_AGENT},
+            {"Content-Type": "application/json", "User-Agent": _VAULT_USER_AGENT},
             body,
         )
         if response.status != 200:
@@ -223,7 +223,7 @@ class VaultKvBackend:
         return WriteResult(tuple(sorted(changed)))
 
 
-Runner = Callable[..., subprocess.CompletedProcess[str]]
+_Runner = Callable[..., subprocess.CompletedProcess[str]]
 
 
 @dataclass(frozen=True)
@@ -255,7 +255,7 @@ def vault_token_status(
     *,
     transport: HttpTransport | None = None,
     min_ttl_seconds: int = 0,
-    user_agent: str = VAULT_USER_AGENT,
+    user_agent: str = _VAULT_USER_AGENT,
 ) -> TokenStatus:
     """Look a token up; ``valid`` also requires ``ttl >= min_ttl_seconds``.
 
@@ -295,7 +295,7 @@ class OnePasswordBackend:
         self,
         vault: str = "Infra2",
         *,
-        runner: Runner = subprocess.run,
+        runner: _Runner = subprocess.run,
         category: str = "Login",
         timeout: float = 30.0,
     ) -> None:
@@ -385,7 +385,7 @@ class OnePasswordBackend:
 
 
 @dataclass(frozen=True)
-class SyncReport:
+class _SyncReport:
     changed: tuple[str, ...] = ()
     unchanged: tuple[str, ...] = ()
     missing: tuple[str, ...] = ()
@@ -402,7 +402,7 @@ class SyncReport:
         }
 
 
-def generate_secret(field: EnvironmentField) -> str:
+def _generate_secret(field: EnvironmentField) -> str:
     """Default runtime-secret generator: 43 URL-safe characters (256 bits)."""
     return _secrets.token_urlsafe(32)
 
@@ -421,7 +421,7 @@ class SecretsResolver:
         human: SecretsBackend | None = None,
         release: Mapping[str, str] | None = None,
         decisions: Mapping[str, str] | None = None,
-        generator: Callable[[EnvironmentField], str] = generate_secret,
+        generator: Callable[[EnvironmentField], str] = _generate_secret,
     ) -> None:
         self.manifest = manifest
         self.project = project
@@ -447,7 +447,7 @@ class SecretsResolver:
     def human_expected(self) -> dict[str, str]:
         """Values the human store holds for this service's human-class fields."""
         expected: dict[str, str] = {}
-        for field in self.manifest.by_source(FieldSource.HUMAN):
+        for field in self.manifest.by_source(_FieldSource.HUMAN):
             if not field.store_backed:
                 continue
             value = self._human_values(field).get(field.key)
@@ -455,20 +455,20 @@ class SecretsResolver:
                 expected[field.key] = value
         return expected
 
-    def sync_human(self) -> SyncReport:
+    def sync_human(self) -> _SyncReport:
         """Copy human-class values into the store; write only what differs."""
         expected = self.human_expected()
         missing = tuple(
             sorted(
                 field.key
-                for field in self.manifest.by_source(FieldSource.HUMAN)
+                for field in self.manifest.by_source(_FieldSource.HUMAN)
                 if field.store_backed and field.key not in expected and not field.empty_ok
             )
         )
         return self._apply(expected, missing=missing)
 
     # runtime ----------------------------------------------------------------------
-    def ensure_runtime(self) -> SyncReport:
+    def ensure_runtime(self) -> _SyncReport:
         """Generate runtime-class values that the store does not hold yet.
 
         ``empty_ok`` runtime values are optional by contract (a feature the deployment
@@ -477,7 +477,7 @@ class SecretsResolver:
         current = self.store.read(self.path)
         candidates = [
             field
-            for field in self.manifest.by_source(FieldSource.RUNTIME)
+            for field in self.manifest.by_source(_FieldSource.RUNTIME)
             if field.store_backed and not field.empty_ok
         ]
         fresh = {
@@ -486,16 +486,16 @@ class SecretsResolver:
         present = tuple(
             sorted(
                 field.key
-                for field in self.manifest.by_source(FieldSource.RUNTIME)
+                for field in self.manifest.by_source(_FieldSource.RUNTIME)
                 if field.store_backed and field.key not in fresh
             )
         )
         if not fresh:
-            return SyncReport(unchanged=present)
+            return _SyncReport(unchanged=present)
         result = self.store.write(self.path, fresh)
-        return SyncReport(changed=result.changed, unchanged=present)
+        return _SyncReport(changed=result.changed, unchanged=present)
 
-    def mirror(self) -> SyncReport:
+    def mirror(self) -> _SyncReport:
         """Copy runtime values flagged ``mirror_to_1password`` into the human store."""
         if self.human is None:
             raise SecretsError("no human backend configured")
@@ -503,7 +503,7 @@ class SecretsResolver:
         changed: list[str] = []
         unchanged: list[str] = []
         missing: list[str] = []
-        for field in self.manifest.by_source(FieldSource.RUNTIME):
+        for field in self.manifest.by_source(_FieldSource.RUNTIME):
             if not field.mirror_to_1password:
                 continue
             value = current.get(field.key)
@@ -515,15 +515,15 @@ class SecretsResolver:
                 changed.append(field.key)
             else:
                 unchanged.append(field.key)
-        return SyncReport(tuple(sorted(changed)), tuple(sorted(unchanged)), tuple(sorted(missing)))
+        return _SyncReport(tuple(sorted(changed)), tuple(sorted(unchanged)), tuple(sorted(missing)))
 
     # deployment -------------------------------------------------------------------
     def compose_env(self) -> dict[str, str]:
         """Release and decision values for the compose environment; never from the store."""
         values: dict[str, str] = {}
         missing: list[str] = []
-        for field in self.manifest.by_source(FieldSource.RELEASE, FieldSource.DECISION):
-            source = self.release if field.source == FieldSource.RELEASE else self.decisions
+        for field in self.manifest.by_source(_FieldSource.RELEASE, _FieldSource.DECISION):
+            source = self.release if field.source == _FieldSource.RELEASE else self.decisions
             value = source.get(field.env, "")
             if value:
                 values[field.env] = value
@@ -533,19 +533,19 @@ class SecretsResolver:
             raise SecretsError(f"release/decision values missing: {', '.join(sorted(missing))}")
         return values
 
-    def reconcile(self) -> ReconcileReport:
+    def reconcile(self) -> _ReconcileReport:
         expected = self.human_expected() if self.human is not None else None
-        return reconcile(self.manifest, self.store.read(self.path), expected=expected)
+        return _reconcile(self.manifest, self.store.read(self.path), expected=expected)
 
     # shared -----------------------------------------------------------------------
-    def _apply(self, desired: Mapping[str, str], *, missing: tuple[str, ...]) -> SyncReport:
+    def _apply(self, desired: Mapping[str, str], *, missing: tuple[str, ...]) -> _SyncReport:
         current = self.store.read(self.path)
         to_write = {k: v for k, v in desired.items() if current.get(k) != v}
         unchanged = tuple(sorted(k for k in desired if k not in to_write))
         if not to_write:
-            return SyncReport(unchanged=unchanged, missing=missing)
+            return _SyncReport(unchanged=unchanged, missing=missing)
         result = self.store.write(self.path, to_write)
-        return SyncReport(result.changed, unchanged, missing)
+        return _SyncReport(result.changed, unchanged, missing)
 
 
 # --------------------------------------------------------------------------- renderers

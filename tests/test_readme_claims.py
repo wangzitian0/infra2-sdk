@@ -27,7 +27,6 @@ from infra2_sdk.runtime.environment import (
     runtime_env_contract,
     runtime_env_spec,
 )
-from infra2_sdk.runtime.identity import RuntimeIdentity
 from infra2_sdk.runtime.otel import OtelSettings
 from infra2_sdk.runtime.postgres import PostgresSettings
 from infra2_sdk.runtime.s3 import S3Settings
@@ -113,21 +112,17 @@ def test_run_probes_reports_a_wrapper_with_another_name_as_absent(
 
 # --- A deployment that sets only SERVICE_NAME --------------------------------------------------
 
-_IDENTITY = {"ENVIRONMENT": "staging", "SERVICE_VERSION": "v1", "GIT_COMMIT_SHA": "a" * 40}
 _ENDPOINT = {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318"}
 
 
 def test_a_deployment_with_only_service_name_gets_the_documented_behavior() -> None:
     only = {"SERVICE_NAME": "legacy"}
     assert OtelSettings.from_env({**_ENDPOINT, **only}).service_name == "unknown_service"
-    with pytest.raises(ValueError, match="OTEL_SERVICE_NAME is required"):
-        RuntimeIdentity.from_env({**_IDENTITY, **only})
 
 
 def test_the_value_of_otel_service_name_wins_and_no_conflict_is_reported() -> None:
     both = {"SERVICE_NAME": "legacy", "OTEL_SERVICE_NAME": "current"}
     assert OtelSettings.from_env({**_ENDPOINT, **both}).service_name == "current"
-    assert RuntimeIdentity.from_env({**_IDENTITY, **both}).service_name == "current"
 
 
 # --- A string lookup of a removed variable -----------------------------------------------------
@@ -159,7 +154,7 @@ LEFT_THE_PACKAGES = {
     "infra2_sdk": {
         "capacity": ["CapacityLimit"],
         "ci": ["validate_gate"],
-        "delivery": ["BudgetStatus", "DisagreementKind", "PipelineStage", "validate_stage_result"],
+        "delivery": ["BudgetStatus", "DisagreementKind", "PipelineStage"],
         "deploy": [
             "CONTRACT_VERSION",
             "DeployEvidence",
@@ -183,7 +178,6 @@ LEFT_THE_PACKAGES = {
             "strict_environment_from_env",
         ],
         "health": ["HealthStatus"],
-        "identity": ["RuntimeIdentity"],
     },
 }
 _LEFT = [
@@ -230,7 +224,7 @@ def test_the_readme_lists_the_names_that_left_the_packages_by_module() -> None:
     count, grouped = _readme_left_the_packages()
 
     assert grouped == LEFT_THE_PACKAGES
-    assert count == len(_LEFT) == 26
+    assert count == len(_LEFT) == 24
 
 
 @pytest.mark.parametrize(
@@ -346,16 +340,16 @@ def test_readme_documents_require_issued_identity_and_behavior_matches(
 def test_the_readme_counts_the_fixed_names_and_the_variables_of_the_contract() -> None:
     flat = " ".join(README.split())  # a line break in the README must not change the result
     fixed = re.search(r"(\w+) more fixed names exist outside the table\.", flat)
-    assert fixed and fixed.group(1) == "Nine"
-    assert len(FIXED_READS) == 9
+    assert fixed and fixed.group(1) == "Ten"
+    assert len(FIXED_READS) == 10
     paragraph = flat[fixed.start() : fixed.start() + 700]
     for name in FIXED_READS:
         assert f"`{name}`" in paragraph, f"the README paragraph does not name {name}"
 
     version_note = re.search(r"Version 2 lists (\d+) variables", flat)
     assert version_note and int(version_note.group(1)) == len(runtime_env_contract()["variables"])
-    lost = re.search(r"lost the (\d+) variables above", flat)
-    assert lost and int(lost.group(1)) == len(REMOVED_ENV_MEMBERS) == 20
+    lost = re.search(r"lost the (\d+) variables removed", flat)
+    assert lost and int(lost.group(1)) == len(REMOVED_ENV_MEMBERS) == 21
 
     groups = [item for item in runtime_env_contract()["variables"] if item["aliases"]]
     assert len(groups) == 2

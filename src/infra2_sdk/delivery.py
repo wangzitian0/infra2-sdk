@@ -71,7 +71,7 @@ class DisagreementKind(StrEnum):
     INTERNAL_HEALTH_PUBLIC_ROUTE = "internal-health-public-route"
 
 
-STAGE_DEADLINE_MS: dict[PipelineStage, int] = {
+_STAGE_DEADLINE_MS: dict[PipelineStage, int] = {
     PipelineStage.CHANGED_AFFECTED_UT: 120_000,
     PipelineStage.LINT_STATIC: 180_000,
     PipelineStage.FULL_UT: 600_000,
@@ -161,7 +161,7 @@ def make_stage_result(
     stage_value = PipelineStage(stage)
     status_value = StageStatus(status)
     domain_value = FailureDomain(failure_domain)
-    resolved_deadline_ms = STAGE_DEADLINE_MS[stage_value] if deadline_ms is None else deadline_ms
+    resolved_deadline_ms = _STAGE_DEADLINE_MS[stage_value] if deadline_ms is None else deadline_ms
 
     result = StageResult(
         source=source,
@@ -182,11 +182,11 @@ def make_stage_result(
         else disagreement_kind,
         evidence_url=evidence_url,
     )
-    validate_stage_result(result)
+    _validate_stage_result(result)
     return result
 
 
-def validate_stage_result(result: StageResult) -> None:
+def _validate_stage_result(result: StageResult) -> None:
     if not isinstance(result.environment, EnvironmentTier):
         got = type(result.environment).__name__
         raise TypeError(f"result.environment must be an EnvironmentTier, got {got}")

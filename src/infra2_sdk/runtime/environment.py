@@ -22,7 +22,6 @@ class RuntimeEnvKey(StrEnum):
     IMAGE_DIGEST = "IMAGE_DIGEST"
     CONFIGURATION_SHA256 = "CONFIGURATION_SHA256"
     RELEASE_ID = "RELEASE_ID"
-    INSTANCE_ID = "INSTANCE_ID"
     OTEL_EXPORTER_OTLP_ENDPOINT = "OTEL_EXPORTER_OTLP_ENDPOINT"
     OTEL_RESOURCE_ATTRIBUTES = "OTEL_RESOURCE_ATTRIBUTES"
 
@@ -52,7 +51,6 @@ RUNTIME_ENV_SPECS = (
     RuntimeEnvSpec(RuntimeEnvKey.IMAGE_DIGEST),
     RuntimeEnvSpec(RuntimeEnvKey.CONFIGURATION_SHA256),
     RuntimeEnvSpec(RuntimeEnvKey.RELEASE_ID),
-    RuntimeEnvSpec(RuntimeEnvKey.INSTANCE_ID),
     RuntimeEnvSpec(RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT),
     RuntimeEnvSpec(RuntimeEnvKey.OTEL_RESOURCE_ATTRIBUTES),
 )
@@ -361,6 +359,9 @@ class _ServiceIdentity:
     service_version: str
     instance_id: str
     commit_sha: str = "unknown"
+    image_digest: str = ""
+    configuration_sha256: str = ""
+    release_id: str = ""
 
 
 def _resolve_service_identity(
@@ -372,8 +373,8 @@ def _resolve_service_identity(
 ) -> _ServiceIdentity:
     """Resolve the tier and the service coordinates of one environment.
 
-    This function is the one reader of these facts. ``OtelSettings.from_env``,
-    ``RuntimeIdentity.from_env`` and ``init_service`` all get them from here.
+    This function is the one reader of these facts. ``OtelSettings.from_env`` and
+    ``init_service`` get them from here.
 
     - Tier: ``environment_from_env``, or ``strict_environment_from_env`` when ``strict`` is true.
     - Resource attributes: ``OTEL_RESOURCE_ATTRIBUTES``. A malformed value raises ``ValueError``
@@ -416,8 +417,13 @@ def _resolve_service_identity(
             else:
                 del attributes[key]
     version = resolve_runtime_env(environ, RuntimeEnvKey.SERVICE_VERSION).value
-    instance = resolve_runtime_env(environ, RuntimeEnvKey.INSTANCE_ID).value
+    instance = resolve_env(environ, "INSTANCE_ID").value
     commit = resolve_runtime_env(environ, RuntimeEnvKey.GIT_COMMIT_SHA).value
+    image_digest = resolve_runtime_env(environ, RuntimeEnvKey.IMAGE_DIGEST, default="").value or ""
+    configuration_sha256 = (
+        resolve_runtime_env(environ, RuntimeEnvKey.CONFIGURATION_SHA256, default="").value or ""
+    )
+    release_id = resolve_runtime_env(environ, RuntimeEnvKey.RELEASE_ID, default="").value or ""
     commit_sha = (
         commit
         or attributes.get("vcs.ref.head.revision")
@@ -433,6 +439,9 @@ def _resolve_service_identity(
         service_version=version or attributes.get("service.version", "unknown"),
         instance_id=instance or attributes.get("service.instance.id", ""),
         commit_sha=commit_sha,
+        image_digest=image_digest,
+        configuration_sha256=configuration_sha256,
+        release_id=release_id,
     )
 
 

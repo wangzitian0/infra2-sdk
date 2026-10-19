@@ -14,7 +14,7 @@ from datetime import date
 
 from infra2_sdk.transport import HttpTransport, urllib_transport
 
-WINDOWS = ("hour", "day", "month")
+_WINDOWS = ("hour", "day", "month")
 
 
 @dataclass(frozen=True)
@@ -27,8 +27,8 @@ class CapacityLimit:
     def __post_init__(self) -> None:
         if not self.name or self.limit <= 0:
             raise ValueError("name and a positive limit are required")
-        if self.window not in WINDOWS:
-            raise ValueError(f"window must be one of {WINDOWS}")
+        if self.window not in _WINDOWS:
+            raise ValueError(f"window must be one of {_WINDOWS}")
 
 
 @dataclass(frozen=True)
@@ -42,7 +42,7 @@ class CapacityReading:
 
 
 @dataclass(frozen=True)
-class CapacityItem:
+class _CapacityItem:
     name: str
     used: int | None
     limit: int
@@ -61,13 +61,13 @@ class CapacityItem:
 
 @dataclass(frozen=True)
 class CapacityReport:
-    items: tuple[CapacityItem, ...]
+    items: tuple[_CapacityItem, ...]
 
     @property
     def ok(self) -> bool:
         return all(item.level == "ok" for item in self.items)
 
-    def at_level(self, *levels: str) -> tuple[CapacityItem, ...]:
+    def at_level(self, *levels: str) -> tuple[_CapacityItem, ...]:
         return tuple(item for item in self.items if item.level in levels)
 
     def to_dict(self) -> dict[str, object]:
@@ -83,7 +83,7 @@ def evaluate(
     """Pair limits with readings by name. A limit without a reading is ``unknown``."""
 
     used_by_name = {reading.name: reading.used for reading in readings}
-    items: list[CapacityItem] = []
+    items: list[_CapacityItem] = []
     for limit in limits:
         used = used_by_name.get(limit.name)
         if used is None:
@@ -94,7 +94,7 @@ def evaluate(
             level = "warn"
         else:
             level = "ok"
-        items.append(CapacityItem(limit.name, used, limit.limit, limit.window, level))
+        items.append(_CapacityItem(limit.name, used, limit.limit, limit.window, level))
     return CapacityReport(tuple(items))
 
 

@@ -16,17 +16,19 @@ from typing import Any, get_args
 
 from infra2_sdk._wire import (
     JSON_SCHEMA_DIALECT,
-    canonical_sha256,
     parse_contract_version,
     parse_string,
     require_contract_version,
 )
+from infra2_sdk._wire import (
+    canonical_sha256 as _canonical_sha256,
+)
 from infra2_sdk.runtime.environment import EnvironmentConflictError
 
-ENVIRONMENT_MANIFEST_VERSION = 2
+_ENVIRONMENT_MANIFEST_VERSION = 2
 
 
-class FieldSource(StrEnum):
+class _FieldSource(StrEnum):
     """Who produces a value. Exactly one class per field."""
 
     BOOTSTRAP = "bootstrap"  # provisioning credentials; never reaches an application
@@ -37,10 +39,10 @@ class FieldSource(StrEnum):
     CODE = "code"  # a default in the settings model, never stored
 
 
-STORE_BACKED_SOURCES = frozenset({FieldSource.HUMAN, FieldSource.RUNTIME})
-COMPOSE_SOURCES = frozenset({FieldSource.RELEASE, FieldSource.DECISION})
-FIELD_SCOPES = ("env", "project")
-CI_POLICIES = ("forbidden", "allowed")
+_STORE_BACKED_SOURCES = frozenset({_FieldSource.HUMAN, _FieldSource.RUNTIME})
+_COMPOSE_SOURCES = frozenset({_FieldSource.RELEASE, _FieldSource.DECISION})
+_FIELD_SCOPES = ("env", "project")
+_CI_POLICIES = ("forbidden", "allowed")
 _PROVIDED_BY_RE = re.compile(r"\A[a-z][a-z0-9_]*/[a-z][a-z0-9_-]*:[A-Za-z_][A-Za-z0-9_]*\Z")
 _PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _ENV_PLACEHOLDER_RE = re.compile(r"\{env:([A-Z][A-Z0-9_]*)\}")
@@ -59,7 +61,7 @@ class EnvironmentField:
     sensitive: bool = False
     group: str = "Application"
     description: str = ""
-    source: str = FieldSource.CODE
+    source: str = _FieldSource.CODE
     empty_ok: bool = False
     scope: str = "env"
     provided_by: str = ""
@@ -74,16 +76,16 @@ class EnvironmentField:
         names = (self.env, *self.aliases)
         if len(names) != len(set(names)):
             raise ValueError(f"duplicate environment alias for {self.field}")
-        if self.source not in set(FieldSource):
+        if self.source not in set(_FieldSource):
             raise ValueError(f"{self.field}: unknown source {self.source!r}")
-        object.__setattr__(self, "source", str(FieldSource(self.source)))
-        if self.scope not in FIELD_SCOPES:
-            raise ValueError(f"{self.field}: scope must be one of {FIELD_SCOPES}")
-        if self.ci not in CI_POLICIES:
-            raise ValueError(f"{self.field}: ci must be one of {CI_POLICIES}")
+        object.__setattr__(self, "source", str(_FieldSource(self.source)))
+        if self.scope not in _FIELD_SCOPES:
+            raise ValueError(f"{self.field}: scope must be one of {_FIELD_SCOPES}")
+        if self.ci not in _CI_POLICIES:
+            raise ValueError(f"{self.field}: ci must be one of {_CI_POLICIES}")
         if self.provided_by and not _PROVIDED_BY_RE.match(self.provided_by):
             raise ValueError(f"{self.field}: provided_by must look like project/service:KEY")
-        if self.mirror_to_1password and self.source != FieldSource.RUNTIME:
+        if self.mirror_to_1password and self.source != _FieldSource.RUNTIME:
             raise ValueError(f"{self.field}: only runtime fields can mirror to 1Password")
         if self.required and self.empty_ok:
             raise ValueError(f"{self.field}: a required field cannot be empty_ok")
@@ -105,7 +107,7 @@ class EnvironmentField:
     @property
     def store_backed(self) -> bool:
         """True when the value lives in the deployment secret store under this service."""
-        return self.source in STORE_BACKED_SOURCES and not self.provided_by
+        return self.source in _STORE_BACKED_SOURCES and not self.provided_by
 
     @property
     def composed_keys(self) -> tuple[str, ...]:
@@ -142,7 +144,7 @@ class EnvironmentField:
             sensitive=_boolean(raw, "sensitive"),
             group=parse_string(raw, "group", required=False) or "Application",
             description=parse_string(raw, "description", required=False),
-            source=parse_string(raw, "source", required=False) or FieldSource.CODE,
+            source=parse_string(raw, "source", required=False) or _FieldSource.CODE,
             empty_ok=_boolean(raw, "empty_ok"),
             scope=parse_string(raw, "scope", required=False) or "env",
             provided_by=parse_string(raw, "provided_by", required=False),
@@ -159,12 +161,12 @@ class EnvironmentManifest:
 
     source: str
     fields: tuple[EnvironmentField, ...]
-    contract_version: int = ENVIRONMENT_MANIFEST_VERSION
+    contract_version: int = _ENVIRONMENT_MANIFEST_VERSION
 
     def __post_init__(self) -> None:
         require_contract_version(
             self.contract_version,
-            ENVIRONMENT_MANIFEST_VERSION,
+            _ENVIRONMENT_MANIFEST_VERSION,
             description="environment manifest version",
         )
         if not self.source:
@@ -180,8 +182,8 @@ class EnvironmentManifest:
                     )
                 owners[env_name] = field.field
 
-    def by_source(self, *sources: FieldSource | str) -> tuple[EnvironmentField, ...]:
-        wanted = {str(FieldSource(source)) for source in sources}
+    def by_source(self, *sources: _FieldSource | str) -> tuple[EnvironmentField, ...]:
+        wanted = {str(_FieldSource(source)) for source in sources}
         return tuple(field for field in self.fields if field.source in wanted)
 
     @property
@@ -199,7 +201,7 @@ class EnvironmentManifest:
     def from_dict(cls, raw: Mapping[str, Any]) -> EnvironmentManifest:
         contract_version = parse_contract_version(
             raw,
-            ENVIRONMENT_MANIFEST_VERSION,
+            _ENVIRONMENT_MANIFEST_VERSION,
             description="environment manifest version",
         )
         fields = raw.get("fields")
@@ -259,7 +261,7 @@ class EnvironmentValidation:
 
 
 @dataclass(frozen=True)
-class ReconcileReport:
+class _ReconcileReport:
     """Store contents checked against the manifest. Carries names only, never values."""
 
     missing: tuple[str, ...] = ()
@@ -326,11 +328,11 @@ def environment_manifest_from_model(
         for extra_key in extra_keys:
             if isinstance(extra_key, str) and extra_key not in aliases:
                 aliases.append(extra_key)
-        field_source = str(extra.get("source") or FieldSource.CODE)
+        field_source = str(extra.get("source") or _FieldSource.CODE)
         injected = bool(
             extra.get("injected")
             or (legacy_vault_metadata and extra.get("vault"))
-            or field_source in COMPOSE_SOURCES
+            or field_source in _COMPOSE_SOURCES
         )
         # v1 treated every injected value as sensitive because "injected" meant "from
         # Vault". Under v2 the source class says where a value comes from and the legacy
@@ -367,7 +369,7 @@ def environment_manifest_from_model(
             raise ValueError(f"overrides name unknown settings fields: {unknown}")
         for name, override in overrides.items():
             changes = dict(override)
-            if str(changes.get("source", "")) in COMPOSE_SOURCES:
+            if str(changes.get("source", "")) in _COMPOSE_SOURCES:
                 changes.setdefault("injected", True)
             fields[by_name[name]] = replace(fields[by_name[name]], **changes)
     resolved_source = source or f"{model.__module__}.{model.__qualname__}"
@@ -402,13 +404,13 @@ def validate_environment(
     return EnvironmentValidation(tuple(sorted(missing)), resolved)
 
 
-def reconcile(
+def _reconcile(
     manifest: EnvironmentManifest,
     values: Mapping[str, str],
     *,
     expected: Mapping[str, str] | None = None,
     ignore_prefixes: tuple[str, ...] = ("_",),
-) -> ReconcileReport:
+) -> _ReconcileReport:
     """Check one secret-store path against the manifest's store-backed fields.
 
     ``values`` is the store content; ``expected`` (optional) is the human source of truth
@@ -431,7 +433,7 @@ def reconcile(
     stale = [
         key for key, wanted in (expected or {}).items() if key in values and values[key] != wanted
     ]
-    return ReconcileReport(
+    return _ReconcileReport(
         tuple(sorted(missing)),
         tuple(sorted(empty)),
         tuple(sorted(unclassified)),
@@ -451,7 +453,7 @@ def manifest_config_fingerprint(manifest: EnvironmentManifest, values: Mapping[s
         for field in sorted(manifest.fields, key=lambda item: item.env)
         if field.env in values
     ]
-    return canonical_sha256(lines)
+    return _canonical_sha256(lines)
 
 
 def _validation_aliases(alias: Any) -> tuple[str, ...]:

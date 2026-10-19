@@ -53,7 +53,7 @@ from infra2_sdk.deploy import (
     render_sender_request,
     validate_sender_request,
 )
-from infra2_sdk.manifests import assert_environment, render
+from infra2_sdk.manifests import _render, assert_environment
 from infra2_sdk.observability import (
     DELAY_ALLOWANCE,
     MISSED_TICKS_TOLERATED,
@@ -142,7 +142,7 @@ def test_assert_environment_passes_and_fails(tmp_path: Path) -> None:
     from infra2_sdk.runtime.config_schema import (
         EnvironmentField,
         EnvironmentManifest,
-        FieldSource,
+        _FieldSource,
     )
 
     manifest = EnvironmentManifest(
@@ -151,14 +151,14 @@ def test_assert_environment_passes_and_fails(tmp_path: Path) -> None:
             EnvironmentField(
                 field="db_url",
                 env="DB_URL",
-                source=FieldSource.RUNTIME,
+                source=_FieldSource.RUNTIME,
                 required=True,
                 empty_ok=False,
             ),
         ),
     )
     manifest_file = tmp_path / "env.manifest.yaml"
-    manifest_file.write_text(render(manifest), encoding="utf-8")
+    manifest_file.write_text(_render(manifest), encoding="utf-8")
 
     assert_environment(
         manifest_file,

@@ -17,17 +17,17 @@ from infra2_sdk.deploy import (
     DeployType,
     HealthCheckResult,
     ProductionEvidencePolicy,
-    RunEvidenceExpectation,
+    _default_github_json_fetcher,
     _run_id,
+    _RunEvidenceExpectation,
+    _validate_wire_shape,
     _verify_reviewed_pull,
     _verify_run,
     _workflow_runs,
-    default_github_json_fetcher,
     default_http_get,
     dispatch_and_wait,
     github_api_client,
     poll_until_healthy,
-    validate_wire_shape,
 )
 
 SHA = "a" * 40
@@ -55,12 +55,12 @@ def test_request_round_trip() -> None:
     assert DeployRequest.from_dict(original.to_dict()) == original
 
 
-# --- validate_wire_shape: exact-field-set completeness (infra2#597 audit) ---------
+# --- _validate_wire_shape: exact-field-set completeness (infra2#597 audit) ---------
 
 
 def test_validate_wire_shape_accepts_the_real_wire_dict() -> None:
     raw = request().to_dict()
-    validate_wire_shape(raw)
+    _validate_wire_shape(raw)
     assert DeployRequest.from_dict(raw) == request()
 
 
@@ -97,7 +97,7 @@ def test_validate_wire_shape_rejects_malformed_input(mutator, message) -> None:
     raw = request().to_dict()
     target = mutator(raw)
     with pytest.raises(ValueError, match=message):
-        validate_wire_shape(target)  # type: ignore[arg-type]
+        _validate_wire_shape(target)  # type: ignore[arg-type]
 
 
 def test_validate_wire_shape_field_sets_track_the_dataclasses_not_a_hardcoded_copy() -> None:
@@ -192,14 +192,14 @@ def test_request_deserialization_rejects_bad_types(field, value, message) -> Non
 # --- Production evidence policy (infra2-sdk#8) ------------------------------------
 
 
-def expectation(**overrides) -> "RunEvidenceExpectation":
+def expectation(**overrides) -> "_RunEvidenceExpectation":
     values = {
         "workflow_path": ".github/workflows/ci-required.yml",
         "event": "push",
         "display_title_template": "Release Images {version_ref}",
     }
     values.update(overrides)
-    return RunEvidenceExpectation(**values)
+    return _RunEvidenceExpectation(**values)
 
 
 def policy(**overrides) -> "ProductionEvidencePolicy":
@@ -268,33 +268,33 @@ def test_expectation_round_trips_require_head_sha_false() -> None:
     # commit) declares this explicitly — never a silent verifier-side skip.
     branch_dispatched = expectation(require_head_sha=False)
     raw = json.loads(json.dumps(branch_dispatched.to_dict()))
-    assert RunEvidenceExpectation.from_dict(raw) == branch_dispatched
-    assert RunEvidenceExpectation.from_dict(raw).require_head_sha is False
+    assert _RunEvidenceExpectation.from_dict(raw) == branch_dispatched
+    assert _RunEvidenceExpectation.from_dict(raw).require_head_sha is False
 
 
 def test_expectation_defaults_require_head_sha_true() -> None:
     raw = expectation().to_dict()
     del raw["require_head_sha"]
-    assert RunEvidenceExpectation.from_dict(raw).require_head_sha is True
+    assert _RunEvidenceExpectation.from_dict(raw).require_head_sha is True
 
 
 def test_expectation_rejects_a_non_boolean_require_head_sha() -> None:
     raw = expectation().to_dict()
     raw["require_head_sha"] = "false"
     with pytest.raises(ValueError, match="require_head_sha must be a boolean"):
-        RunEvidenceExpectation.from_dict(raw)
+        _RunEvidenceExpectation.from_dict(raw)
 
 
 def sample_policy() -> ProductionEvidencePolicy:
     return ProductionEvidencePolicy(
         service="finance_report/app",
-        source=RunEvidenceExpectation(
+        source=_RunEvidenceExpectation(
             workflow_path=".github/workflows/deploy.yml",
             event="push",
             display_title_template="Release Images {version_ref}",
             require_head_sha=True,
         ),
-        staging=RunEvidenceExpectation(
+        staging=_RunEvidenceExpectation(
             workflow_path=".github/workflows/deploy.yml",
             event="workflow_dispatch",
             display_title_template="Deploy Staging {version_ref}",
@@ -998,7 +998,7 @@ def test_fetch_production_evidence_policy_raises_on_malformed_policy_file() -> N
 
 def test_run_evidence_expectation_validation_edge_cases() -> None:
     with pytest.raises(ValueError, match="display_title_template is required"):
-        RunEvidenceExpectation(
+        _RunEvidenceExpectation(
             workflow_path=".github/workflows/deploy.yml",
             event="push",
             display_title_template="   ",
@@ -1009,12 +1009,12 @@ def test_production_evidence_policy_validation_edge_cases() -> None:
     with pytest.raises(ValueError, match="review_base_ref is required"):
         ProductionEvidencePolicy(
             service="finance_report/app",
-            source=RunEvidenceExpectation(
+            source=_RunEvidenceExpectation(
                 workflow_path=".github/workflows/deploy.yml",
                 event="push",
                 display_title_template="Deploy {version_ref}",
             ),
-            staging=RunEvidenceExpectation(
+            staging=_RunEvidenceExpectation(
                 workflow_path=".github/workflows/deploy.yml",
                 event="push",
                 display_title_template="Deploy {version_ref}",
@@ -1065,7 +1065,7 @@ def test_default_github_json_fetcher(monkeypatch) -> None:
         lambda req, timeout=10.0: FakeResponse(b'{"key": "value"}'),
     )
 
-    fetcher = default_github_json_fetcher(token="test-token")
+    fetcher = _default_github_json_fetcher(token="test-token")
     result = fetcher("/test/path")
     assert result == {"key": "value"}
 
