@@ -21,20 +21,20 @@ class LlmSettings:
     """Settings contract for large language model providers."""
 
     provider: str = "zai"
-    base_url: str = "https://open.bigmodel.cn/api/paas/v4"
+    base_url: str = "https://api.z.ai/api/coding/paas/v4"
     api_key: str | None = field(default=None, repr=False)
     primary_model: str = "glm-5.3-flash"
-    ocr_model: str | None = None
-    vision_model: str | None = None
+    ocr_model: str | None = "glm-5.3-flashx"
+    vision_model: str | None = "glm-5.3-flashx"
     fallback_models: tuple[str, ...] = ()
     vision_fallback_models: tuple[str, ...] = ()
     chat_completions_path: str = "/chat/completions"
     layout_parsing_path: str = "/layout_parsing"
-    json_timeout_seconds: float = 90.0
-    json_max_tokens: int = 16384
+    json_timeout_seconds: float = 360.0
+    json_max_tokens: int = 8192
     json_disable_thinking: bool = True
-    json_seed: int | None = 42
-    extract_max_attempts: int = 3
+    json_seed: int | None = None
+    extract_max_attempts: int = 2
     encryption_keys: tuple[str, ...] = field(default=(), repr=False)
 
     def __post_init__(self) -> None:

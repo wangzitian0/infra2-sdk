@@ -4,6 +4,13 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.8.1 - 2026-10-19
+
+### Changed
+
+- Align `infra2_sdk.runtime.llm.LlmSettings` defaults (`base_url`, `ocr_model`, `vision_model`, `json_timeout_seconds`, `json_max_tokens`, `json_seed`, `extract_max_attempts`) with the canonical consumer contract ([#123](https://github.com/wangzitian0/infra2-sdk/issues/123)).
+- Remove the 4 unused OpenTelemetry sampler and metric keys (`OTEL_SDK_DISABLED`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`) from `RuntimeEnvKey` and `RUNTIME_ENV_SPECS` ([#123](https://github.com/wangzitian0/infra2-sdk/issues/123)).
+
 ## 3.8.0 - 2026-10-19
 
 ### Added

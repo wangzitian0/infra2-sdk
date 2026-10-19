@@ -20,6 +20,7 @@ from infra2_sdk.runtime.environment import (
     env_int,
     is_preview_alias,
     normalize_deployment_environment,
+    resolve_env,
     resolve_environment_tier,
     resolve_runtime_env,
 )
@@ -96,9 +97,7 @@ class OtelSettings:
         identity = _resolve_service_identity(environ, **resolver_kwargs)
         endpoint = resolve_runtime_env(environ, RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT).value
         try:
-            disabled = parse_otel_boolean(
-                resolve_runtime_env(environ, RuntimeEnvKey.OTEL_SDK_DISABLED).value
-            )
+            disabled = parse_otel_boolean(resolve_env(environ, "OTEL_SDK_DISABLED").value)
         except ValueError as exc:
             if strict:
                 raise ValueError(f"invalid OTEL_SDK_DISABLED: {exc}") from exc
@@ -150,8 +149,8 @@ class OtelSettings:
             if strict:
                 raise ValueError(f"invalid deployment.environment.name: {exc}") from exc
             raise
-        sampler_name = resolve_runtime_env(environ, RuntimeEnvKey.OTEL_TRACES_SAMPLER).value
-        sampler_arg = resolve_runtime_env(environ, RuntimeEnvKey.OTEL_TRACES_SAMPLER_ARG).value
+        sampler_name = resolve_env(environ, "OTEL_TRACES_SAMPLER").value
+        sampler_arg = resolve_env(environ, "OTEL_TRACES_SAMPLER_ARG").value
         sampler_name, sampler_arg = sampler_name or "", sampler_arg or ""
         try:
             parse_traces_sampler(sampler_name, sampler_arg)
@@ -171,7 +170,7 @@ class OtelSettings:
                 resource_attributes=identity.attributes,
                 enabled=bool(effective_endpoint),
                 export_interval_millis=env_int(
-                    environ, RuntimeEnvKey.OTEL_METRIC_EXPORT_INTERVAL, default=60_000
+                    environ, "OTEL_METRIC_EXPORT_INTERVAL", default=60_000
                 ),
                 traces_sampler=sampler_name,
                 traces_sampler_arg=sampler_arg,

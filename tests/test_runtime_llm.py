@@ -10,23 +10,23 @@ from infra2_sdk.runtime.llm import LlmSettings
 def test_llm_settings_defaults() -> None:
     settings = LlmSettings()
     assert settings.provider == "zai"
-    assert settings.base_url == "https://open.bigmodel.cn/api/paas/v4"
+    assert settings.base_url == "https://api.z.ai/api/coding/paas/v4"
     assert settings.api_key is None
     assert settings.primary_model == "glm-5.3-flash"
-    assert settings.ocr_model is None
-    assert settings.vision_model is None
+    assert settings.ocr_model == "glm-5.3-flashx"
+    assert settings.vision_model == "glm-5.3-flashx"
     assert settings.fallback_models == ()
     assert settings.vision_fallback_models == ()
     assert settings.chat_completions_path == "/chat/completions"
     assert settings.layout_parsing_path == "/layout_parsing"
-    assert settings.json_timeout_seconds == 90.0
-    assert settings.json_max_tokens == 16384
+    assert settings.json_timeout_seconds == 360.0
+    assert settings.json_max_tokens == 8192
     assert settings.json_disable_thinking is True
-    assert settings.json_seed == 42
-    assert settings.extract_max_attempts == 3
+    assert settings.json_seed is None
+    assert settings.extract_max_attempts == 2
     assert settings.encryption_keys == ()
-    assert settings.chat_completions_url == "https://open.bigmodel.cn/api/paas/v4/chat/completions"
-    assert settings.layout_parsing_url == "https://open.bigmodel.cn/api/paas/v4/layout_parsing"
+    assert settings.chat_completions_url == "https://api.z.ai/api/coding/paas/v4/chat/completions"
+    assert settings.layout_parsing_url == "https://api.z.ai/api/coding/paas/v4/layout_parsing"
 
 
 def test_llm_settings_repr_hides_sensitive_fields() -> None:
@@ -97,6 +97,7 @@ def test_llm_settings_model_chain_deduplication() -> None:
     # When vision_model is None, falls back to primary_model for vision chain
     settings_no_vision = LlmSettings(
         primary_model="primary-1",
+        vision_model=None,
         vision_fallback_models=("vfb-1", "primary-1"),
     )
     assert settings_no_vision.model_chain(vision=True) == ("primary-1", "vfb-1")

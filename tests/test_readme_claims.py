@@ -346,9 +346,9 @@ def test_readme_documents_require_issued_identity_and_behavior_matches(
 def test_the_readme_counts_the_fixed_names_and_the_variables_of_the_contract() -> None:
     flat = " ".join(README.split())  # a line break in the README must not change the result
     fixed = re.search(r"(\w+) more fixed names exist outside the table\.", flat)
-    assert fixed and fixed.group(1) == "Five"
-    assert len(FIXED_READS) == 5
-    paragraph = flat[fixed.start() : fixed.start() + 500]
+    assert fixed and fixed.group(1) == "Nine"
+    assert len(FIXED_READS) == 9
+    paragraph = flat[fixed.start() : fixed.start() + 700]
     for name in FIXED_READS:
         assert f"`{name}`" in paragraph, f"the README paragraph does not name {name}"
 
