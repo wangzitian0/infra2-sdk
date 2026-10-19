@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import urlencode
@@ -270,10 +270,65 @@ def _bearer_token(send: HttpTransport, challenge: str) -> str:
     return token
 
 
+SHORT_SHA_LENGTH = 7
+_FULL_SHA_RE = re.compile(r"\A[0-9a-f]{40}\Z")
+
+
+def short_sha(sha: str) -> str:
+    """Return the 7-character short commit SHA after validating a 40-hex commit SHA."""
+    if not _FULL_SHA_RE.fullmatch(sha):
+        raise ValueError(f"--sha must be the full 40-hex commit sha the tag points at, got {sha!r}")
+    return sha[:SHORT_SHA_LENGTH]
+
+
+def assert_after_on_main(
+    after: str,
+    repo_root: Any,
+    *,
+    base: str = "origin/main",
+    runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+) -> str:
+    """Fail-closed provenance guard: the promoted tag or ref must be reachable from main."""
+    resolved = runner(
+        ["git", "rev-parse", "--verify", f"{after}^{{commit}}"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if resolved.returncode != 0:
+        raise SystemExit(
+            f"::error::cannot resolve {after!r} to a commit "
+            f"({resolved.stderr.strip() or 'unknown revision'})."
+        )
+    sha = resolved.stdout.strip()
+    ancestor = runner(
+        ["git", "merge-base", "--is-ancestor", sha, base],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if ancestor.returncode == 0:
+        return sha
+    if ancestor.returncode == 1:
+        raise SystemExit(
+            f"::error::refusing to reconcile {after!r} ({sha[:12]}): not reachable from "
+            f"{base}. Release tags must be cut on reviewed main (Infra-011 invariant). "
+            f"Re-cut the tag on main, or pass --dry-run to plan only."
+        )
+    raise SystemExit(
+        f"::error::cannot verify provenance of {after!r}: base ref {base!r} is "
+        f"unresolvable ({ancestor.stderr.strip() or 'git error'}). Ensure it exists, e.g. "
+        f"`git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main`."
+    )
+
+
 __all__ = [
     "CommandRunner",
+    "MANIFEST_ACCEPT",
     "ReleaseError",
     "ResolvedRef",
+    "SHORT_SHA_LENGTH",
+    "assert_after_on_main",
     "classify_ref",
     "ls_remote_rows",
     "redact_repo",
@@ -281,4 +336,5 @@ __all__ = [
     "resolve_image_ref",
     "resolve_pr",
     "resolve_to_sha",
+    "short_sha",
 ]

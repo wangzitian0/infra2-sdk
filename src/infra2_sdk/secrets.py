@@ -672,3 +672,76 @@ def _json(response: HttpResponse) -> dict[str, Any]:
     except ValueError as error:
         raise SecretsError("backend returned malformed JSON") from error
     return parsed if isinstance(parsed, dict) else {}
+
+
+# --------------------------------------------------------------------------- AppRole naming
+
+
+@dataclass(frozen=True)
+class VaultTokenTarget:
+    """Service coordinates used when provisioning per-service Vault AppRoles and policies."""
+
+    project: str
+    service: str
+    service_dir: str
+    project_dir: str
+    dokploy_project: str
+
+
+def normalize_selector(value: str | None, *, label: str) -> str | None:
+    """Normalize an optional project or service selector."""
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{label} must not be empty")
+    if "-" in normalized or "/" in normalized:
+        raise ValueError(f"{label} must not include '-' or '/'")
+    return normalized
+
+
+def _normalize_policy_env(value: str | None) -> str:
+    if not value or not value.strip():
+        return "production"
+    val = value.strip().lower()
+    if val in ("prod", "production"):
+        return "production"
+    if val in ("stg", "staging"):
+        return "staging"
+    if val in ("preview", "preview_env", "preview-env"):
+        return "preview"
+    if val in ("canary", "canary-preview", "canary_preview"):
+        return "canary_preview"
+    if "/" in val or "\\" in val or " " in val or "\t" in val or "\n" in val:
+        raise ValueError("ENV name must not include '/' or whitespace")
+    return val.replace("-", "_")
+
+
+def policy_name(project: str, env: str, service: str) -> str:
+    """Return the per-environment Vault policy name for a service AppRole."""
+    env_name = _normalize_policy_env(env)
+    return f"{project}-{env_name}-{service}"
+
+
+__all__ = [
+    "OnePasswordBackend",
+    "Runner",
+    "SecretsBackend",
+    "SecretsError",
+    "SecretsResolver",
+    "SyncReport",
+    "TokenStatus",
+    "VAULT_USER_AGENT",
+    "VaultKvBackend",
+    "VaultTokenTarget",
+    "WRITE_MODES",
+    "WriteResult",
+    "generate_secret",
+    "normalize_selector",
+    "op_item",
+    "policy_name",
+    "render_agent_policy",
+    "render_agent_template",
+    "vault_path",
+    "vault_token_status",
+]
