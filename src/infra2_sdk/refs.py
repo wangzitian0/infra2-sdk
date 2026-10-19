@@ -105,6 +105,33 @@ def resolve_pr(
     raise ValueError(f"PR #{number} head not found in {redact_repo(repo)}")
 
 
+def resolve_branch_to_sha(
+    branch: str,
+    *,
+    repo: str,
+    runner: CommandRunner = subprocess.run,
+) -> str:
+    """Resolve a clone-only branch without broadening the deploy authority grammar."""
+    cleaned = branch.strip()
+    invalid_chars = " ~^:?*[\x5c"
+    if (
+        not cleaned
+        or cleaned.startswith(("-", ".", "/", "refs/"))
+        or cleaned.endswith((".", "/", ".lock"))
+        or ".." in cleaned
+        or "@{" in cleaned
+        or "//" in cleaned
+        or any(ord(char) < 32 or char in invalid_chars for char in cleaned)
+    ):
+        raise ValueError(f"invalid clone branch {branch!r}")
+
+    remote_ref = f"refs/heads/{cleaned}"
+    for sha, name in ls_remote_rows(repo, remote_ref, runner=runner):
+        if name == remote_ref:
+            return sha
+    raise ValueError(f"clone branch {branch!r} ({remote_ref}) not found in {redact_repo(repo)}")
+
+
 def _remote_ref_for(form: str, cleaned: str) -> str:
     return {"branch": "refs/heads/main", "tag": f"refs/tags/{cleaned}"}[form]
 
@@ -332,6 +359,7 @@ __all__ = [
     "classify_ref",
     "ls_remote_rows",
     "redact_repo",
+    "resolve_branch_to_sha",
     "resolve_image_digest",
     "resolve_image_ref",
     "resolve_pr",

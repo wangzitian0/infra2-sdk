@@ -552,3 +552,131 @@ def test_secrets_vault_token_target_and_policy_name() -> None:
         normalize_selector("bad-name", label="project")
     assert policy_name("apps", "stg", "report") == "apps-staging-report"
     assert policy_name("apps", "prod", "report") == "apps-production-report"
+
+
+def test_v3_8_0_resolve_branch_to_sha() -> None:
+    from infra2_sdk.refs import resolve_branch_to_sha
+
+    sha = "a" * 40
+
+    def fake_runner(
+        args: list[str],
+        *,
+        capture_output: bool = True,
+        text: bool = True,
+        check: bool = True,
+        timeout: float | None = None,
+        **kwargs: Any,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args, 0, f"{sha}\trefs/heads/fix/branch-test\n", "")
+
+    assert (
+        resolve_branch_to_sha(
+            "fix/branch-test",
+            repo="https://github.com/org/repo.git",
+            runner=fake_runner,
+        )
+        == sha
+    )
+    for bad in ("", "-flag", ".hidden", "refs/heads/main", "a..b", "a//b", "branch.lock"):
+        with pytest.raises(ValueError, match="invalid clone branch"):
+            resolve_branch_to_sha(
+                bad,
+                repo="https://github.com/org/repo.git",
+                runner=fake_runner,
+            )
+    with pytest.raises(ValueError, match="not found"):
+        resolve_branch_to_sha(
+            "missing/branch",
+            repo="https://github.com/org/repo.git",
+            runner=fake_runner,
+        )
+
+
+def test_v3_8_0_run_deploy_transport_cli(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import io
+
+    from infra2_sdk.deploy import ReceiverRun, run_deploy_transport_cli
+
+    monkeypatch.delenv("INFRA2_PAT", raising=False)
+    assert (
+        run_deploy_transport_cli(
+            [],
+            dispatch=lambda *a, **kw: ReceiverRun(
+                run_id=1, url="https://github.com/x/y/actions/runs/1"
+            ),
+            user_agent="test-agent",
+        )
+        == 1
+    )
+    assert "INFRA2_PAT is required" in capsys.readouterr().err
+
+    monkeypatch.setenv("INFRA2_PAT", "tok")
+    assert (
+        run_deploy_transport_cli(
+            ["--timeout", "0"],
+            dispatch=lambda *a, **kw: ReceiverRun(
+                run_id=1, url="https://github.com/x/y/actions/runs/1"
+            ),
+            user_agent="test-agent",
+        )
+        == 1
+    )
+    assert "must be positive" in capsys.readouterr().err
+
+    assert (
+        run_deploy_transport_cli(
+            ["--timeout", "5", "--poll-interval", "5"],
+            dispatch=lambda *a, **kw: ReceiverRun(
+                run_id=1, url="https://github.com/x/y/actions/runs/1"
+            ),
+            user_agent="test-agent",
+            stdin=io.StringIO("[]"),
+        )
+        == 1
+    )
+    assert "must be a JSON object" in capsys.readouterr().err
+
+    outputs: dict[str, str] = {}
+    assert (
+        run_deploy_transport_cli(
+            ["--timeout", "6", "--poll-interval", "5"],
+            dispatch=lambda raw, **kw: ReceiverRun(
+                run_id=101, url="https://github.com/wangzitian0/infra2/actions/runs/101"
+            ),
+            user_agent="test-agent",
+            api_client_factory=lambda **kw: (lambda *a, **k: None, lambda run_id: b""),
+            github_output=outputs.update,
+            stdin=io.StringIO('{"request_id": "abc"}'),
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out) == {
+        "receiver_run_id": 101,
+        "receiver_run_url": "https://github.com/wangzitian0/infra2/actions/runs/101",
+    }
+    assert outputs == {
+        "receiver_run_id": "101",
+        "receiver_run_url": "https://github.com/wangzitian0/infra2/actions/runs/101",
+    }
+
+
+def test_v3_8_0_bare_interpreter_import_without_yaml() -> None:
+    import sys
+
+    code = (
+        "import sys; sys.modules['yaml'] = None; "
+        "import infra2_sdk; "
+        "from infra2_sdk import ci, deploy, observability, refs, secrets; "
+        "assert callable(refs.resolve_branch_to_sha); "
+        "assert callable(deploy.run_deploy_transport_cli)"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr

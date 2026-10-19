@@ -48,6 +48,7 @@ from infra2_sdk.deploy import (
     canonical_json,
     dispatch_and_wait,
     poll_until_healthy,
+    run_deploy_transport_cli,
     verify_production_evidence,
 )
 from infra2_sdk.manifests import (
@@ -60,6 +61,7 @@ from infra2_sdk.refs import (
     classify_ref,
     ls_remote_rows,
     redact_repo,
+    resolve_branch_to_sha,
     resolve_image_ref,
     resolve_pr,
     resolve_to_sha,
@@ -121,6 +123,7 @@ __all__ = [
     # Deploy dispatch
     "ReceiverRun",
     "dispatch_and_wait",
+    "run_deploy_transport_cli",
     # Manifests
     "ManifestSpec",
     # Refs
@@ -129,6 +132,7 @@ __all__ = [
     "classify_ref",
     "ls_remote_rows",
     "redact_repo",
+    "resolve_branch_to_sha",
     "resolve_image_ref",
     "resolve_pr",
     "resolve_to_sha",

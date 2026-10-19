@@ -1323,6 +1323,70 @@ def check_deploy_freshness(
     return 0
 
 
+_DEFAULT_TOKEN_ENV = "_".join(("INFRA2", "PAT"))
+
+
+def run_deploy_transport_cli(
+    argv: Sequence[str] | None = None,
+    *,
+    dispatch: Callable[..., ReceiverRun],
+    user_agent: str,
+    api_client_factory: Callable[..., tuple[Api, LogFetcher]] = github_api_client,
+    github_output: Callable[[Mapping[str, str]], None] | None = None,
+    stdin: Any = None,
+) -> int:
+    """Shared CLI runner for ``app_deploy_transport.py`` across application repositories."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Dispatch one validated release request and prove the matching infra2 run succeeded."
+        )
+    )
+    parser.add_argument("--token-env", default=_DEFAULT_TOKEN_ENV)
+    parser.add_argument("--timeout", type=int, default=1800)
+    parser.add_argument("--poll-interval", type=int, default=5)
+    args = parser.parse_args(argv)
+
+    token = os.getenv(args.token_env, "")
+    if not token:
+        print(f"app deploy transport failed: {args.token_env} is required", file=sys.stderr)
+        return 1
+    if args.timeout <= 0 or args.poll_interval <= 0:
+        print(
+            "app deploy transport failed: timeout and poll interval must be positive",
+            file=sys.stderr,
+        )
+        return 1
+    stream = stdin if stdin is not None else sys.stdin
+    try:
+        raw = json.load(stream)
+        if not isinstance(raw, Mapping):
+            raise ValueError("deploy request must be a JSON object")
+        api, fetch_logs = api_client_factory(
+            token=token,
+            user_agent=user_agent,
+            timeout=30.0,
+        )
+        result = dispatch(
+            raw,
+            api=api,
+            fetch_logs=fetch_logs,
+            poll_interval=float(args.poll_interval),
+            max_attempts=max(
+                1,
+                (args.timeout + args.poll_interval - 1) // args.poll_interval,
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"app deploy transport failed: {exc}", file=sys.stderr)
+        return 1
+    if github_output is not None:
+        github_output({"receiver_run_id": str(result.run_id), "receiver_run_url": result.url})
+    print(json.dumps({"receiver_run_id": result.run_id, "receiver_run_url": result.url}))
+    return 0
+
+
 __all__ = [
     "DeployOperation",
     "DeployRequest",
@@ -1348,6 +1412,7 @@ __all__ = [
     "print_approval_notice",
     "read_deployed_release",
     "render_sender_request",
+    "run_deploy_transport_cli",
     "validate_evidence_urls",
     "validate_sender_request",
     "verify_production_evidence",

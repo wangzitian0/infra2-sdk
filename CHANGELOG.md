@@ -4,6 +4,17 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.8.0 - 2026-10-19
+
+### Added
+
+- Add `infra2_sdk.refs.resolve_branch_to_sha` (also exported on `infra2_sdk`) to resolve clone-only branch names against remote refs without broadening the deploy authority grammar ([#115](https://github.com/wangzitian0/infra2-sdk/issues/115)).
+- Add `infra2_sdk.deploy.run_deploy_transport_cli` (also exported on `infra2_sdk`) as the shared CLI entrypoint for `app_deploy_transport.py` across consumer repositories ([#115](https://github.com/wangzitian0/infra2-sdk/issues/115)).
+
+### Changed
+
+- Lazy-load `yaml` in `infra2_sdk.ci` and `infra2_sdk.rules.compose` so `infra2_sdk` and all non-YAML submodules import cleanly in a bare Python 3.11+ interpreter (`pip install --no-deps`) ([#115](https://github.com/wangzitian0/infra2-sdk/issues/115)).
+
 ## 3.7.3 - 2026-10-19
 
 ### Changed

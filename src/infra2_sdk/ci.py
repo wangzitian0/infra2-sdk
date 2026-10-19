@@ -12,7 +12,13 @@ from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
 
-import yaml
+
+def _yaml() -> Any:
+    """Lazy-import PyYAML only when a YAML-parsing helper is invoked."""
+    import yaml
+
+    return yaml
+
 
 GATE_ID_RE = re.compile(r"\A[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+\Z")
 REQUIRED_GATE_FIELDS = ("id", "stage", "task_category", "workflow", "job")
@@ -58,6 +64,7 @@ def read_workflow(path: str | Path) -> tuple[dict, str]:
         source = p.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return {}, ""
+    yaml = _yaml()
     try:
         parsed = yaml.safe_load(source)
     except yaml.YAMLError:
@@ -76,6 +83,7 @@ def workflow_read_error(path: str | Path) -> str | None:
         return str(exc)
     if not source.strip():
         return None
+    yaml = _yaml()
     try:
         parsed = yaml.safe_load(source)
     except yaml.YAMLError as exc:
@@ -90,6 +98,7 @@ def load_workflow(path: str | Path) -> dict:
     p = Path(path)
     if not p.is_file():
         return {}
+    yaml = _yaml()
     try:
         parsed = yaml.safe_load(p.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, yaml.YAMLError):
@@ -297,7 +306,7 @@ def load_delivery_stages(path: str | Path | None = None) -> dict[str, dict]:
     """Load the SDK-owned stage vocabulary as ``stage_id -> metadata``."""
     source = Path(path) if path is not None else files("infra2_sdk").joinpath("data/stages.yaml")
     with source.open(encoding="utf-8") as handle:
-        data = yaml.safe_load(handle) or {}
+        data = _yaml().safe_load(handle) or {}
     stages = data.get("stages")
     if not isinstance(stages, dict):
         raise ValueError("stages.yaml: 'stages' must be a mapping")

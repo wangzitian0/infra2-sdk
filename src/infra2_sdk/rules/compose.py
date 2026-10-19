@@ -11,7 +11,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
+
+def _yaml() -> Any:
+    """Lazy-import PyYAML only when compose YAML parsing is invoked."""
+    import yaml
+
+    return yaml
+
 
 # 512m, 1.5g, 2G, 1073741824. A bare 0, "0", "0b" or prose is not a ceiling.
 SIZE_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([kmgtb]?b?)\s*$", re.I)
@@ -155,6 +161,7 @@ def inspect_compose(path_or_text: str | Path) -> ComposeReport:
 
     bare_violations = tuple(find_bare_latest_violations(text))
 
+    yaml = _yaml()
     try:
         docs = [d for d in yaml.safe_load_all(text) if d]
     except yaml.YAMLError as exc:
