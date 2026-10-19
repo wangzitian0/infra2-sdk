@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -355,93 +355,145 @@ def test_ci_workflow_and_coverage_ratchet(tmp_path: Path) -> None:
 
 
 def test_observability_recency_and_hysteresis() -> None:
-    now = datetime(2026, 10, 19, 12, 0, 0, tzinfo=UTC)
-    transitions = [
-        "2026-10-19T11:50:00Z",
-        "2026-10-19T11:55:00Z",
-        "2026-10-19T11:59:00Z",
-    ]
-    assert is_recently_flapping(transitions, now=now, window=timedelta(minutes=15), threshold=3)
+    now = 1_000_000.0
+    assert is_recently_flapping(
+        event_count=9,
+        last_event_at=now - 30,
+        now=now,
+        count_threshold=3,
+        recency_window_seconds=3600,
+    )
     assert not is_recently_flapping(
-        transitions[:2], now=now, window=timedelta(minutes=15), threshold=3
+        event_count=3,
+        last_event_at=now,
+        now=now,
+        count_threshold=3,
+        recency_window_seconds=3600,
     )
 
-    state = ConsecutiveObservationState.from_mapping(None)
-    state, trans = evaluate_consecutive_hysteresis(
-        state, is_bad=True, now_iso="2026-10-19T12:00:00Z"
+    state = ConsecutiveObservationState()
+    assert (
+        evaluate_consecutive_hysteresis(
+            state=state,
+            is_bad_now=True,
+            now=now,
+            failure_threshold=2,
+            recovery_threshold=2,
+            renotify_seconds=600,
+        )
+        == "none"
     )
-    assert trans == "none" and not state.active
-    state, trans = evaluate_consecutive_hysteresis(
-        state, is_bad=True, now_iso="2026-10-19T12:05:00Z"
+    assert (
+        evaluate_consecutive_hysteresis(
+            state=state,
+            is_bad_now=True,
+            now=now + 60,
+            failure_threshold=2,
+            recovery_threshold=2,
+            renotify_seconds=600,
+        )
+        == "fire"
     )
-    assert trans == "opened" and state.active
-    restored = ConsecutiveObservationState.from_mapping(state.to_dict())
-    assert restored == state
-    state, trans = evaluate_consecutive_hysteresis(
-        state, is_bad=False, now_iso="2026-10-19T12:10:00Z"
+    assert state.active
+    assert (
+        evaluate_consecutive_hysteresis(
+            state=state,
+            is_bad_now=False,
+            now=now + 120,
+            failure_threshold=2,
+            recovery_threshold=2,
+            renotify_seconds=600,
+        )
+        == "none"
     )
-    assert trans == "none" and state.active
-    state, trans = evaluate_consecutive_hysteresis(
-        state, is_bad=False, now_iso="2026-10-19T12:15:00Z"
+    assert (
+        evaluate_consecutive_hysteresis(
+            state=state,
+            is_bad_now=False,
+            now=now + 180,
+            failure_threshold=2,
+            recovery_threshold=2,
+            renotify_seconds=600,
+        )
+        == "resolve"
     )
-    assert trans == "closed" and not state.active
+    assert not state.active
 
 
-def test_observability_peer_liveness(tmp_path: Path) -> None:
+def test_observability_peer_liveness() -> None:
+    import base64
+
     assert MISSED_TICKS_TOLERATED == 2
-    assert timedelta(minutes=15) == DELAY_ALLOWANCE
+    assert timedelta(hours=1) == DELAY_ALLOWANCE
     wf_yaml = "on:\n  schedule:\n    - cron: '*/30 * * * *'\n"
     crons = crons_in(wf_yaml)
     assert crons == ["*/30 * * * *"]
     gap = largest_gap(crons)
     assert gap == timedelta(minutes=30)
-    bound = bound_for(wf_yaml, bound_cap=parse_bound_cap_hours("2"))
-    assert bound == timedelta(minutes=75)
+    bound = bound_for(gap)
+    assert bound == timedelta(hours=2)
+    assert parse_bound_cap_hours("2") == timedelta(hours=2)
 
-    wf_file = tmp_path / "peer.yml"
-    wf_file.write_text(wf_yaml, encoding="utf-8")
     now = datetime(2026, 10, 19, 12, 0, 0, tzinfo=UTC)
-    payload = {
-        "workflow_runs": [
-            {
-                "event": "schedule",
-                "created_at": "2026-10-19T11:45:00Z",
-                "html_url": "https://github.com/org/repo/actions/runs/99",
-            }
-        ]
-    }
-    tick = newest_tick(payload)
-    assert tick is not None and tick[1] == "https://github.com/org/repo/actions/runs/99"
+    runs = [
+        {
+            "id": 1,
+            "event": "schedule",
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-10-19T11:45:00Z",
+        }
+    ]
+    tick = newest_tick(runs)
+    assert tick == datetime(2026, 10, 19, 11, 45, 0, tzinfo=UTC)
 
-    verdict = evaluate_peer_liveness(
-        repo="org/repo",
-        workflow="peer.yml",
-        workflow_file=wf_file,
-        get=lambda url: payload,
-        now=now,
-    )
+    def fake_get(path: str) -> object:
+        if path.endswith("/scheduler-liveness.yml"):
+            return {"state": "active", "path": ".github/workflows/scheduler-liveness.yml"}
+        if path == "/repos/wangzitian0/truealpha":
+            return {"default_branch": "main"}
+        if "/contents/" in path:
+            return {
+                "encoding": "base64",
+                "content": base64.b64encode(wf_yaml.encode("utf-8")).decode("ascii"),
+            }
+        if "/runs" in path:
+            return {"workflow_runs": runs}
+        raise PeerReadError(f"unexpected {path}")
+
+    verdict = evaluate_peer_liveness(fake_get, now=now)
     assert isinstance(verdict, PeerVerdict)
-    assert verdict.alive
-    assert verdict.to_dict()["alive"] is True
+    assert verdict.ok
 
     getter = github_getter("fake-token")
     assert callable(getter)
     with pytest.raises(ScheduleError):
-        crons_in("name: No cron")
+        largest_gap([])
     with pytest.raises(PeerReadError):
-        newest_tick({})
+        newest_tick([{"id": 2, "event": "schedule", "status": "completed", "created_at": "bad"}])
 
 
-def test_observability_issue_trail() -> None:
-    assert check_name("Postgres Connectivity!") == "postgres-connectivity"
-    assert title_for("[Health Check]", "db") == "[Health Check] db"
-    assert "<redacted-gh-token>" in scrub("token ghp_1234567890123456789012345")
+def test_observability_issue_trail(tmp_path: Path) -> None:
+    assert title_for("db") == "ops-checks watchdog is red: db"
+    assert check_name("ops-checks watchdog is red: db") == "db"
+    assert check_name("other title") is None
+    assert "***" in scrub("token secret123", {"GITHUB_TOKEN": "secret123"})
 
-    trail = load_trail(
-        'hello <!-- issue-trail:v1 {"check":"db","results":["fail"]} -->', check="db"
+    verdicts_file = tmp_path / "verdicts.jsonl"
+    record_verdicts(
+        verdicts_file,
+        source="out-of-band-watchdog",
+        checks=[CheckVerdict(name="db", ok=False, detail="connection refused", severity="P1")],
     )
+    record_verdicts(
+        verdicts_file,
+        source="iac-runner-health",
+        checks=[CheckVerdict(name="runner", ok=True)],
+    )
+    trail = load_trail(verdicts_file)
     assert isinstance(trail, Trail)
-    assert trail.results == ("fail",)
+    assert "db" in trail.failing
+    assert trail.is_green("runner")
 
     class FakeIssueApi:
         def __init__(self) -> None:
@@ -449,20 +501,13 @@ def test_observability_issue_trail() -> None:
             self.comments: list[tuple[int, str]] = []
             self.closed: list[int] = []
 
-        def list_open_by_label(self, label: str) -> Sequence[Mapping[str, Any]]:
+        def open_issues(self) -> list[dict[str, Any]]:
             return list(self.issues)
 
-        def create_issue(self, title: str, body: str, labels: Sequence[str]) -> int:
+        def create(self, title: str, body: str, labels: Sequence[str]) -> int:
             num = len(self.issues) + 1
-            self.issues.append(
-                {"number": num, "title": title, "body": body, "labels": list(labels)}
-            )
+            self.issues.append({"number": num, "title": title})
             return num
-
-        def update_issue_body(self, number: int, body: str) -> None:
-            for it in self.issues:
-                if it["number"] == number:
-                    it["body"] = body
 
         def comment(self, number: int, body: str) -> None:
             self.comments.append((number, body))
@@ -471,43 +516,21 @@ def test_observability_issue_trail() -> None:
             self.closed.append(number)
 
     api = FakeIssueApi()
-    errs = record_verdicts(
+    rc = reconcile_issue_trail(
         api,
-        [
-            CheckVerdict(
-                name="db",
-                passed=False,
-                summary="connection refused",
-                details="ghp_1234567890123456789012345",
-            )
-        ],
+        trail,
+        mode="full",
         run_url="https://github.com/org/repo/actions/runs/1",
     )
-    assert not errs
+    assert rc == 0
     assert len(api.issues) == 1
-    assert "<redacted-gh-token>" in api.issues[0]["body"]
 
-    record_verdicts(
-        api,
-        [CheckVerdict(name="db", passed=False, summary="still down")],
-        run_url="https://github.com/org/repo/actions/runs/2",
-    )
-    assert len(api.comments) == 1
-
-    record_verdicts(api, [CheckVerdict(name="db", passed=True, summary="recovered 1")])
-    record_verdicts(api, [CheckVerdict(name="db", passed=True, summary="recovered 2")])
+    green_trail = Trail(green={"db", "runner"}, complete=True)
+    rc2 = reconcile_issue_trail(api, green_trail, mode="full")
+    assert rc2 == 0
     assert api.closed == [1]
 
-    enabled, dry_run = issue_trail_mode({"GITHUB_EVENT_NAME": "schedule"})
-    assert (enabled, dry_run) == (True, False)
-    assert (
-        reconcile_issue_trail(
-            [CheckVerdict(name="db", passed=True, summary="ok")],
-            force_dry_run=True,
-            env={},
-        )
-        == []
-    )
+    assert issue_trail_mode({"GITHUB_EVENT_NAME": "schedule"}) == "full"
     gh_issues = GitHubIssues("org/repo", "tok")
     assert gh_issues is not None
     assert issubclass(ListingFailed, RuntimeError)

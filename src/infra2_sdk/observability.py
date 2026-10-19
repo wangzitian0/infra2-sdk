@@ -2,492 +2,570 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
-import os
+import math
 import re
-import sys
-import urllib.error
-import urllib.parse
-import urllib.request
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Protocol
-
-_DRY_RUN_ENV = "_".join(("HEALTH", "CHECK", "DRY", "RUN"))
-_SSH_OVERRIDE_ENV = "_".join(("SSH", "OVERRIDE"))
-_USER_AGENT = "infra2-sdk/observability (+https://github.com/wangzitian0/infra2-sdk)"
+from typing import Protocol
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote
+from urllib.request import Request, urlopen
 
 # ---------------------------------------------------------------------------
-# Recency & consecutive-observation hysteresis
+# Recency & consecutive-observation hysteresis (#531, #475)
 # ---------------------------------------------------------------------------
-
-_ISO_Z_SUFFIX = "Z"
-
-
-def _parse_iso(ts: str) -> datetime | None:
-    text = ts.strip()
-    if not text:
-        return None
-    if text.endswith(_ISO_Z_SUFFIX):
-        text = text[:-1] + "+00:00"
-    try:
-        dt = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt
 
 
 def is_recently_flapping(
-    transitions: Iterable[str],
     *,
-    now: datetime,
-    window: timedelta,
-    threshold: int = 3,
+    event_count: int,
+    last_event_at: float,
+    now: float,
+    count_threshold: int,
+    recency_window_seconds: int,
 ) -> bool:
-    """Return True when at least *threshold* transitions fall inside ``[now - window, now]``."""
-    if threshold <= 0:
-        raise ValueError("threshold must be positive")
-    if window < timedelta(0):
-        raise ValueError("window must be non-negative")
-    if now.tzinfo is None:
-        now = now.replace(tzinfo=UTC)
-    cutoff = now - window
-    recent = 0
-    for raw in transitions:
-        if not isinstance(raw, str):
-            continue
-        parsed = _parse_iso(raw)
-        if parsed is None:
-            continue
-        if cutoff <= parsed <= now:
-            recent += 1
-            if recent >= threshold:
-                return True
-    return False
+    """Return True when a bad signal exceeds *count_threshold* within *recency_window_seconds*."""
+    if event_count <= count_threshold:
+        return False
+    age_seconds = max(0.0, now - last_event_at)
+    return age_seconds <= recency_window_seconds
 
 
-@dataclass(frozen=True)
+@dataclass
 class ConsecutiveObservationState:
-    """Persisted state for a consecutive-observation hysteresis tracker."""
+    """Persisted per-key hysteresis state for a repeatedly-polled bad/healthy signal."""
 
     active: bool = False
-    consecutive_bad: int = 0
-    consecutive_good: int = 0
-    last_transition_at: str = ""
-    transition_history: tuple[str, ...] = ()
-
-    @classmethod
-    def from_mapping(cls, raw: Mapping[str, Any] | None) -> ConsecutiveObservationState:
-        if not isinstance(raw, Mapping):
-            return cls()
-        history_raw = raw.get("transition_history")
-        history: tuple[str, ...] = ()
-        if isinstance(history_raw, Iterable) and not isinstance(history_raw, (str, bytes)):
-            history = tuple(str(item) for item in history_raw if isinstance(item, str))
-        try:
-            bad = max(0, int(raw.get("consecutive_bad", 0)))
-        except (TypeError, ValueError):
-            bad = 0
-        try:
-            good = max(0, int(raw.get("consecutive_good", 0)))
-        except (TypeError, ValueError):
-            good = 0
-        return cls(
-            active=bool(raw.get("active", False)),
-            consecutive_bad=bad,
-            consecutive_good=good,
-            last_transition_at=str(raw.get("last_transition_at", "") or ""),
-            transition_history=history,
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "active": self.active,
-            "consecutive_bad": self.consecutive_bad,
-            "consecutive_good": self.consecutive_good,
-            "last_transition_at": self.last_transition_at,
-            "transition_history": list(self.transition_history),
-        }
+    bad_streak: int = 0
+    good_streak: int = 0
+    last_alert_at: float = 0.0
+    context: object = field(default=None)
 
 
 def evaluate_consecutive_hysteresis(
-    state: ConsecutiveObservationState,
     *,
-    is_bad: bool,
-    now_iso: str,
-    open_after_bad: int = 2,
-    close_after_good: int = 2,
-    max_history: int = 32,
-) -> tuple[ConsecutiveObservationState, str]:
-    """Advance hysteresis state by one observation and return ``(next_state, transition)``."""
-    if open_after_bad <= 0 or close_after_good <= 0:
-        raise ValueError("open_after_bad and close_after_good must be positive")
-    if is_bad:
-        bad = state.consecutive_bad + 1
-        good = 0
-        if not state.active and bad >= open_after_bad:
-            history = (*state.transition_history, now_iso)[-max_history:]
-            return (
-                ConsecutiveObservationState(
-                    active=True,
-                    consecutive_bad=bad,
-                    consecutive_good=0,
-                    last_transition_at=now_iso,
-                    transition_history=history,
-                ),
-                "opened",
-            )
-        return replace(state, consecutive_bad=bad, consecutive_good=good), "none"
+    state: ConsecutiveObservationState,
+    is_bad_now: bool,
+    now: float,
+    failure_threshold: int,
+    recovery_threshold: int,
+    renotify_seconds: int,
+) -> str:
+    """Advance *state* by one poll and return ``"fire"``, ``"resolve"``, or ``"none"``."""
+    if is_bad_now:
+        state.good_streak = 0
+        state.bad_streak += 1
+        if not state.active:
+            if state.bad_streak < max(1, failure_threshold):
+                return "none"
+            state.active = True
+            state.last_alert_at = now
+            return "fire"
+        if renotify_seconds > 0 and now - state.last_alert_at >= renotify_seconds:
+            state.last_alert_at = now
+            return "fire"
+        return "none"
 
-    good = state.consecutive_good + 1
-    bad = 0
-    if state.active and good >= close_after_good:
-        history = (*state.transition_history, now_iso)[-max_history:]
-        return (
-            ConsecutiveObservationState(
-                active=False,
-                consecutive_bad=0,
-                consecutive_good=good,
-                last_transition_at=now_iso,
-                transition_history=history,
-            ),
-            "closed",
-        )
-    return replace(state, consecutive_bad=bad, consecutive_good=good), "none"
+    state.bad_streak = 0
+    if not state.active:
+        return "none"
+    state.good_streak += 1
+    if state.good_streak < max(1, recovery_threshold):
+        return "none"
+    state.active = False
+    state.good_streak = 0
+    state.last_alert_at = 0.0
+    return "resolve"
 
 
 # ---------------------------------------------------------------------------
-# Scheduler peer liveness
+# Scheduler peer liveness (truealpha#876)
 # ---------------------------------------------------------------------------
 
+_PEER_REPOSITORY = "wangzitian0/truealpha"
+_PEER_WORKFLOW = "scheduler-liveness.yml"
+_BOUND_CAP_ENV = "_".join(("INFRA2", "PEER", "LIVENESS", "BOUND", "CAP", "HOURS"))
 MISSED_TICKS_TOLERATED = 2
-DELAY_ALLOWANCE = timedelta(minutes=15)
+DELAY_ALLOWANCE = timedelta(hours=1)
+_SCHEDULED_PAGE = 5
+_UNFILTERED_PAGE = 50
+_STARTED = ("in_progress", "completed")
+_STARTUP_FAILURE = "startup_failure"
+_MINUTES_PER_DAY = 24 * 60
+_API_BASE = "https://api.github.com"
+_API_TIMEOUT_SECONDS = 20.0
 
-_CRON_LINE = re.compile(r"^\s*-\s*cron:\s*['\"]([^'\"]+)['\"]")
+_OK = "OK"
+_STALE = "STALE"
+_DISABLED = "DISABLED"
+_NEVER = "NEVER"
+_INVALID = "INVALID"
+_UNVERIFIABLE = "UNVERIFIABLE"
+
+_Get = Callable[[str], object]
 
 
 class PeerReadError(RuntimeError):
-    """Raised when the peer's workflow runs cannot be read from GitHub."""
+    """A read the verdict depends on did not answer."""
 
 
 class ScheduleError(ValueError):
-    """Raised when the peer's workflow file has no usable cron expression."""
+    """The workflow's schedule is not one this module can measure."""
 
 
 @dataclass(frozen=True)
 class PeerVerdict:
-    workflow: str
-    alive: bool
-    bound: timedelta
-    age: timedelta | None
-    last_run_at: datetime | None
-    last_run_url: str | None
-    reason: str
+    status: str
+    detail: str
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "workflow": self.workflow,
-            "alive": self.alive,
-            "bound_seconds": int(self.bound.total_seconds()),
-            "age_seconds": int(self.age.total_seconds()) if self.age is not None else None,
-            "last_run_at": self.last_run_at.isoformat() if self.last_run_at else None,
-            "last_run_url": self.last_run_url,
-            "reason": self.reason,
-        }
+    @property
+    def ok(self) -> bool:
+        return self.status == _OK
 
 
-def github_getter(token: str, timeout: float = 15.0) -> Callable[[str], dict[str, Any]]:
-    """Build a JSON GET callable authenticated with a GitHub Bearer token."""
+def github_getter(
+    token: str = "", *, timeout: float = _API_TIMEOUT_SECONDS, opener=urlopen
+) -> _Get:
+    """Return a reader for the public GitHub REST API; the token is optional."""
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "infra2-scheduler-peer-liveness/1.0",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
 
-    def get(url: str) -> dict[str, Any]:
-        req = urllib.request.Request(
-            url,
-            headers={
-                "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {token}",
-                "X-GitHub-Api-Version": "2022-11-28",
-                "User-Agent": _USER_AGENT,
-            },
-        )
+    def get(path: str) -> object:
+        request = Request(f"{_API_BASE}{path}", headers=headers, method="GET")
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                data: dict[str, Any] = json.loads(resp.read().decode("utf-8"))
-                return data
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")[:300]
-            raise PeerReadError(f"GET {url} -> HTTP {exc.code}: {body}") from exc
-        except urllib.error.URLError as exc:
-            raise PeerReadError(f"GET {url} failed: {exc.reason}") from exc
+            with opener(request, timeout=timeout) as response:  # noqa: S310
+                return json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            raise PeerReadError(f"GET {path} answered HTTP {exc.code}") from exc
+        except (OSError, URLError, ValueError) as exc:
+            raise PeerReadError(f"GET {path} failed: {exc}") from exc
 
     return get
 
 
-def crons_in(workflow_yaml: str) -> list[str]:
-    """Extract ``on.schedule[].cron`` strings without importing PyYAML."""
-    found: list[str] = []
-    for line in workflow_yaml.splitlines():
-        match = _CRON_LINE.match(line)
-        if match:
-            found.append(match.group(1).strip())
-    if not found:
-        raise ScheduleError("no cron expression found in workflow file")
-    return found
+_CRON_LINE = re.compile(
+    r"""^[ \t]*-?[ \t]*cron:[ \t]*(?P<quote>["']?)(?P<expr>[^"'#\n]+?)(?P=quote)[ \t]*(?:#.*)?$""",
+    re.MULTILINE,
+)
+_ELEMENT = re.compile(r"^(?P<span>\*|\d+(?:-\d+)?)(?:/(?P<step>\d+))?$")
 
 
-def _expand_field(field_expr: str, low: int, high: int) -> set[int]:
+def crons_in(workflow_text: str) -> list[str]:
+    """Return the ``cron:`` values in a workflow file, in order."""
+    return [match.group("expr").strip() for match in _CRON_LINE.finditer(workflow_text)]
+
+
+def _field(text: str, name: str, low: int, high: int) -> set[int]:
     values: set[int] = set()
-    for part in field_expr.split(","):
-        part = part.strip()
-        step = 1
-        if "/" in part:
-            part, step_str = part.split("/", 1)
-            step = int(step_str)
-            if step <= 0:
-                raise ScheduleError(f"non-positive step in {field_expr!r}")
-        if part == "*":
-            start, end = low, high
-        elif "-" in part:
-            lo_str, hi_str = part.split("-", 1)
-            start, end = int(lo_str), int(hi_str)
+    for element in text.split(","):
+        match = _ELEMENT.match(element)
+        if not match:
+            raise ScheduleError(f"{name} {element!r} is not a number, range or step")
+        span, step_text = match.group("span"), match.group("step")
+        step = int(step_text) if step_text is not None else 1
+        if step < 1:
+            raise ScheduleError(f"{name} step in {element!r} must be at least 1")
+        if span == "*":
+            first, last = low, high
+        elif "-" in span:
+            first, last = (int(part) for part in span.split("-", 1))
         else:
-            start = end = int(part)
-        if start < low or end > high or start > end:
-            raise ScheduleError(f"field {field_expr!r} out of range [{low}, {high}]")
-        values.update(range(start, end + 1, step))
+            first = int(span)
+            last = high if step_text is not None else first
+        if not low <= first <= last <= high:
+            raise ScheduleError(f"{name} {element!r} is outside {low}-{high}")
+        values.update(range(first, last + 1, step))
     return values
 
 
-def _cron_predicates(
-    expr: str,
-) -> tuple[set[int], set[int], set[int], set[int], set[int], bool, bool]:
-    fields = expr.split()
-    if len(fields) != 5:
-        raise ScheduleError(f"expected 5-field cron, got {expr!r}")
-    minutes = _expand_field(fields[0], 0, 59)
-    hours = _expand_field(fields[1], 0, 23)
-    doms = _expand_field(fields[2], 1, 31)
-    months = _expand_field(fields[3], 1, 12)
-    raw_dow = "0" if fields[4] == "7" else fields[4]
-    dows = {d % 7 for d in _expand_field(raw_dow.replace("7", "0"), 0, 6)}
-    return minutes, hours, doms, months, dows, fields[2] == "*", fields[4] == "*"
+def largest_gap(crons: Iterable[str]) -> timedelta:
+    """Return the largest gap between consecutive fire times of daily-periodic crons."""
+    fires: set[int] = set()
+    listed = list(crons)
+    if not listed:
+        raise ScheduleError("the workflow has no cron")
+    for expression in listed:
+        parts = expression.split()
+        if len(parts) != 5:
+            raise ScheduleError(f"cron {expression!r} has {len(parts)} fields, not 5")
+        minute, hour, day, month, weekday = parts
+        if (day, month, weekday) != ("*", "*", "*"):
+            raise ScheduleError(
+                f"cron {expression!r} is not daily-periodic; teach "
+                "libs/observability/scheduler_peer_liveness.py to measure it"
+            )
+        minutes = _field(minute, "minute", 0, 59)
+        hours = _field(hour, "hour", 0, 23)
+        fires.update(h * 60 + m for h in hours for m in minutes)
+    ordered = sorted(fires)
+    gaps = [later - earlier for earlier, later in zip(ordered, ordered[1:], strict=False)]
+    gaps.append(ordered[0] + _MINUTES_PER_DAY - ordered[-1])
+    return timedelta(minutes=max(gaps))
 
 
-def _matches(
-    dt: datetime,
-    spec: tuple[set[int], set[int], set[int], set[int], set[int], bool, bool],
-) -> bool:
-    minutes, hours, doms, months, dows, dom_star, dow_star = spec
-    if dt.minute not in minutes or dt.hour not in hours or dt.month not in months:
-        return False
-    cron_dow = (dt.weekday() + 1) % 7
-    dom_ok = dt.day in doms
-    dow_ok = cron_dow in dows
-    if dom_star and dow_star:
-        return True
-    if dom_star:
-        return dow_ok
-    if dow_star:
-        return dom_ok
-    return dom_ok or dow_ok
-
-
-def largest_gap(crons: Sequence[str], *, horizon_days: int = 8) -> timedelta:
-    """Return the longest interval between consecutive fire times across *crons*."""
-    specs = [_cron_predicates(c) for c in crons]
-    start = datetime(2026, 1, 5, 0, 0, tzinfo=UTC)
-    total_minutes = horizon_days * 24 * 60
-    prev: datetime | None = None
-    worst = timedelta(0)
-    for offset in range(total_minutes):
-        cur = start + timedelta(minutes=offset)
-        if any(_matches(cur, s) for s in specs):
-            if prev is not None and (cur - prev) > worst:
-                worst = cur - prev
-            prev = cur
-    if worst == timedelta(0):
-        raise ScheduleError(f"cron {crons!r} did not fire twice in {horizon_days}d")
-    return worst
-
-
-def bound_for(
-    workflow_yaml: str,
-    *,
-    missed_ticks: int = MISSED_TICKS_TOLERATED,
-    delay_allowance: timedelta = DELAY_ALLOWANCE,
-    bound_cap: timedelta | None = None,
-) -> timedelta:
-    """Compute the silence bound for a peer workflow YAML string."""
-    gap = largest_gap(crons_in(workflow_yaml))
-    derived = gap * missed_ticks + delay_allowance
-    if bound_cap is not None and bound_cap < derived:
-        return bound_cap
-    return derived
+def bound_for(gap: timedelta) -> timedelta:
+    """Return the silence bound for a given maximum schedule *gap*."""
+    return MISSED_TICKS_TOLERATED * gap + DELAY_ALLOWANCE
 
 
 def parse_bound_cap_hours(raw: str | None) -> timedelta | None:
-    """Parse a positive hours value into a ``timedelta``, or ``None`` if unset."""
-    if raw is None or not raw.strip():
+    """Parse an optional cap in hours; empty means none. Raises ValueError otherwise."""
+    text = (raw or "").strip()
+    if not text:
         return None
-    try:
-        hours = float(raw)
-    except ValueError as exc:
-        raise ValueError(f"bound-cap-hours must be a number, got {raw!r}") from exc
-    if hours <= 0:
-        raise ValueError(f"bound-cap-hours must be > 0, got {hours}")
+    hours = float(text)
+    if not math.isfinite(hours) or hours < 0:
+        raise ValueError(f"bound cap {text!r} must be a finite number of hours >= 0")
     return timedelta(hours=hours)
 
 
-def _parse_gh_time(raw: str) -> datetime:
-    if raw.endswith(_ISO_Z_SUFFIX):
-        raw = raw[:-1] + "+00:00"
-    return datetime.fromisoformat(raw).astimezone(UTC)
+def _object(get: _Get, path: str) -> dict:
+    body = get(path)
+    if not isinstance(body, dict):
+        raise PeerReadError(f"GET {path} returned {type(body).__name__}, not an object")
+    return body
 
 
-def newest_tick(runs_payload: Mapping[str, Any]) -> tuple[datetime, str | None] | None:
-    """Return ``(created_at, html_url)`` for the newest scheduled/dispatch run."""
-    runs = runs_payload.get("workflow_runs")
-    if not isinstance(runs, list):
-        raise PeerReadError("response missing 'workflow_runs' list")
-    best_time: datetime | None = None
-    best_url: str | None = None
-    for run in runs:
-        if not isinstance(run, Mapping):
-            continue
-        if run.get("event") not in ("schedule", "workflow_dispatch"):
-            continue
-        created = run.get("created_at")
-        if not isinstance(created, str):
-            continue
-        when = _parse_gh_time(created)
-        if best_time is None or when > best_time:
-            best_time = when
-            url = run.get("html_url")
-            best_url = url if isinstance(url, str) else None
-    if best_time is None:
-        return None
-    return best_time, best_url
+def _timestamp(value: object, what: str) -> datetime:
+    if not isinstance(value, str):
+        raise PeerReadError(f"{what} has no timestamp ({value!r})")
+    try:
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise PeerReadError(f"{what} has an unreadable timestamp {value!r}") from exc
+    if moment.tzinfo is None:
+        raise PeerReadError(f"{what} has a timestamp without a zone ({value!r})")
+    return moment.astimezone(UTC)
+
+
+def _runs(get: _Get, path: str) -> list[dict]:
+    body = _object(get, path)
+    runs = body.get("workflow_runs")
+    if not isinstance(runs, list) or not all(isinstance(run, dict) for run in runs):
+        raise PeerReadError(f"GET {path} has no usable workflow_runs list")
+    return runs
+
+
+def newest_tick(runs: Iterable[dict]) -> datetime | None:
+    """Return the newest scheduled run that started a job, by ``created_at``."""
+    ticks = [
+        _timestamp(run.get("created_at"), f"run {run.get('id')}")
+        for run in runs
+        if run.get("event") == "schedule"
+        and run.get("status") in _STARTED
+        and run.get("conclusion") != _STARTUP_FAILURE
+    ]
+    return max(ticks) if ticks else None
+
+
+def _file_text(get: _Get, path: str, branch: str) -> str:
+    body = _object(
+        get,
+        f"/repos/{_PEER_REPOSITORY}/contents/{quote(path)}?ref={quote(branch, safe='')}",
+    )
+    if body.get("encoding") != "base64" or not isinstance(body.get("content"), str):
+        raise PeerReadError(f"{path} came back without base64 content")
+    try:
+        return base64.b64decode(body["content"]).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError) as exc:
+        raise PeerReadError(f"{path} content does not decode: {exc}") from exc
+
+
+def _last_changed(get: _Get, path: str, branch: str) -> datetime:
+    commits = get(
+        f"/repos/{_PEER_REPOSITORY}/commits?path={quote(path, safe='')}"
+        f"&sha={quote(branch, safe='')}&per_page=1"
+    )
+    if not isinstance(commits, list) or not commits or not isinstance(commits[0], dict):
+        raise PeerReadError(f"no commit on {branch} touches {path}")
+    committer = (commits[0].get("commit") or {}).get("committer") or {}
+    return _timestamp(committer.get("date"), f"the last commit to {path}")
+
+
+def _hours(span: timedelta) -> str:
+    return f"{span.total_seconds() / 3600:.1f}h"
 
 
 def evaluate_peer_liveness(
-    *,
-    repo: str,
-    workflow: str,
-    workflow_file: Path,
-    get: Callable[[str], Mapping[str, Any]],
-    now: datetime | None = None,
-    bound_cap: timedelta | None = None,
+    get: _Get, *, now: datetime, bound_cap: timedelta | None = None
 ) -> PeerVerdict:
-    """Evaluate whether a scheduled peer workflow has ticked within its silence bound."""
-    if not workflow_file.is_file():
-        raise ScheduleError(f"peer workflow file not found: {workflow_file}")
-    bound = bound_for(workflow_file.read_text(encoding="utf-8"), bound_cap=bound_cap)
-    url = f"https://api.github.com/repos/{repo}/actions/workflows/{workflow}/runs?per_page=20"
-    payload = get(url)
-    clock = now if now is not None else datetime.now(UTC)
-    latest = newest_tick(payload)
-    if latest is None:
-        return PeerVerdict(
-            workflow=workflow,
-            alive=False,
-            bound=bound,
-            age=None,
-            last_run_at=None,
-            last_run_url=None,
-            reason=f"no schedule/workflow_dispatch runs found for {workflow}",
+    """Evaluate the peer liveness verdict on truealpha's ``scheduler-liveness`` workflow."""
+    workflow_path = f"/repos/{_PEER_REPOSITORY}/actions/workflows/{_PEER_WORKFLOW}"
+    try:
+        workflow = _object(get, workflow_path)
+        state = workflow.get("state")
+        if state != "active":
+            return PeerVerdict(
+                _DISABLED,
+                f"{_PEER_REPOSITORY} {_PEER_WORKFLOW} state={state!r}, not 'active': "
+                "its scheduler does not run",
+            )
+        path = workflow.get("path")
+        if not isinstance(path, str) or not path:
+            raise PeerReadError(f"GET {workflow_path} has no path")
+        branch = _object(get, f"/repos/{_PEER_REPOSITORY}").get("default_branch")
+        if not isinstance(branch, str) or not branch:
+            raise PeerReadError(f"{_PEER_REPOSITORY} has no default_branch")
+        try:
+            bound = bound_for(largest_gap(crons_in(_file_text(get, path, branch))))
+        except ScheduleError as exc:
+            return PeerVerdict(_INVALID, f"{_PEER_REPOSITORY} {path}: {exc}")
+        if bound_cap is not None:
+            bound = min(bound, bound_cap)
+
+        newest = newest_tick(
+            _runs(get, f"{workflow_path}/runs?event=schedule&per_page={_SCHEDULED_PAGE}")
         )
-    last_at, last_url = latest
-    age = max(timedelta(0), clock - last_at)
-    bound_min = int(bound.total_seconds() // 60)
-    age_min = int(age.total_seconds() // 60)
-    if age > bound:
-        return PeerVerdict(
-            workflow=workflow,
-            alive=False,
-            bound=bound,
-            age=age,
-            last_run_at=last_at,
-            last_run_url=last_url,
-            reason=(
-                f"{workflow} last ticked {age_min}m ago ({last_at.isoformat()}), "
-                f"exceeding silence bound of {bound_min}m"
-            ),
+        if newest is None or now - newest > bound:
+            witness = newest_tick(_runs(get, f"{workflow_path}/runs?per_page={_UNFILTERED_PAGE}"))
+            if witness is not None and (newest is None or witness > newest):
+                newest = witness
+        if newest is not None:
+            age = now - newest
+            where = (
+                f"{_PEER_REPOSITORY} {_PEER_WORKFLOW}: newest scheduled run {newest.isoformat()}"
+            )
+            if age > bound:
+                return PeerVerdict(
+                    _STALE,
+                    f"{where} is {_hours(age)} old, beyond the {_hours(bound)} bound: "
+                    "its scheduler stopped ticking",
+                )
+            return PeerVerdict(_OK, f"{where} is {_hours(age)} old (bound {_hours(bound)})")
+
+        changed = _last_changed(get, path, branch)
+        since = now - changed
+        where = (
+            f"{_PEER_REPOSITORY} {_PEER_WORKFLOW} never ran on schedule; "
+            f"{path} changed {_hours(since)} ago"
         )
-    return PeerVerdict(
-        workflow=workflow,
-        alive=True,
-        bound=bound,
-        age=age,
-        last_run_at=last_at,
-        last_run_url=last_url,
-        reason=f"{workflow} ticked {age_min}m ago (bound {bound_min}m)",
-    )
+        if since > bound:
+            return PeerVerdict(_NEVER, f"{where}, beyond the {_hours(bound)} bound")
+        return PeerVerdict(_OK, f"{where}, waiting for its first tick (bound {_hours(bound)})")
+    except PeerReadError as exc:
+        return PeerVerdict(
+            _UNVERIFIABLE, f"cannot verify {_PEER_REPOSITORY} {_PEER_WORKFLOW}: {exc}"
+        )
 
 
 # ---------------------------------------------------------------------------
-# GitHub Issue Trail (rolling check history & self-healing issue opening/closing)
+# GitHub Issue Trail (truealpha#876 W4)
 # ---------------------------------------------------------------------------
 
-_TRAIL_MARKER_RE = re.compile(r"<!--\s*issue-trail:v1\s*(\{.*?\})\s*-->", re.DOTALL)
-_DEFAULT_HISTORY_LEN = 20
-_DEFAULT_OPEN_AFTER = 2
-_DEFAULT_CLOSE_AFTER = 2
-_SAFE_NAME_RE = re.compile(r"[^a-z0-9._-]+")
-_SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"), "<redacted-gh-token>"),
-    (re.compile(r"github_pat_[A-Za-z0-9_]{20,}"), "<redacted-gh-pat>"),
-    (re.compile(r"(?i)(authorization\s*:\s*(?:bearer|token)\s+)\S+"), r"\1<redacted>"),
-    (re.compile(r"://[^/\s:@]+:[^/\s@]+@"), "://<redacted>@"),
-)
-
-# Runtime-constructed keys for caller-passed mapping lookups so AST static scanners
-# do not confuse caller dict inspections with direct process os.environ reads.
+_TITLE_PREFIX = "ops-checks watchdog is red: "
+_ISSUE_LABELS = ("incident",)
+_SSH_OVERRIDE_ENV = "_".join(("INFRA2", "WATCHDOG", "SSH", "TARGETS", "OVERRIDDEN"))
+_DRY_RUN_ENV = "_".join(("WATCHDOG", "DRY", "RUN"))
 _GH_EVENT_NAME_KEY = "_".join(("GITHUB", "EVENT", "NAME"))
 _GH_REF_KEY = "_".join(("GITHUB", "REF"))
-_GH_REPO_KEY = "_".join(("GITHUB", "REPOSITORY"))
-_GH_TOKEN_KEY = "_".join(("GITHUB", "TOKEN"))
-_GH_CLI_TOKEN_KEY = "_".join(("GH", "TOKEN"))
+
+_WATCHDOG_SOURCE = "out-of-band-watchdog"
+_RUNNER_HEALTH_SOURCE = "iac-runner-health"
+_EXPECTED_SOURCES = (_WATCHDOG_SOURCE, _RUNNER_HEALTH_SOURCE)
+
+_FULL = "full"
+_OPEN_ONLY = "open-only"
+_OFF = "off"
+
+_PER_PAGE = 100
+_MAX_PAGES = 10
+_MAX_DETAIL_CHARS = 1000
+_SECRET_ENV_NAME = re.compile(
+    r"^(?:INFRA2_|DOKPLOY_|CF_|FEISHU_|OP_|VAULT_)\w*"
+    r"(?:HOST|USER|TOKEN|KEY|SECRET|PASSWORD|WEBHOOK|CHAT_ID|APP_ID)"
+    r"|^INFRA2_OUT_OF_BAND_\w+"
+    r"|^(?:GITHUB_TOKEN|GH_TOKEN)$"
+)
+_MIN_SCRUBBED_VALUE = 4
+_IPV4 = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])")
+_IPV6 = re.compile(
+    r"(?<![\w:])(?:(?:[0-9A-Fa-f]{1,4}:){3,7}[0-9A-Fa-f]{1,4}"
+    r"|[0-9A-Fa-f:]*::[0-9A-Fa-f:]*[0-9A-Fa-f])(?![\w:])"
+)
 
 
 @dataclass(frozen=True)
 class CheckVerdict:
-    """One check's outcome in the current watchdog run."""
-
     name: str
-    passed: bool
-    summary: str
-    details: str = ""
+    ok: bool
+    detail: str = ""
+    severity: str = ""
+    failure_domain: str = ""
 
 
-@dataclass(frozen=True)
+@dataclass
 class Trail:
-    """Rolling verdict history for one check, carried inside an issue body."""
+    """What one watchdog run decided, merged over every recording step."""
 
-    check: str
-    results: tuple[str, ...] = ()
-    last_transition_run: str = ""
-    extra: Mapping[str, Any] = field(default_factory=dict)
+    failing: dict[str, CheckVerdict] = field(default_factory=dict)
+    green: set[str] = field(default_factory=set)
+    complete: bool = False
+
+    def is_green(self, name: str) -> bool:
+        return name not in self.failing and name in self.green
+
+    def is_retired(self, name: str) -> bool:
+        return self.complete and name not in self.failing and name not in self.green
+
+    def renamed(self, rename) -> Trail:
+        """Return the same verdicts under ``rename(name)`` (titles carry scrubbed names)."""
+        return Trail(
+            failing={rename(name): verdict for name, verdict in self.failing.items()},
+            green={rename(name) for name in self.green},
+            complete=self.complete,
+        )
+
+
+def title_for(name: str) -> str:
+    return f"{_TITLE_PREFIX}{name}"
+
+
+def check_name(title: str) -> str | None:
+    """Return the check name a trail title names, or ``None`` for any other issue."""
+    if not title.startswith(_TITLE_PREFIX):
+        return None
+    return title[len(_TITLE_PREFIX) :] or None
+
+
+def scrub(text: str, env: Mapping[str, str]) -> str:
+    """Return text safe for a public issue: no secret env values, no IP addresses."""
+    secrets = sorted(
+        {
+            value.strip()
+            for name, value in env.items()
+            if _SECRET_ENV_NAME.search(name)
+            and isinstance(value, str)
+            and len(value.strip()) >= _MIN_SCRUBBED_VALUE
+        },
+        key=len,
+        reverse=True,
+    )
+    for value in secrets:
+        text = text.replace(value, "***")
+    text = _IPV4.sub("<ip>", text)
+    text = _IPV6.sub("<ip>", text)
+    if len(text) > _MAX_DETAIL_CHARS:
+        text = text[:_MAX_DETAIL_CHARS] + " ...(truncated)"
+    return text
+
+
+def record_verdicts(
+    path: str | Path,
+    *,
+    source: str,
+    checks: Iterable[CheckVerdict],
+    complete: bool = True,
+) -> None:
+    """Append one step's verdicts to the job's verdict file."""
+    line = json.dumps(
+        {
+            "source": source,
+            "checks": [asdict(check) for check in checks],
+            "complete": complete,
+        },
+        sort_keys=True,
+    )
+    with Path(path).open("a", encoding="utf-8") as handle:
+        handle.write(line + "\n")
+
+
+def _parse_record(line: str) -> tuple[str, list[CheckVerdict], bool] | None:
+    try:
+        record = json.loads(line)
+        source = record["source"]
+        checks = [
+            CheckVerdict(
+                name=str(item["name"]),
+                ok=item["ok"] is True,
+                detail=str(item.get("detail", "")),
+                severity=str(item.get("severity", "")),
+                failure_domain=str(item.get("failure_domain", "")),
+            )
+            for item in record["checks"]
+        ]
+        complete = record.get("complete", True) is True
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return None
+    if not isinstance(source, str) or not source:
+        return None
+    return source, checks, complete
+
+
+def load_trail(path: str | Path, expected_sources: Iterable[str] = _EXPECTED_SOURCES) -> Trail:
+    """Merge the verdict file. A missing file or a torn line records nothing."""
+    trail = Trail()
+    seen: set[str] = set()
+    all_complete = True
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        parsed = _parse_record(line) if line.strip() else None
+        if parsed is None:
+            continue
+        source, checks, complete = parsed
+        seen.add(source)
+        all_complete = all_complete and complete
+        trail.green.add(source)
+        for check in checks:
+            if check.ok:
+                trail.green.add(check.name)
+            else:
+                trail.failing.setdefault(check.name, check)
+    for source in expected_sources:
+        if source not in seen:
+            trail.failing[source] = CheckVerdict(
+                name=source,
+                ok=False,
+                detail=(
+                    "the step recorded no verdict: it crashed or was skipped before "
+                    "recording one, so none of its checks were proven (see the run log)"
+                ),
+                severity="P1",
+                failure_domain="watchdog-step",
+            )
+    trail.green.difference_update(trail.failing)
+    trail.complete = all_complete and all(source in seen for source in expected_sources)
+    return trail
+
+
+def issue_trail_mode(env: Mapping[str, str]) -> str:
+    """Return which issue writes this run may make (``full``, ``open-only``, or ``off``)."""
+    if env.get(_DRY_RUN_ENV) == "1" or env.get(_SSH_OVERRIDE_ENV) == "1":
+        return _OFF
+    event = env.get(_GH_EVENT_NAME_KEY, "")
+    if event not in ("schedule", "workflow_dispatch"):
+        return _OFF
+    if (env.get(_BOUND_CAP_ENV) or "").strip():
+        return _OPEN_ONLY
+    if event == "schedule" or env.get(_GH_REF_KEY) == "refs/heads/main":
+        return _FULL
+    return _OPEN_ONLY
 
 
 class ListingFailed(RuntimeError):
-    """Listing open issues failed; reconciliation for this check must abort."""
+    """The open issues could not be read, so nothing may be decided from them."""
 
 
 class WriteFailed(RuntimeError):
-    """A comment, close, or create call failed."""
+    """A create, comment or close did not land."""
 
 
 class IssueApi(Protocol):
-    """Minimal surface over GitHub REST Issues."""
+    def open_issues(self) -> list[dict]: ...
 
-    def list_open_by_label(self, label: str) -> Sequence[Mapping[str, Any]]: ...
-
-    def create_issue(self, title: str, body: str, labels: Sequence[str]) -> int: ...
-
-    def update_issue_body(self, number: int, body: str) -> None: ...
+    def create(self, title: str, body: str, labels: Iterable[str]) -> int: ...
 
     def comment(self, number: int, body: str) -> None: ...
 
@@ -495,386 +573,222 @@ class IssueApi(Protocol):
 
 
 class GitHubIssues:
-    """urllib-backed ``IssueApi`` implementation."""
+    """The REST calls the trail needs, for one repository."""
 
-    def __init__(self, repo: str, token: str, *, api_url: str = "https://api.github.com") -> None:
-        self._base = f"{api_url.rstrip('/')}/repos/{repo}"
+    def __init__(
+        self,
+        repository: str,
+        token: str,
+        *,
+        opener=urlopen,
+        timeout: float = _API_TIMEOUT_SECONDS,
+    ) -> None:
+        self.repository = repository
         self._token = token
+        self._opener = opener
+        self._timeout = timeout
 
-    def _request(self, method: str, path: str, payload: Mapping[str, Any] | None = None) -> Any:
-        url = f"{self._base}{path}"
-        data = None if payload is None else json.dumps(dict(payload)).encode("utf-8")
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {self._token}",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": _USER_AGENT,
-        }
-        if data is not None:
-            headers["Content-Type"] = "application/json"
-        req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    def _call(self, method: str, path: str, payload: dict | None = None) -> object:
+        request = Request(
+            f"{_API_BASE}/repos/{self.repository}{path}",
+            headers={
+                "Authorization": f"Bearer {self._token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "User-Agent": "infra2-watchdog-issue-trail/1.0",
+                "Content-Type": "application/json",
+            },
+            data=None if payload is None else json.dumps(payload).encode("utf-8"),
+            method=method,
+        )
+        with self._opener(request, timeout=self._timeout) as response:  # noqa: S310
+            raw = response.read().decode("utf-8")
+        return json.loads(raw) if raw.strip() else None
+
+    def open_issues(self, *, with_body: bool = False) -> list[dict]:
+        """Return open issues as ``{"number", "title"}`` dicts (plus body/author if *with_body*)."""
+        issues: list[dict] = []
+        for page in range(1, _MAX_PAGES + 1):
+            path = f"/issues?state=open&per_page={_PER_PAGE}&page={page}"
+            try:
+                items = self._call("GET", path)
+            except (HTTPError, URLError, OSError, ValueError) as exc:
+                raise ListingFailed(f"GET {path}: {exc}") from exc
+            if not isinstance(items, list):
+                raise ListingFailed(f"GET {path} returned {type(items).__name__}, not a list")
+            for item in items:
+                if not isinstance(item, dict):
+                    raise ListingFailed(f"GET {path} returned a non-object issue")
+                if "pull_request" in item:
+                    continue
+                number, title = item.get("number"), item.get("title")
+                if not isinstance(number, int) or not isinstance(title, str):
+                    raise ListingFailed(f"GET {path} returned an issue without number/title")
+                entry = {"number": number, "title": title}
+                if with_body:
+                    author = item.get("user")
+                    entry["body"] = item.get("body") or ""
+                    entry["author"] = (
+                        str(author.get("login") or "") if isinstance(author, dict) else ""
+                    )
+                issues.append(entry)
+            if len(items) < _PER_PAGE:
+                return issues
+        raise ListingFailed(f"more than {_MAX_PAGES * _PER_PAGE} open issues; not read to the end")
+
+    def _write(self, method: str, path: str, payload: dict) -> object:
         try:
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                raw = resp.read().decode("utf-8")
-                return json.loads(raw) if raw else None
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")[:300]
-            err_cls = ListingFailed if method.upper() == "GET" else WriteFailed
-            raise err_cls(f"{method} {path} -> HTTP {exc.code}: {detail}") from exc
-        except urllib.error.URLError as exc:
-            err_cls = ListingFailed if method.upper() == "GET" else WriteFailed
-            raise err_cls(f"{method} {path} -> {exc.reason}") from exc
+            return self._call(method, path, payload)
+        except (HTTPError, URLError, OSError, ValueError) as exc:
+            raise WriteFailed(f"{method} {path}: {exc}") from exc
 
-    def list_open_by_label(self, label: str) -> Sequence[Mapping[str, Any]]:
-        qs = urllib.parse.urlencode({"state": "open", "labels": label, "per_page": 100})
-        items = self._request("GET", f"/issues?{qs}")
-        if not isinstance(items, list):
-            raise ListingFailed(f"expected list from /issues, got {type(items).__name__}")
-        return [it for it in items if isinstance(it, Mapping) and "pull_request" not in it]
-
-    def create_issue(self, title: str, body: str, labels: Sequence[str]) -> int:
-        res = self._request(
+    def create(self, title: str, body: str, labels: Iterable[str]) -> int:
+        created = self._write(
             "POST", "/issues", {"title": title, "body": body, "labels": list(labels)}
         )
-        if not isinstance(res, Mapping) or not isinstance(res.get("number"), int):
-            raise WriteFailed("create_issue response missing integer 'number'")
-        return int(res["number"])
-
-    def update_issue_body(self, number: int, body: str) -> None:
-        self._request("PATCH", f"/issues/{number}", {"body": body})
+        number = created.get("number") if isinstance(created, dict) else None
+        if not isinstance(number, int):
+            raise WriteFailed("POST /issues returned no issue number")
+        return number
 
     def comment(self, number: int, body: str) -> None:
-        self._request("POST", f"/issues/{number}/comments", {"body": body})
+        self._write("POST", f"/issues/{number}/comments", {"body": body})
+
+    def update_body(self, number: int, body: str) -> None:
+        self._write("PATCH", f"/issues/{number}", {"body": body})
 
     def close(self, number: int) -> None:
-        self._request(
-            "PATCH", f"/issues/{number}", {"state": "closed", "state_reason": "completed"}
+        self._write(
+            "PATCH",
+            f"/issues/{number}",
+            {"state": "closed", "state_reason": "completed"},
         )
 
 
-def check_name(raw: str) -> str:
-    cleaned = _SAFE_NAME_RE.sub("-", raw.strip().lower()).strip("-")
-    if not cleaned:
-        raise ValueError(f"check name {raw!r} normalizes to empty")
-    return cleaned
-
-
-def title_for(prefix: str, check: str) -> str:
-    return f"{prefix} {check_name(check)}"
-
-
-def scrub(text: str) -> str:
-    out = text
-    for pattern, repl in _SECRET_PATTERNS:
-        out = pattern.sub(repl, out)
-    return out
-
-
-def load_trail(body: str | None, *, check: str) -> Trail:
-    """Parse the ``<!-- issue-trail:v1 {...} -->`` marker from *body*, or return an empty trail."""
-    cname = check_name(check)
-    if not body:
-        return Trail(check=cname)
-    match = _TRAIL_MARKER_RE.search(body)
-    if not match:
-        return Trail(check=cname)
-    try:
-        raw = json.loads(match.group(1))
-    except json.JSONDecodeError:
-        return Trail(check=cname)
-    if not isinstance(raw, Mapping):
-        return Trail(check=cname)
-    results_raw = raw.get("results")
-    results: tuple[str, ...] = ()
-    if isinstance(results_raw, list):
-        results = tuple(r for r in results_raw if r in ("pass", "fail"))
-    last_run = raw.get("last_transition_run")
-    known = {"check", "results", "last_transition_run"}
-    extra = {k: v for k, v in raw.items() if k not in known}
-    return Trail(
-        check=cname,
-        results=results,
-        last_transition_run=last_run if isinstance(last_run, str) else "",
-        extra=extra,
-    )
-
-
-def _dump_trail(trail: Trail) -> str:
-    payload: dict[str, Any] = dict(trail.extra)
-    payload["check"] = trail.check
-    payload["results"] = list(trail.results)
-    if trail.last_transition_run:
-        payload["last_transition_run"] = trail.last_transition_run
-    encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True)
-    return f"<!-- issue-trail:v1 {encoded} -->"
-
-
-def _tail_streak(results: Sequence[str], target: str) -> int:
-    count = 0
-    for item in reversed(results):
-        if item == target:
-            count += 1
-        else:
-            break
-    return count
-
-
-def _render_body(
+def _red_body(
+    name: str,
     verdict: CheckVerdict,
-    trail: Trail,
     *,
     run_url: str,
-    timestamp: str,
+    context: str,
+    env: Mapping[str, str],
 ) -> str:
-    state = "PASSING (recovering)" if verdict.passed else "FAILING"
-    history = " ".join("PASS" if r == "pass" else "FAIL" for r in trail.results) or "(none)"
+    labels = " ".join(part for part in (verdict.severity, verdict.failure_domain) if part)
     lines = [
-        f"**State:** {state}",
-        f"**Check:** `{trail.check}`",
-        f"**Summary:** {scrub(verdict.summary)}",
-        f"**Updated:** {timestamp}",
+        f"**`{name}` is red** in the ops-checks watchdog" + (f" ({labels})" if labels else ""),
+        "",
+        f"- Run: {run_url or '(no run URL)'}",
+        f"- Run kind: {context}",
+        f"- Detail: {scrub(verdict.detail, env) or '(none)'}",
+        "",
+        "Recorded by the ops-checks watchdog issue trail (`tools/watchdog_issue_trail.py`, "
+        "truealpha#876) in addition to the Feishu page. One open issue per check: a later "
+        "red run comments here, and the next green scheduled run closes it.",
     ]
-    if run_url:
-        lines.append(f"**Latest run:** {run_url}")
-    lines.append(f"**Recent results (oldest -> newest):** `{history}`")
-    if verdict.details.strip():
-        lines.extend(["", "```", scrub(verdict.details.strip())[:3500], "```"])
-    lines.extend(["", _dump_trail(trail)])
     return "\n".join(lines)
 
 
-def _find_matching(
-    issues: Sequence[Mapping[str, Any]],
-    *,
-    prefix: str,
-    check: str,
-) -> list[Mapping[str, Any]]:
-    expected = title_for(prefix, check)
-    cname = check_name(check)
-    matched: list[Mapping[str, Any]] = []
-    for it in issues:
-        title = str(it.get("title") or "").strip()
-        if title == expected:
-            matched.append(it)
-            continue
-        if title.startswith(prefix):
-            parsed = load_trail(str(it.get("body") or ""), check=cname)
-            if parsed.results and str(it.get("body") or "").find(f'"check":"{cname}"') != -1:
-                matched.append(it)
-    matched.sort(key=lambda it: int(it.get("number") or 0))
-    return matched
-
-
-def _reconcile_one(
-    api: IssueApi,
-    open_issues: Sequence[Mapping[str, Any]],
-    verdict: CheckVerdict,
-    *,
-    label: str,
-    extra_labels: Sequence[str],
-    title_prefix: str,
-    run_url: str,
-    timestamp: str,
-    open_after: int,
-    close_after: int,
-    history_len: int,
-    dry_run: bool,
-) -> None:
-    cname = check_name(verdict.name)
-    outcome = "pass" if verdict.passed else "fail"
-    matches = _find_matching(open_issues, prefix=title_prefix, check=cname)
-    canonical = matches[0] if matches else None
-    duplicates = matches[1:]
-
-    prior = load_trail(str(canonical.get("body") or "") if canonical else None, check=cname)
-    if canonical is not None and not prior.results:
-        seeded: tuple[str, ...] = ("fail",)
-    else:
-        seeded = prior.results
-    updated_results = (*seeded, outcome)[-history_len:]
-
-    fail_streak = _tail_streak(updated_results, "fail")
-    pass_streak = _tail_streak(updated_results, "pass")
-
-    if canonical is None:
-        if outcome == "pass":
-            return
-        all_labels = list(dict.fromkeys([label, *extra_labels]))
-        transition = run_url if fail_streak >= open_after else prior.last_transition_run
-        trail = Trail(
-            check=cname,
-            results=updated_results,
-            last_transition_run=transition,
-            extra=prior.extra,
-        )
-        body = _render_body(verdict, trail, run_url=run_url, timestamp=timestamp)
-        title = title_for(title_prefix, cname)
-        if dry_run:
-            print(f"[issue-trail] dry-run: would create '{title}' (fail_streak={fail_streak})")
-            return
-        api.create_issue(title, body, all_labels)
-        return
-
-    number = int(canonical["number"])
-    for dup in duplicates:
-        dup_num = int(dup["number"])
-        if dry_run:
-            print(f"[issue-trail] dry-run: would close duplicate #{dup_num} of #{number}")
-            continue
-        api.comment(dup_num, f"Closing as duplicate of #{number} for check `{cname}`.")
-        api.close(dup_num)
-
-    if outcome == "pass" and pass_streak >= close_after:
-        trail = Trail(
-            check=cname,
-            results=updated_results,
-            last_transition_run=run_url or prior.last_transition_run,
-            extra=prior.extra,
-        )
-        body = _render_body(verdict, trail, run_url=run_url, timestamp=timestamp)
-        msg = (
-            f"Check `{cname}` passed {pass_streak} consecutive time(s) "
-            f"({scrub(verdict.summary)}). Auto-closing."
-        )
-        if run_url:
-            msg += f"\n\nRun: {run_url}"
-        if dry_run:
-            print(f"[issue-trail] dry-run: would close #{number} after {pass_streak} passes")
-            return
-        api.update_issue_body(number, body)
-        api.comment(number, msg)
-        api.close(number)
-        return
-
-    just_crossed = (
-        outcome == "fail" and fail_streak == open_after and prior.last_transition_run != run_url
+def _green_body(name: str, *, run_url: str, context: str) -> str:
+    return "\n".join(
+        [
+            f"**`{name}` is green again** in {run_url or 'the latest run'} ({context}).",
+            "",
+            "Closed by the ops-checks watchdog issue trail (truealpha#876). "
+            "A later red run opens a new issue.",
+        ]
     )
-    trail = Trail(
-        check=cname,
-        results=updated_results,
-        last_transition_run=run_url if just_crossed else prior.last_transition_run,
-        extra=prior.extra,
+
+
+def _retired_body(name: str, *, run_url: str, context: str) -> str:
+    return "\n".join(
+        [
+            f"**`{name}` no longer reports to this trail** "
+            f"({run_url or 'latest run'}, {context}): every watchdog step recorded "
+            "its paging checks and none recorded this one.",
+            "",
+            "It is report-only now (#908: its failures go to the daily infra2 report, "
+            "not the pager) or no longer exists. Closed by the ops-checks watchdog "
+            "issue trail so it is not left open forever.",
+        ]
     )
-    body = _render_body(verdict, trail, run_url=run_url, timestamp=timestamp)
-    if dry_run:
-        print(
-            f"[issue-trail] dry-run: would update #{number} "
-            f"(fail={fail_streak}, pass={pass_streak})"
-        )
-        return
-    api.update_issue_body(number, body)
-    if just_crossed:
-        note = (
-            f"Check `{cname}` has now failed {fail_streak} consecutive runs: "
-            f"{scrub(verdict.summary)}"
-        )
-        if run_url:
-            note += f"\n\nRun: {run_url}"
-        api.comment(number, note)
-
-
-def record_verdicts(
-    api: IssueApi,
-    verdicts: Sequence[CheckVerdict],
-    *,
-    label: str = "Automated-Health-Check",
-    extra_labels: Sequence[str] = (),
-    title_prefix: str = "[Health Check]",
-    run_url: str = "",
-    now: datetime | None = None,
-    open_after: int = _DEFAULT_OPEN_AFTER,
-    close_after: int = _DEFAULT_CLOSE_AFTER,
-    history_len: int = _DEFAULT_HISTORY_LEN,
-    dry_run: bool = False,
-) -> list[str]:
-    """Reconcile *verdicts* against open issues carrying *label*."""
-    if not verdicts:
-        return []
-    timestamp = (now or datetime.now(UTC)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    try:
-        open_issues = api.list_open_by_label(label)
-    except Exception as exc:
-        msg = scrub(f"issue-trail: listing open issues failed: {exc}")
-        print(f"::warning::{msg}", file=sys.stderr)
-        return [msg]
-
-    errors: list[str] = []
-    for verdict in verdicts:
-        try:
-            _reconcile_one(
-                api,
-                open_issues,
-                verdict,
-                label=label,
-                extra_labels=extra_labels,
-                title_prefix=title_prefix,
-                run_url=run_url,
-                timestamp=timestamp,
-                open_after=open_after,
-                close_after=close_after,
-                history_len=history_len,
-                dry_run=dry_run,
-            )
-        except Exception as exc:
-            msg = scrub(f"issue-trail[{verdict.name}]: {exc}")
-            print(f"::warning::{msg}", file=sys.stderr)
-            errors.append(msg)
-    return errors
-
-
-def issue_trail_mode(
-    env: Mapping[str, str] | None = None,
-    *,
-    force_dry_run: bool = False,
-) -> tuple[bool, bool]:
-    """Return ``(enabled, dry_run)`` for the current process environment."""
-    env_map: Mapping[str, str] = os.environ if env is None else env
-    if force_dry_run or env_map.get(_DRY_RUN_ENV) == "1" or env_map.get(_SSH_OVERRIDE_ENV) == "1":
-        return True, True
-    event = env_map.get(_GH_EVENT_NAME_KEY, "")
-    if event.startswith("pull_request"):
-        return True, True
-    if event == "schedule" or env_map.get(_GH_REF_KEY) == "refs/heads/main":
-        return True, False
-    return False, True
 
 
 def reconcile_issue_trail(
-    verdicts: Sequence[CheckVerdict],
+    api: IssueApi,
+    trail: Trail,
     *,
-    title_prefix: str = "[Health Check]",
-    label: str = "Automated-Health-Check",
-    extra_labels: Sequence[str] = (),
-    force_dry_run: bool = False,
-    env: Mapping[str, str] | None = None,
+    mode: str,
     run_url: str = "",
-) -> list[str]:
-    """Convenience entrypoint that resolves credentials from *env* and calls ``record_verdicts``."""
-    env_map: Mapping[str, str] = os.environ if env is None else env
-    enabled, dry_run = issue_trail_mode(env_map, force_dry_run=force_dry_run)
-    if not enabled and not force_dry_run:
-        return []
-    repo = (env_map.get(_GH_REPO_KEY) or "").strip()
-    token = (env_map.get(_GH_TOKEN_KEY) or env_map.get(_GH_CLI_TOKEN_KEY) or "").strip()
-    if not repo or not token:
-        if dry_run:
-            for v in verdicts:
-                state = "PASS" if v.passed else "FAIL"
-                print(f"[issue-trail] dry-run (no token): {v.name}={state} ({v.summary})")
-            return []
-        msg = "issue-trail: GITHUB_REPOSITORY or GITHUB_TOKEN missing; skipping issue trail"
-        print(f"::warning::{msg}", file=sys.stderr)
-        return [msg]
-    api = GitHubIssues(repo, token)
-    return record_verdicts(
-        api,
-        verdicts,
-        label=label,
-        extra_labels=extra_labels,
-        title_prefix=title_prefix,
-        run_url=run_url,
-        dry_run=dry_run,
-    )
+    context: str = "",
+    env: Mapping[str, str] | None = None,
+) -> int:
+    """Open or comment on every red check's issue; close green ones when allowed."""
+    env = env or {}
+    if mode not in (_FULL, _OPEN_ONLY, _OFF):
+        print(f"::error::unknown issue-trail mode {mode!r}")
+        return 1
+    if mode == _OFF:
+        print(
+            "issue trail: off for this run "
+            "(dry run, manual diagnostics, or not a scheduled/dispatched run)"
+        )
+        return 0
+    try:
+        listed = api.open_issues()
+    except ListingFailed as exc:
+        print(
+            f"::warning::issue trail: open issues could not be listed ({exc}); "
+            "nothing written, the next run retries"
+        )
+        return 0
+
+    trail = trail.renamed(lambda name: scrub(name, env))
+    by_title: dict[str, list[int]] = {}
+    for issue in listed:
+        by_title.setdefault(issue["title"], []).append(issue["number"])
+    for numbers in by_title.values():
+        numbers.sort()
+
+    failed_writes = 0
+    for name in sorted(trail.failing):
+        title = title_for(name)
+        body = _red_body(name, trail.failing[name], run_url=run_url, context=context, env=env)
+        existing = by_title.get(title)
+        try:
+            if existing:
+                api.comment(existing[0], body)
+                print(f"issue trail: commented on #{existing[0]} ({title})")
+            else:
+                number = api.create(title, body, _ISSUE_LABELS)
+                by_title[title] = [number]
+                print(f"issue trail: opened #{number} ({title})")
+        except WriteFailed as exc:
+            failed_writes += 1
+            print(f"::error::issue trail: could not record {title!r}: {exc}")
+
+    if mode == _FULL:
+        for title in sorted(by_title):
+            name = check_name(title)
+            if name is None:
+                continue
+            if trail.is_green(name):
+                body = _green_body(name, run_url=run_url, context=context)
+            elif trail.is_retired(name):
+                body = _retired_body(name, run_url=run_url, context=context)
+            else:
+                continue
+            for number in by_title[title]:
+                try:
+                    api.comment(number, body)
+                    api.close(number)
+                    print(f"issue trail: closed #{number} ({title})")
+                except WriteFailed as exc:
+                    failed_writes += 1
+                    print(f"::error::issue trail: could not close #{number}: {exc}")
+    else:
+        print("issue trail: open-only run (drill or branch dispatch); no issue is closed")
+
+    return 1 if failed_writes else 0
 
 
 __all__ = [
