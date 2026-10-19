@@ -192,9 +192,7 @@ def test_approval_notice_and_sender_request(capsys: pytest.CaptureFixture[str]) 
             ]
         }
 
-    wrapped = announce_approval_wait(
-        fake_api, "request-0001", "v1.2.3", announce=notices.append
-    )
+    wrapped = announce_approval_wait(fake_api, "request-0001", "v1.2.3", announce=notices.append)
     wrapped("GET", "/runs")
     wrapped("GET", "/runs")
     assert len(notices) == 1
