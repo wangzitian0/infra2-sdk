@@ -4,6 +4,13 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.8.3 - 2026-10-19
+
+### Changed
+
+- Privatize `_ls_remote_rows` in `infra2_sdk.refs` now that all external callers resolve branches and tags through `resolve_branch_to_sha`, `resolve_to_sha`, `resolve_image_ref`, and `resolve_pr` ([#126](https://github.com/wangzitian0/infra2-sdk/issues/126)).
+- Update `infra2_sdk.scaffold`, `infra2_sdk.ci`, and `infra2_sdk.observability` from legacy `libs/` module paths to `common/` ([#126](https://github.com/wangzitian0/infra2-sdk/issues/126)).
+
 ## 3.8.2 - 2026-10-19
 
 ### Changed

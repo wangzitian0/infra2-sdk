@@ -35,7 +35,6 @@
     "CommandRunner": "consumer: infra2",
     "ResolvedRef": "consumer: infra2",
     "classify_ref": "consumer: infra2",
-    "ls_remote_rows": "consumer: infra2",
     "redact_repo": "consumer: infra2",
     "resolve_branch_to_sha": "consumer: infra2",
     "resolve_image_ref": "consumer: infra2",
