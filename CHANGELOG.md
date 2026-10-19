@@ -4,6 +4,12 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.7.3 - 2026-10-19
+
+### Changed
+
+- Restrict submodule `__all__` declarations across `src/infra2_sdk/` to externally consumed public symbols (`internal_only=0, test_only=0, unused=0` under `sdk_usage_census`) while preserving package-level `infra2_sdk.__all__`, `infra2_sdk.runtime.__all__`, and module attributes ([#121](https://github.com/wangzitian0/infra2-sdk/issues/121)).
+
 ## 3.7.2 - 2026-10-19
 
 ### Fixed

@@ -90,4 +90,6 @@ class LlmSettings:
         return tuple(dict.fromkeys(initial))
 
 
-__all__ = ["LlmSettings"]
+__all__ = [
+    "LlmSettings",
+]

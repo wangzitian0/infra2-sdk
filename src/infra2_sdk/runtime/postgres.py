@@ -157,7 +157,6 @@ def redact_postgres_error(detail: str, settings: PostgresSettings) -> str:
 
 __all__ = [
     "PostgresSettings",
-    "normalize_postgres_dsn",
     "probe_postgres",
     "redact_postgres_error",
 ]

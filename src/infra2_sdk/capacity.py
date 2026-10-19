@@ -167,3 +167,12 @@ def cloudflare_readings(
     ]
     readings.append(CapacityReading("cloudflare.workers.requests", workers))
     return tuple(readings)
+
+
+__all__ = [
+    "CLOUDFLARE_FREE_TIER",
+    "CapacityReading",
+    "CapacityReport",
+    "cloudflare_readings",
+    "evaluate",
+]

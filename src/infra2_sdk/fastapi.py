@@ -365,3 +365,8 @@ def init_service(
 
     if settings is not None:
         _start_telemetry(app, settings, strict=strict_otel, log_level=log_level)
+
+
+__all__ = [
+    "init_service",
+]

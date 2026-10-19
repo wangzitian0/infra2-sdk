@@ -202,8 +202,6 @@ def derive_preview_coordinates(
 
 
 __all__ = [
-    "CANARY_SLOT",
-    "DEFAULT_BASE_DOMAIN",
     "PreviewStackCoordinates",
     "derive_preview_coordinates",
     "resolve_app_hostname",
