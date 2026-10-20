@@ -4,6 +4,12 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.8.5 - 2026-10-20
+
+### Added
+
+- Add OpenPanel export query and funnel summary primitives (`resolve_openpanel_api_url`, `resolve_openpanel_api_key`, `load_openpanel_funnel_presets`, `build_openpanel_payload`, `format_openpanel_markdown`, `post_openpanel_json`) to `infra2_sdk.observability` ([#133](https://github.com/wangzitian0/infra2-sdk/issues/133)).
+
 ## 3.8.4 - 2026-10-19
 
 ### Changed
