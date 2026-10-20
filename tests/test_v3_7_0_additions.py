@@ -680,3 +680,150 @@ def test_v3_8_0_bare_interpreter_import_without_yaml() -> None:
         check=False,
     )
     assert proc.returncode == 0, proc.stderr
+
+
+def test_openpanel_observability_engine(tmp_path: Path) -> None:
+    from infra2_sdk.observability import (
+        build_openpanel_payload,
+        format_openpanel_markdown,
+        load_openpanel_funnel_presets,
+        post_openpanel_json,
+        resolve_openpanel_api_key,
+        resolve_openpanel_api_url,
+    )
+
+    assert resolve_openpanel_api_url(None, env={}) == "https://openpanel.zitian.party/api"
+    assert (
+        resolve_openpanel_api_url(None, env={"OPENPANEL_API_URL": "https://env.example/api"})
+        == "https://env.example/api"
+    )
+    assert (
+        resolve_openpanel_api_url("http://localhost:3000/api", env={})
+        == "http://localhost:3000/api"
+    )
+    assert resolve_openpanel_api_url("http://[::1]:3000/api", env={}) == "http://[::1]:3000/api"
+    with pytest.raises(SystemExit, match="non-HTTPS"):
+        resolve_openpanel_api_url("http://remote.example.com/api", env={})
+
+    assert resolve_openpanel_api_key({"OPENPANEL_API_KEY": "  sec-123  "}) == "sec-123"
+    with pytest.raises(SystemExit, match="OPENPANEL_API_KEY is not set"):
+        resolve_openpanel_api_key({})
+
+    contract_file = tmp_path / "openpanel_analytics.json"
+    contract_file.write_text(
+        json.dumps(
+            {
+                "funnels": [
+                    {
+                        "name": "Upload -> Report",
+                        "description": "Core activation funnel",
+                        "steps": ["upload_started", "upload_succeeded", "report_generated"],
+                    },
+                    {
+                        "name": "Upload -> Review -> Report (North Star)",
+                        "description": "Full core loop funnel",
+                        "steps": [
+                            "upload_started",
+                            "upload_succeeded",
+                            "review_approved",
+                            "report_generated",
+                        ],
+                    },
+                    "not-a-mapping",
+                    {"name": "invalid", "steps": "not-a-list"},
+                    {"name": "too-short", "steps": ["only_one"]},
+                    {"preset": "custom", "steps": ["step_a", "step_b"]},
+                    {"name": "unrecognized", "steps": ["step_x", "step_y"]},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    presets = load_openpanel_funnel_presets(contract_file)
+    assert presets["activation"] == ("upload_started", "upload_succeeded", "report_generated")
+    assert presets["core-funnel"] == (
+        "upload_started",
+        "upload_succeeded",
+        "review_approved",
+        "report_generated",
+    )
+    assert presets["custom"] == ("step_a", "step_b")
+
+    bad_contract = tmp_path / "bad.json"
+    bad_contract.write_text(json.dumps({"funnels": "invalid"}), encoding="utf-8")
+    with pytest.raises(ValueError, match="missing 'funnels' list"):
+        load_openpanel_funnel_presets(bad_contract)
+
+    ev_payload = build_openpanel_payload(
+        command="events", limit=25, env="staging", event="upload_started"
+    )
+    assert ev_payload == {
+        "limit": 25,
+        "filters": [{"name": "environment", "operator": "is", "value": ["staging"]}],
+        "event": "upload_started",
+    }
+    fn_payload = build_openpanel_payload(command="funnel", limit=10, steps=["s1", "s2"])
+    assert fn_payload == {"limit": 10, "steps": ["s1", "s2"]}
+    assert build_openpanel_payload(command="noop", limit=5) == {"limit": 5}
+
+    md_funnel = format_openpanel_markdown(
+        {
+            "steps": [
+                {"event": "s1", "count": 10},
+                {"event": "s2", "count": 5},
+                "ignore-me",
+            ]
+        },
+        command="funnel",
+        env="production",
+    )
+    assert "### OpenPanel Funnel Summary (production)" in md_funnel
+    assert "| 2 | `s2` | 5 | 50.0% |" in md_funnel
+    assert "(no funnel steps returned)" in format_openpanel_markdown(
+        {"steps": []}, command="funnel"
+    )
+
+    md_events = format_openpanel_markdown(
+        {"events": [{"id": 1}, {"id": 2}]}, command="events", env="staging"
+    )
+    assert "Total returned: 2" in md_events
+
+    class _FakeResp:
+        def __init__(self, body: str) -> None:
+            self._body = body
+
+        def __enter__(self) -> _FakeResp:
+            return self
+
+        def __exit__(self, *args: object) -> bool:
+            return False
+
+        def read(self) -> bytes:
+            return self._body.encode("utf-8")
+
+    seen_req: dict[str, Any] = {}
+
+    def fake_opener(req: Any, timeout: float = 30.0) -> _FakeResp:
+        seen_req["url"] = req.full_url
+        seen_req["secret"] = req.headers.get("Openpanel-client-secret")
+        seen_req["timeout"] = timeout
+        return _FakeResp('{"ok": true}')
+
+    res = post_openpanel_json(
+        "https://openpanel.zitian.party/api/events",
+        "secret-1",
+        {"limit": 1},
+        timeout=12.0,
+        opener=fake_opener,
+    )
+    assert res == {"ok": True}
+    assert seen_req["secret"] == "secret-1"
+    assert seen_req["timeout"] == 12.0
+
+    with pytest.raises(ValueError, match="not a JSON object"):
+        post_openpanel_json(
+            "https://openpanel.zitian.party/api/events",
+            "secret-1",
+            {"limit": 1},
+            opener=lambda req, timeout=30.0: _FakeResp("[1, 2, 3]"),
+        )
