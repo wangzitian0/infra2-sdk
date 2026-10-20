@@ -34,10 +34,16 @@ from infra2_sdk.ci import (
     validate_manifest_offline,
 )
 from infra2_sdk.delivery import (
+    CanaryReport,
     FailureDomain,
+    SchemaDiscrepancy,
+    SmokeCheck,
+    SmokeCheckResult,
     StageResult,
     StageStatus,
+    compare_enum_definitions,
     make_stage_result,
+    validate_schema_compatibility,
 )
 from infra2_sdk.deploy import (
     PRODUCTION_REQUEST_MAX_AGE_SECONDS,
@@ -106,10 +112,16 @@ __all__ = [
     "validate_inventory",
     "validate_manifest_offline",
     # Delivery
+    "CanaryReport",
     "FailureDomain",
+    "SchemaDiscrepancy",
+    "SmokeCheck",
+    "SmokeCheckResult",
     "StageResult",
     "StageStatus",
+    "compare_enum_definitions",
     "make_stage_result",
+    "validate_schema_compatibility",
     # Deploy
     "DeployOperation",
     "DeployRequest",

@@ -4,6 +4,12 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.10.0 - 2026-10-20
+
+### Added
+
+- Add `SmokeCheck` protocol, `SmokeCheckResult`, `CanaryReport`, `SchemaDiscrepancy`, `compare_enum_definitions`, and `validate_schema_compatibility` to `infra2_sdk.delivery` ([#33](https://github.com/wangzitian0/infra2-sdk/issues/33)).
+
 ## 3.9.0 - 2026-10-20
 
 ### Added
