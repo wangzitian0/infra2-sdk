@@ -4,6 +4,13 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.9.0 - 2026-10-20
+
+### Added
+
+- Add typed transport failure classification (`TransportErrorKind`, `TransportFailure`, `classify_transport_error`), declarative rate-window pacing (`ThrottlePolicy`, `paced_transport`), and Decimal-safe JSON decoding (`decode_decimal_json`) to `infra2_sdk.transport` ([infra2#611](https://github.com/wangzitian0/infra2/issues/611)).
+- Add a release-hygiene guard in `tests/test_release_hygiene.py` verifying that patch version bumps (`x.y.Z`) do not introduce new public API symbols compared to the previous release tag ([infra2#1106](https://github.com/wangzitian0/infra2/issues/1106)).
+
 ## 3.8.5 - 2026-10-20
 
 ### Added
