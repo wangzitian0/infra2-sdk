@@ -2,14 +2,20 @@ import pytest
 
 from infra2_sdk.delivery import (
     BudgetStatus,
+    CanaryReport,
     DisagreementKind,
     FailureDomain,
     PipelineStage,
+    SchemaDiscrepancy,
+    SmokeCheck,
+    SmokeCheckResult,
     StageResult,
     StageStatus,
     _validate_stage_result,
     classify_budget,
+    compare_enum_definitions,
     make_stage_result,
+    validate_schema_compatibility,
 )
 from infra2_sdk.runtime.environment import EnvironmentTier
 
@@ -168,3 +174,119 @@ def test_validate_stage_result_rejects_non_environment_tier() -> None:
     )
     with pytest.raises(TypeError, match="EnvironmentTier"):
         _validate_stage_result(result)
+
+
+def test_smoke_check_protocol_and_canary_report() -> None:
+    class _HealthCheck:
+        def check(self, target: str) -> SmokeCheckResult:
+            return SmokeCheckResult(
+                name="public-health",
+                passed=(target == "ok"),
+                duration_ms=12,
+                detail="status=ok",
+            )
+
+    probe = _HealthCheck()
+    assert isinstance(probe, SmokeCheck)
+    res_ok = probe.check("ok")
+    assert res_ok.passed is True
+    assert res_ok.to_dict()["failure_domain"] == "none"
+
+    report = CanaryReport(
+        service="truealpha-web",
+        environment=EnvironmentTier.STAGING,
+        version="abc1234",
+        checks=(res_ok,),
+    )
+    assert report.passed is True
+    assert report.to_dict()["environment"] == "staging"
+    assert report.to_dict()["passed"] is True
+
+    empty_report = CanaryReport(
+        service="truealpha-web",
+        environment=EnvironmentTier.STAGING,
+        version="abc1234",
+    )
+    assert empty_report.passed is False
+
+
+def test_smoke_check_and_canary_report_reject_invalid_inputs() -> None:
+    with pytest.raises(ValueError, match="name"):
+        SmokeCheckResult(name="", passed=True)
+    with pytest.raises(ValueError, match="duration_ms"):
+        SmokeCheckResult(name="health", passed=True, duration_ms=-1)
+    with pytest.raises(ValueError, match="service"):
+        CanaryReport(service="", environment=EnvironmentTier.STAGING, version="v1")
+    with pytest.raises(ValueError, match="version"):
+        CanaryReport(service="web", environment=EnvironmentTier.STAGING, version="")
+
+
+def test_compare_enum_definitions_detects_additions_removals_and_casing() -> None:
+    code_enums = {
+        "order_status": ["PENDING", "FILLED", "CANCELLED"],
+        "role_type": ["admin", "viewer"],
+        "exact_match": ["a", "b"],
+    }
+    db_enums = {
+        "order_status": ["PENDING", "filled", "LEGACY_EXPIRED"],
+        "role_type": ["admin"],
+        "exact_match": ["a", "b"],
+    }
+
+    diffs = compare_enum_definitions(code_enums, db_enums)
+    by_name = {d.enum_name: d for d in diffs}
+    assert set(by_name.keys()) == {"order_status", "role_type"}
+
+    order_diff = by_name["order_status"]
+    assert order_diff.missing_in_db == ("CANCELLED",)
+    assert order_diff.missing_in_code == ("LEGACY_EXPIRED",)
+    assert order_diff.casing_mismatches == (("FILLED", "filled"),)
+    assert order_diff.is_compatible is False
+    assert order_diff.to_dict()["casing_mismatches"] == [{"code": "FILLED", "db": "filled"}]
+
+    role_diff = by_name["role_type"]
+    assert role_diff.missing_in_db == ("viewer",)
+    assert role_diff.missing_in_code == ()
+    assert role_diff.casing_mismatches == ()
+    assert role_diff.is_compatible is False
+
+
+def test_validate_schema_compatibility_allows_expand_first_extra_db_values() -> None:
+    code_enums = {"status": ["ACTIVE"]}
+    db_enums = {"status": ["ACTIVE", "DEPRECATED_OLD"]}
+
+    all_diffs = compare_enum_definitions(code_enums, db_enums)
+    assert len(all_diffs) == 1
+    assert all_diffs[0] == SchemaDiscrepancy(
+        enum_name="status",
+        missing_in_db=(),
+        missing_in_code=("DEPRECATED_OLD",),
+        casing_mismatches=(),
+    )
+    assert all_diffs[0].is_compatible is True
+
+    assert validate_schema_compatibility(code_enums, db_enums) == []
+    assert len(
+        validate_schema_compatibility(code_enums, db_enums, allow_extra_db_values=False)
+    ) == 1
+
+
+def test_delivery_module_has_zero_runtime_io_dependencies() -> None:
+    import ast
+    from pathlib import Path
+
+    import infra2_sdk.delivery as delivery_mod
+
+    source = Path(delivery_mod.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    imported_roots: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imported_roots.add(alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported_roots.add(node.module.split(".")[0])
+
+    forbidden = {"docker", "requests", "psycopg", "psycopg2", "httpx", "urllib", "socket"}
+    assert imported_roots.isdisjoint(forbidden)
+
