@@ -1,42 +1,51 @@
 ---
 name: recall
-description: 开工前先检索跨 Agent 持久记忆库。在会话开始、接手新任务、或排查涉及“历史决策/踩坑/旧约定/之前怎么做的”问题时调用。
+description: Search persistent memory, git history, and dev_env SSOT before work. Use at session start, when taking a new task, or when investigating past decisions and rule rationale.
 ---
 
-# Recall — 跨 Agent 记忆检索
+# recall: look up before you act
 
-从工作区统一记忆库精准召回历史决策、技术真理与避坑指南，避免同一个坑踩两次。
+Never invent history or guess the rationale behind architecture and rules. Always retrieve physical evidence before acting or explaining past design decisions.
 
-**本文件只讲何时召回与怎么用召回结果。具体用哪条命令由本环境的 `local.md` 提供**——
-它属于实现，会随环境变化；判据不会。没有 `local.md` 的环境按自己的记忆工具替换即可。
+## Four-level deterministic retrieval protocol
 
----
+When investigating past decisions, incident context, or rule rationale, execute this four-level retrieval chain:
 
-## 触发时机
+```
+Level 1: dev_env SSOT check (single source of truth in dev_env)
+   ↓
+Level 2: Global memory search (basic-memory across all projects)
+   ↓
+Level 3: Git commit archeology (git log -p / git log --grep)
+   ↓
+Level 4: Physical runtime verification (worker.log, live probes, exit codes)
+```
 
-1. **会话开启 / 接手新工程**：先取本仓库最近的架构演变与关键上下文，再动手。
-2. **处理复杂 Bug / 架构调整**：按关键词定向检索历史踩坑点（死锁、配置参数、权限边界这类）。
-3. **用户提及历史上下文**：当用户说「之前怎么定案的」「记不记得上次的排查结果」时，
-   **先召回再回答，严禁凭空臆造**。
+### Level 1: dev_env SSOT check
+- `dev_env` is the only editable source for root rules (`workspace-iac/etc/rules/subagents.md`) and common skills (`skills/common/*`).
+- Always inspect the `dev_env` repository directly to verify current authoritative definitions rather than relying on projected worktree snapshots.
 
----
+### Level 2: Global memory search
+- Run `search_notes` with `search_all_projects: true`.
+- Query exact keywords (e.g. `audit`, `swarm`, `decisions`, `sessions`, `handover`).
+- Read full notes with `read_note` when relevant contracts or decisions match. Do not rely on short search excerpts.
 
-## 消费与执行准则
+### Level 3: Git commit archeology
+- When the question asks "why is this designed this way" or "when did this change":
+  - Run `git log -p -n 3 -- <target-file>` to read the exact diff and commit message.
+  - Run `git log --grep="<keyword>" --oneline` to find the introducing PR and measured failure evidence.
+  - Read the exact problem description. Do not synthesize or assume rationale.
 
-1. **先查后做，宁静不扰**
-   检索结果为空时，静默视为无历史记录，直接继续正常开发流程。除非用户主动询问，
-   不要特地汇报「没有找到相关记忆」——空结果不是一条值得占用注意力的信息。
+### Level 4: Physical runtime verification
+- When a tool, worker, or command fails:
+  - Check live daemon logs: `tail -n 50 ~/.local/state/subagent-worker/worker.log`.
+  - Check model availability: `subagent-worker --check-models`.
+  - Check physical git status and branch locks: `git status -s`, `git worktree list`.
+  - Never classify a transient network or rate-limit failure as an architectural conflict.
 
-2. **高信噪比引用**
-   只提取核心结论与环境真理注入上下文，不要整条粘贴。保留原条目的 ID 或日期标记，
-   使结论可被溯源；一条无法溯源的「记忆」和臆造没有区别。
+## How to use results
 
-3. **真实物理代码优先**
-   记忆反映的是**过去做过的决策**，而当前代码库是**现在的事实**。两者冲突时以代码为准，
-   并向用户指出漂移——记忆过期本身就是一条值得报告的发现。
-
-4. **防初筛信息销毁与锚点复核 (Anti-Lossy Compression & Spot-Check)**
-   当使用轻量模型（如 `glm-5.3-flash`）做知识库或记忆库批量初筛时，必须严格执行防有损压缩契约：
-   - **强制源码物理锚点**：初筛输出**严禁仅提供纯文本转述或二手摘要**，必须严格输出 `[Raw Anchors]`（包含文件相对/绝对路径与精确行号范围 `file_path#Lxx-Lyy` 或 note ID）；
-   - **决策前原位抽检**：下游 President/Lead 在根据初筛做关键技术选型或架构调整前，必须对至少 1~2 个关键锚点执行原位代码读取（Spot-check），验证上下文与负向约束未被曲解，阻断虚假引用（Hallucinated Citation）毒化决策链。
-
+1. **Empty result:** Continue silently. Report "no memory found" only when the owner asks.
+2. **Cite briefly with anchors:** Cite the conclusion, date, commit SHA, note id, or exact line numbers (`file#Lxx-Lyy`). A statement without an anchor equals an invention.
+3. **Code wins over memory:** Memory records a past decision. The live code is the present fact. On conflict, follow the code, cite both, and report the drift.
+4. **Anchor small-model screening:** When a light model screens notes or a knowledge base, its output must carry anchors (`file#Lxx-Lyy` or note permalink).
