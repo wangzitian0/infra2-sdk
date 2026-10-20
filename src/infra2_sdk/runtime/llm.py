@@ -4,8 +4,22 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
+
+_ModelRole = Literal["large", "small", "multimodal"]
+
+
+class _RoleDefault:
+    """Marks a model slot that takes its value from a model role."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<role default>"
+
+
+_ROLE_DEFAULT: Any = _RoleDefault()
 
 
 def _coerce_tuple(value: Any) -> tuple[str, ...]:
@@ -18,14 +32,24 @@ def _coerce_tuple(value: Any) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class LlmSettings:
-    """Settings contract for large language model providers."""
+    """Settings contract for large language model providers.
+
+    The SDK owns the default models through three roles. Each role is a model and
+    a reasoning effort: ``large`` and ``small`` both use glm-5.3-flash, with high
+    and low reasoning, and ``multimodal`` uses glm-5.3-flashx. The task slots
+    derive from the roles when they are not set: ``primary_model`` uses the small
+    model, and ``ocr_model`` and ``vision_model`` use the multimodal model. An
+    explicit slot value, ``None`` included, still wins. ``dataclasses.replace``
+    passes the resolved slots back in, so it does not re-derive them from a
+    changed role; construct a new instance to re-derive.
+    """
 
     provider: str = "zai"
     base_url: str = "https://api.z.ai/api/coding/paas/v4"
     api_key: str | None = field(default=None, repr=False)
-    primary_model: str = "glm-5.3-flash"
-    ocr_model: str | None = "glm-5.3-flashx"
-    vision_model: str | None = "glm-5.3-flashx"
+    primary_model: str = _ROLE_DEFAULT
+    ocr_model: str | None = _ROLE_DEFAULT
+    vision_model: str | None = _ROLE_DEFAULT
     fallback_models: tuple[str, ...] = ()
     vision_fallback_models: tuple[str, ...] = ()
     chat_completions_path: str = "/chat/completions"
@@ -36,8 +60,33 @@ class LlmSettings:
     json_seed: int | None = None
     extract_max_attempts: int = 2
     encryption_keys: tuple[str, ...] = field(default=(), repr=False)
+    # The model roles come last, so positional construction of the fields above
+    # keeps its meaning.
+    large_model: str = "glm-5.3-flash"
+    small_model: str = "glm-5.3-flash"
+    multimodal_model: str = "glm-5.3-flashx"
+    large_reasoning_effort: str = "high"
+    small_reasoning_effort: str = "low"
+    multimodal_reasoning_effort: str = "low"
 
     def __post_init__(self) -> None:
+        for role_field in (
+            "large_model",
+            "small_model",
+            "multimodal_model",
+            "large_reasoning_effort",
+            "small_reasoning_effort",
+            "multimodal_reasoning_effort",
+        ):
+            value = getattr(self, role_field)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{role_field} must be non-empty")
+        if self.primary_model is _ROLE_DEFAULT:
+            object.__setattr__(self, "primary_model", self.small_model)
+        if self.ocr_model is _ROLE_DEFAULT:
+            object.__setattr__(self, "ocr_model", self.multimodal_model)
+        if self.vision_model is _ROLE_DEFAULT:
+            object.__setattr__(self, "vision_model", self.multimodal_model)
         object.__setattr__(self, "fallback_models", _coerce_tuple(self.fallback_models))
         object.__setattr__(
             self,
@@ -81,6 +130,28 @@ class LlmSettings:
     @property
     def layout_parsing_url(self) -> str:
         return f"{self.base_url.rstrip('/')}{self.layout_parsing_path}"
+
+    def role_model(self, role: _ModelRole) -> str:
+        """Return the model id of one role: ``large``, ``small`` or ``multimodal``."""
+        models = {
+            "large": self.large_model,
+            "small": self.small_model,
+            "multimodal": self.multimodal_model,
+        }
+        if role not in models:
+            raise ValueError(f"unknown model role: {role!r}")
+        return models[role]
+
+    def role_reasoning_effort(self, role: _ModelRole) -> str:
+        """Return the reasoning effort of one role: ``large``, ``small`` or ``multimodal``."""
+        efforts = {
+            "large": self.large_reasoning_effort,
+            "small": self.small_reasoning_effort,
+            "multimodal": self.multimodal_reasoning_effort,
+        }
+        if role not in efforts:
+            raise ValueError(f"unknown model role: {role!r}")
+        return efforts[role]
 
     def model_chain(self, *, vision: bool = False) -> tuple[str, ...]:
         if vision:
