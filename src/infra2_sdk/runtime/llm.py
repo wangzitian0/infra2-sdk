@@ -4,8 +4,22 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
+
+ModelRole = Literal["large", "small", "multimodal"]
+
+
+class _RoleDefault:
+    """Marks a model slot that takes its value from a model role."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<role default>"
+
+
+_ROLE_DEFAULT: Any = _RoleDefault()
 
 
 def _coerce_tuple(value: Any) -> tuple[str, ...]:
@@ -18,14 +32,21 @@ def _coerce_tuple(value: Any) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class LlmSettings:
-    """Settings contract for large language model providers."""
+    """Settings contract for large language model providers.
+
+    The SDK owns the default models through three roles: a large text model, a
+    small text model and a multimodal model. The task slots derive from the
+    roles when they are not set: ``primary_model`` uses the small model, and
+    ``ocr_model`` and ``vision_model`` use the multimodal model. An explicit
+    slot value, ``None`` included, still wins.
+    """
 
     provider: str = "zai"
     base_url: str = "https://api.z.ai/api/coding/paas/v4"
     api_key: str | None = field(default=None, repr=False)
-    primary_model: str = "glm-5.3-flash"
-    ocr_model: str | None = "glm-5.3-flashx"
-    vision_model: str | None = "glm-5.3-flashx"
+    primary_model: str = _ROLE_DEFAULT
+    ocr_model: str | None = _ROLE_DEFAULT
+    vision_model: str | None = _ROLE_DEFAULT
     fallback_models: tuple[str, ...] = ()
     vision_fallback_models: tuple[str, ...] = ()
     chat_completions_path: str = "/chat/completions"
@@ -36,8 +57,22 @@ class LlmSettings:
     json_seed: int | None = None
     extract_max_attempts: int = 2
     encryption_keys: tuple[str, ...] = field(default=(), repr=False)
+    # The model roles come last, so positional construction of the fields above
+    # keeps its meaning.
+    large_model: str = "glm-5.3"
+    small_model: str = "glm-5.3-flash"
+    multimodal_model: str = "glm-5.3-flashx"
 
     def __post_init__(self) -> None:
+        for role_field in ("large_model", "small_model", "multimodal_model"):
+            if not str(getattr(self, role_field)).strip():
+                raise ValueError(f"{role_field} must be non-empty")
+        if self.primary_model is _ROLE_DEFAULT:
+            object.__setattr__(self, "primary_model", self.small_model)
+        if self.ocr_model is _ROLE_DEFAULT:
+            object.__setattr__(self, "ocr_model", self.multimodal_model)
+        if self.vision_model is _ROLE_DEFAULT:
+            object.__setattr__(self, "vision_model", self.multimodal_model)
         object.__setattr__(self, "fallback_models", _coerce_tuple(self.fallback_models))
         object.__setattr__(
             self,
@@ -81,6 +116,17 @@ class LlmSettings:
     @property
     def layout_parsing_url(self) -> str:
         return f"{self.base_url.rstrip('/')}{self.layout_parsing_path}"
+
+    def role_model(self, role: ModelRole) -> str:
+        """Return the model id of one role: ``large``, ``small`` or ``multimodal``."""
+        models = {
+            "large": self.large_model,
+            "small": self.small_model,
+            "multimodal": self.multimodal_model,
+        }
+        if role not in models:
+            raise ValueError(f"unknown model role: {role!r}")
+        return models[role]
 
     def model_chain(self, *, vision: bool = False) -> tuple[str, ...]:
         if vision:

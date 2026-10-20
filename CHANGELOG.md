@@ -4,6 +4,16 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.11.0 - 2026-10-20
+
+### Added
+
+- Add three model roles to `infra2_sdk.runtime.llm.LlmSettings`: `large_model` (`glm-5.3`), `small_model` (`glm-5.3-flash`) and `multimodal_model` (`glm-5.3-flashx`), plus `LlmSettings.role_model(role)`. The SDK owns the default models through these roles ([#137](https://github.com/wangzitian0/infra2-sdk/issues/137)).
+
+### Changed
+
+- `primary_model` now defaults to `small_model`, and `ocr_model` and `vision_model` default to `multimodal_model`. The resolved defaults are unchanged (`glm-5.3-flash`, `glm-5.3-flashx`). An explicit value, `None` included, still wins. The new fields come last, so positional construction keeps its meaning ([#137](https://github.com/wangzitian0/infra2-sdk/issues/137)).
+
 ## 3.10.0 - 2026-10-20
 
 ### Added

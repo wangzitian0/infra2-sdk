@@ -101,3 +101,43 @@ def test_llm_settings_model_chain_deduplication() -> None:
         vision_fallback_models=("vfb-1", "primary-1"),
     )
     assert settings_no_vision.model_chain(vision=True) == ("primary-1", "vfb-1")
+
+
+def test_llm_settings_model_roles_and_derived_slots() -> None:
+    settings = LlmSettings()
+    assert settings.role_model("large") == settings.large_model == "glm-5.3"
+    assert settings.role_model("small") == settings.small_model == "glm-5.3-flash"
+    assert settings.role_model("multimodal") == settings.multimodal_model == "glm-5.3-flashx"
+    assert settings.primary_model == settings.small_model
+    assert settings.ocr_model == settings.multimodal_model
+    assert settings.vision_model == settings.multimodal_model
+
+
+def test_llm_settings_slots_follow_a_changed_role() -> None:
+    settings = LlmSettings(small_model="small-x", multimodal_model="vision-x")
+    assert settings.primary_model == "small-x"
+    assert settings.ocr_model == "vision-x"
+    assert settings.vision_model == "vision-x"
+    assert settings.model_chain() == ("small-x",)
+    assert settings.model_chain(vision=True) == ("vision-x",)
+
+
+def test_llm_settings_explicit_slots_win_over_roles() -> None:
+    settings = LlmSettings(primary_model="custom", vision_model=None, ocr_model="ocr-x")
+    assert settings.primary_model == "custom"
+    assert settings.vision_model is None
+    assert settings.ocr_model == "ocr-x"
+    assert settings.model_chain(vision=True) == ("custom",)
+
+
+def test_llm_settings_rejects_an_unknown_role_and_an_empty_role() -> None:
+    with pytest.raises(ValueError, match="unknown model role"):
+        LlmSettings().role_model("medium")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="large_model must be non-empty"):
+        LlmSettings(large_model=" ")
+
+
+def test_llm_settings_positional_order_is_unchanged() -> None:
+    settings = LlmSettings("zai", "https://api.z.ai/api/coding/paas/v4", None, "positional-primary")
+    assert settings.primary_model == "positional-primary"
+    assert settings.small_model == "glm-5.3-flash"
