@@ -34,11 +34,12 @@ def _coerce_tuple(value: Any) -> tuple[str, ...]:
 class LlmSettings:
     """Settings contract for large language model providers.
 
-    The SDK owns the default models through three roles: a large text model, a
-    small text model and a multimodal model. The task slots derive from the
-    roles when they are not set: ``primary_model`` uses the small model, and
-    ``ocr_model`` and ``vision_model`` use the multimodal model. An explicit
-    slot value, ``None`` included, still wins.
+    The SDK owns the default models through three roles. Each role is a model and
+    a reasoning effort: ``large`` and ``small`` both use glm-5.3-flash, with high
+    and low reasoning, and ``multimodal`` uses glm-5.3-flashx. The task slots
+    derive from the roles when they are not set: ``primary_model`` uses the small
+    model, and ``ocr_model`` and ``vision_model`` use the multimodal model. An
+    explicit slot value, ``None`` included, still wins.
     """
 
     provider: str = "zai"
@@ -59,12 +60,22 @@ class LlmSettings:
     encryption_keys: tuple[str, ...] = field(default=(), repr=False)
     # The model roles come last, so positional construction of the fields above
     # keeps its meaning.
-    large_model: str = "glm-5.3"
+    large_model: str = "glm-5.3-flash"
     small_model: str = "glm-5.3-flash"
     multimodal_model: str = "glm-5.3-flashx"
+    large_reasoning_effort: str = "high"
+    small_reasoning_effort: str = "low"
+    multimodal_reasoning_effort: str = "low"
 
     def __post_init__(self) -> None:
-        for role_field in ("large_model", "small_model", "multimodal_model"):
+        for role_field in (
+            "large_model",
+            "small_model",
+            "multimodal_model",
+            "large_reasoning_effort",
+            "small_reasoning_effort",
+            "multimodal_reasoning_effort",
+        ):
             if not str(getattr(self, role_field)).strip():
                 raise ValueError(f"{role_field} must be non-empty")
         if self.primary_model is _ROLE_DEFAULT:
@@ -127,6 +138,17 @@ class LlmSettings:
         if role not in models:
             raise ValueError(f"unknown model role: {role!r}")
         return models[role]
+
+    def role_reasoning_effort(self, role: ModelRole) -> str:
+        """Return the reasoning effort of one role: ``large``, ``small`` or ``multimodal``."""
+        efforts = {
+            "large": self.large_reasoning_effort,
+            "small": self.small_reasoning_effort,
+            "multimodal": self.multimodal_reasoning_effort,
+        }
+        if role not in efforts:
+            raise ValueError(f"unknown model role: {role!r}")
+        return efforts[role]
 
     def model_chain(self, *, vision: bool = False) -> tuple[str, ...]:
         if vision:

@@ -8,7 +8,7 @@ backfill from the merged pull requests.
 
 ### Added
 
-- Add three model roles to `infra2_sdk.runtime.llm.LlmSettings`: `large_model` (`glm-5.3`), `small_model` (`glm-5.3-flash`) and `multimodal_model` (`glm-5.3-flashx`), plus `LlmSettings.role_model(role)`. The SDK owns the default models through these roles ([#137](https://github.com/wangzitian0/infra2-sdk/issues/137)).
+- Add three model roles to `infra2_sdk.runtime.llm.LlmSettings`. Each role is a model and a reasoning effort: `large` (`glm-5.3-flash`, `high`), `small` (`glm-5.3-flash`, `low`) and `multimodal` (`glm-5.3-flashx`, `low`). New methods: `role_model(role)` and `role_reasoning_effort(role)`. The SDK owns the default models through these roles ([#137](https://github.com/wangzitian0/infra2-sdk/issues/137)).
 
 ### Changed
 

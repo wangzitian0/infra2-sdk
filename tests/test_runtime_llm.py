@@ -105,9 +105,12 @@ def test_llm_settings_model_chain_deduplication() -> None:
 
 def test_llm_settings_model_roles_and_derived_slots() -> None:
     settings = LlmSettings()
-    assert settings.role_model("large") == settings.large_model == "glm-5.3"
+    assert settings.role_model("large") == settings.large_model == "glm-5.3-flash"
     assert settings.role_model("small") == settings.small_model == "glm-5.3-flash"
     assert settings.role_model("multimodal") == settings.multimodal_model == "glm-5.3-flashx"
+    assert settings.role_reasoning_effort("large") == "high"
+    assert settings.role_reasoning_effort("small") == "low"
+    assert settings.role_reasoning_effort("multimodal") == "low"
     assert settings.primary_model == settings.small_model
     assert settings.ocr_model == settings.multimodal_model
     assert settings.vision_model == settings.multimodal_model
@@ -133,6 +136,10 @@ def test_llm_settings_explicit_slots_win_over_roles() -> None:
 def test_llm_settings_rejects_an_unknown_role_and_an_empty_role() -> None:
     with pytest.raises(ValueError, match="unknown model role"):
         LlmSettings().role_model("medium")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="unknown model role"):
+        LlmSettings().role_reasoning_effort("medium")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="large_reasoning_effort must be non-empty"):
+        LlmSettings(large_reasoning_effort="")
     with pytest.raises(ValueError, match="large_model must be non-empty"):
         LlmSettings(large_model=" ")
 
