@@ -60,14 +60,14 @@ class LlmSettings:
     json_seed: int | None = None
     extract_max_attempts: int = 2
     encryption_keys: tuple[str, ...] = field(default=(), repr=False)
-    # The model roles come last, so positional construction of the fields above
-    # keeps its meaning.
-    large_model: str = "glm-5.3-flash"
-    small_model: str = "glm-5.3-flash"
-    multimodal_model: str = "glm-5.3-flashx"
-    large_reasoning_effort: str = "high"
-    small_reasoning_effort: str = "low"
-    multimodal_reasoning_effort: str = "low"
+    # The model roles are keyword-only (README: new runtime dataclass fields), so
+    # positional construction of the fields above keeps its meaning.
+    large_model: str = field(default="glm-5.3-flash", kw_only=True)
+    small_model: str = field(default="glm-5.3-flash", kw_only=True)
+    multimodal_model: str = field(default="glm-5.3-flashx", kw_only=True)
+    large_reasoning_effort: str = field(default="high", kw_only=True)
+    small_reasoning_effort: str = field(default="low", kw_only=True)
+    multimodal_reasoning_effort: str = field(default="low", kw_only=True)
 
     def __post_init__(self) -> None:
         for role_field in (

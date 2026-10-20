@@ -202,3 +202,35 @@ def test_llm_settings_replace_does_not_rederive_slots() -> None:
     assert changed.small_model == "small-x"
     assert changed.primary_model == "glm-5.3-flash"
     assert LlmSettings(small_model="small-x").primary_model == "small-x"
+
+
+def test_llm_settings_each_role_maps_to_its_own_fields() -> None:
+    settings = LlmSettings(
+        large_model="model-large",
+        small_model="model-small",
+        multimodal_model="model-multimodal",
+        large_reasoning_effort="effort-large",
+        small_reasoning_effort="effort-small",
+        multimodal_reasoning_effort="effort-multimodal",
+    )
+    for role in ("large", "small", "multimodal"):
+        assert settings.role_model(role) == f"model-{role}"
+        assert settings.role_reasoning_effort(role) == f"effort-{role}"
+
+
+def test_llm_settings_role_fields_are_keyword_only() -> None:
+    role_fields = {
+        item.name: item.kw_only
+        for item in fields(LlmSettings)
+        if item.name.endswith(("_model", "_reasoning_effort"))
+        and item.name.split("_")[0] in {"large", "small", "multimodal"}
+    }
+    assert set(role_fields) == {
+        "large_model",
+        "small_model",
+        "multimodal_model",
+        "large_reasoning_effort",
+        "small_reasoning_effort",
+        "multimodal_reasoning_effort",
+    }
+    assert all(role_fields.values())
