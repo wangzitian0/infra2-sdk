@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import fields, replace
+
 import pytest
 
 from infra2_sdk.runtime.llm import LlmSettings
@@ -144,7 +146,59 @@ def test_llm_settings_rejects_an_unknown_role_and_an_empty_role() -> None:
         LlmSettings(large_model=" ")
 
 
+_FIELDS_BEFORE_ROLES = [
+    "provider",
+    "base_url",
+    "api_key",
+    "primary_model",
+    "ocr_model",
+    "vision_model",
+    "fallback_models",
+    "vision_fallback_models",
+    "chat_completions_path",
+    "layout_parsing_path",
+    "json_timeout_seconds",
+    "json_max_tokens",
+    "json_disable_thinking",
+    "json_seed",
+    "extract_max_attempts",
+    "encryption_keys",
+]
+
+
 def test_llm_settings_positional_order_is_unchanged() -> None:
+    names = [item.name for item in fields(LlmSettings)]
+    assert names[: len(_FIELDS_BEFORE_ROLES)] == _FIELDS_BEFORE_ROLES
     settings = LlmSettings("zai", "https://api.z.ai/api/coding/paas/v4", None, "positional-primary")
     assert settings.primary_model == "positional-primary"
     assert settings.small_model == "glm-5.3-flash"
+
+
+@pytest.mark.parametrize(
+    "role_field",
+    [
+        "large_model",
+        "small_model",
+        "multimodal_model",
+        "large_reasoning_effort",
+        "small_reasoning_effort",
+        "multimodal_reasoning_effort",
+    ],
+)
+@pytest.mark.parametrize("bad_value", ["", "  ", None])
+def test_llm_settings_rejects_an_empty_or_missing_role_value(
+    role_field: str, bad_value: object
+) -> None:
+    with pytest.raises(ValueError, match=f"{role_field} must be non-empty"):
+        LlmSettings(**{role_field: bad_value})
+
+
+def test_llm_settings_explicit_none_ocr_model_is_kept() -> None:
+    assert LlmSettings(ocr_model=None).ocr_model is None
+
+
+def test_llm_settings_replace_does_not_rederive_slots() -> None:
+    changed = replace(LlmSettings(), small_model="small-x")
+    assert changed.small_model == "small-x"
+    assert changed.primary_model == "glm-5.3-flash"
+    assert LlmSettings(small_model="small-x").primary_model == "small-x"

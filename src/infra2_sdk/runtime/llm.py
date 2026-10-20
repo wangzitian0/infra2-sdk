@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-ModelRole = Literal["large", "small", "multimodal"]
+_ModelRole = Literal["large", "small", "multimodal"]
 
 
 class _RoleDefault:
@@ -39,7 +39,9 @@ class LlmSettings:
     and low reasoning, and ``multimodal`` uses glm-5.3-flashx. The task slots
     derive from the roles when they are not set: ``primary_model`` uses the small
     model, and ``ocr_model`` and ``vision_model`` use the multimodal model. An
-    explicit slot value, ``None`` included, still wins.
+    explicit slot value, ``None`` included, still wins. ``dataclasses.replace``
+    passes the resolved slots back in, so it does not re-derive them from a
+    changed role; construct a new instance to re-derive.
     """
 
     provider: str = "zai"
@@ -76,7 +78,8 @@ class LlmSettings:
             "small_reasoning_effort",
             "multimodal_reasoning_effort",
         ):
-            if not str(getattr(self, role_field)).strip():
+            value = getattr(self, role_field)
+            if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{role_field} must be non-empty")
         if self.primary_model is _ROLE_DEFAULT:
             object.__setattr__(self, "primary_model", self.small_model)
@@ -128,7 +131,7 @@ class LlmSettings:
     def layout_parsing_url(self) -> str:
         return f"{self.base_url.rstrip('/')}{self.layout_parsing_path}"
 
-    def role_model(self, role: ModelRole) -> str:
+    def role_model(self, role: _ModelRole) -> str:
         """Return the model id of one role: ``large``, ``small`` or ``multimodal``."""
         models = {
             "large": self.large_model,
@@ -139,7 +142,7 @@ class LlmSettings:
             raise ValueError(f"unknown model role: {role!r}")
         return models[role]
 
-    def role_reasoning_effort(self, role: ModelRole) -> str:
+    def role_reasoning_effort(self, role: _ModelRole) -> str:
         """Return the reasoning effort of one role: ``large``, ``small`` or ``multimodal``."""
         efforts = {
             "large": self.large_reasoning_effort,
