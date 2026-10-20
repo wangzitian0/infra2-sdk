@@ -4,6 +4,12 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.11.1 - 2026-10-20
+
+### Fixed
+
+- The six `LlmSettings` role fields are keyword-only, as the README requires for new runtime dataclass fields. Tests now assert each role with distinct values ([#139](https://github.com/wangzitian0/infra2-sdk/issues/139)).
+
 ## 3.11.0 - 2026-10-20
 
 ### Added
