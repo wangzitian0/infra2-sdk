@@ -266,9 +266,9 @@ def test_validate_schema_compatibility_allows_expand_first_extra_db_values() -> 
     assert all_diffs[0].is_compatible is True
 
     assert validate_schema_compatibility(code_enums, db_enums) == []
-    assert len(
-        validate_schema_compatibility(code_enums, db_enums, allow_extra_db_values=False)
-    ) == 1
+    assert (
+        len(validate_schema_compatibility(code_enums, db_enums, allow_extra_db_values=False)) == 1
+    )
 
 
 def test_delivery_module_has_zero_runtime_io_dependencies() -> None:
@@ -289,4 +289,3 @@ def test_delivery_module_has_zero_runtime_io_dependencies() -> None:
 
     forbidden = {"docker", "requests", "psycopg", "psycopg2", "httpx", "urllib", "socket"}
     assert imported_roots.isdisjoint(forbidden)
-

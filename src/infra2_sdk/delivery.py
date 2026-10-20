@@ -296,8 +296,7 @@ class SchemaDiscrepancy:
             "missing_in_db": list(self.missing_in_db),
             "missing_in_code": list(self.missing_in_code),
             "casing_mismatches": [
-                {"code": code_val, "db": db_val}
-                for code_val, db_val in self.casing_mismatches
+                {"code": code_val, "db": db_val} for code_val, db_val in self.casing_mismatches
             ],
             "is_compatible": self.is_compatible,
         }
@@ -366,4 +365,3 @@ def validate_schema_compatibility(
     if not allow_extra_db_values:
         return all_diffs
     return [diff for diff in all_diffs if not diff.is_compatible]
-
