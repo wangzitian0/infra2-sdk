@@ -34,9 +34,7 @@ To execute 1 Swarm, the orchestrator invokes `subagent_batch` with M tasks:
 4. Reduce outputs: Full output persists to `~/.local/state/subagent-worker/runs/<call_id>.md`; inline return folds multi-line `PASS` tasks and expands `FAIL`, `PARTIAL`, or `FAILED` tasks into `SwarmResult`.
 5. Return `SwarmResult` to the calling skill for the next state transition.
 
-## Lean execution discipline
+## Execution discipline
 
-- **Targeted verification only**: Run focused tests on changed targets only (`pytest <file>::<test> -x`).
-- **Never run full test suites** during review or confrontation rounds.
 - **Physical exit codes required**: Cite actual commands and exit codes. A score or claim without a physical command is invalid.
 - **Call deadline**: A call ends within 110 s (145 s when a task uses max reasoning). A batch for a model that runs fewer than 50 requests at once gets that time once per wave, up to 600 s. All SHZP rounds of one task share the deadline. A task cut by the deadline is FAILED (no text) or PARTIAL (text so far). A provider filter or a provider fault inside the answer is PARTIAL too. The first output line gives the counts. Worker log: `~/.local/state/subagent-worker/worker.log`.

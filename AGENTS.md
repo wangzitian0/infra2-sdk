@@ -1,11 +1,11 @@
-<!-- WS_STATIC_START adapter=rules-v2 inputs=1f452bc71a96ce48db680bd361cdbf6c9a2577d1ba14791eda4eec92a3e331bb -->
+<!-- WS_STATIC_START adapter=rules-v2 inputs=663efb6c9418af1e581bd9c357601689c1e3341c81da0f6b3e9a5014aad0be31 -->
 <!-- Generated file: do not edit by hand. These rules are maintained in the owner's rule source and re-rendered here. -->
 
 ## Engineering discipline
 
-- **Measure the physical system first.** Before an abstract architecture proposal, inspect the system with read-only probes such as `time cmd`, process chains, and file-descriptor locks. A conceptually neat story without physical evidence is insufficient. A probe must not write. Do not combine validation and action in one command: a POST permission probe can create a resource, and a trial commit can leave a real commit. Measure, read the result, then decide, with a stop point between these steps.
+- **Measure the physical system first.** Inspect the system with read-only probes (`time cmd`, process chains, file locks) before proposing architecture. Never combine validation and mutation in one command. Measure, read the result, then decide.
 - **Green does not prove truth.** The tested system writes its own unit tests, CI, and issue states. Cross-check critical conclusions against two external sources not written by this repository.
-- **Tests must be falsifiable.** Do not hide assertions in `if (exists)` or `if (code != 0)` so failures run zero assertions. Do not accept tautologies such as `typeof null === 'object'` or `result !== undefined || true`. Source-text `indexOf` matches against prose are not integration tests. Duplicate test function identifiers can silently shadow earlier tests (Python `def` and duplicate JS function/const/export names); duplicate string titles in `test()` or `it()` instead run both. A green count is not coverage evidence. Make a new test fail under a relevant mutation. A read-only reviewer treats such fake-test patterns as CRITICAL merge blockers.
+- **Tests must be falsifiable.** Never hide assertions inside `if` branches or accept tautologies. Source-text `indexOf` matches against prose are not integration tests. Avoid duplicate test function names that shadow earlier tests. Make every new test fail under a relevant mutation; fake tests are CRITICAL merge blockers.
 - **Falsifiable documentation and assertions:** State test requirements, error messages, and specifications in concrete ASD-STE100 terms without vague qualifiers.
 - **One source of truth:** Keep one authoritative definition per core fact. Repeated hardcoding and scattered configuration invite drift.
 - **Clean up during migration:** After the new mechanism is live and equivalence is proved, remove its predecessor, obsolete files, and dead code in the same change. Define contracts first and derive CI from them.
@@ -15,18 +15,18 @@
 - **Physical context verification:** Static file existence does not prove host runtime context injection. Junior runs non-interactive probes (`-p` or headless exec) with low-cost models, asserting visible specification text across root and deep subdirectories.
 - **Host verification scope:** Official host CLIs are the primary execution environment. Regular testing covers Antigravity 2.0 project workspaces (`.agents/skills/` and project rules); standalone desktop chat apps without directory awareness are excluded.
 - **Local and remote test segregation:** Inner-loop verification (Senior, Junior, Intern) runs only focused tests on changed files (`pytest <file>::<test> -x`). Full-suite regression runs on remote CI, or locally at most once before merge.
-- **Bounded file reads:** Pass `StartLine` and `EndLine` (`<= 120` lines per call) when reading existing files with `view_file`.
+- **Bounded file reads:** Pass `StartLine` and `EndLine` (`<= 250` lines per call) when reading existing files with `read_file` or `view_file`.
 
 ## Delivery and merge
 
-- **ASD-STE100 specification for all artifacts:** Write all committed artifacts, rule definitions, source code, inline comments, commit messages, and documentation in English using the ASD-STE100 (Simplified Technical English) specification. Keep sentences short: maximum 20 words for instructions and maximum 25 words for descriptions. Use the active voice. Use approved technical words with one meaning per word. Express one topic per sentence. Do not use ambiguous qualifiers (such as "properly", "efficiently", or "seamlessly"). Operational skills and engineering playbooks (`skills/**/SKILL.md`) that contain interactive procedures follow the target repository or author team's language policy.
+- **ASD-STE100 specification for all artifacts:** Write committed artifacts, rules, code, comments, commits, and docs in ASD-STE100 English. Keep instructions `<= 20` words and descriptions `<= 25` words in active voice without vague qualifiers. Operational skills (`skills/**/SKILL.md`) follow the target repository's language policy.
 - **Deliverable format:** Deliver a mergeable PR or a traceable issue, rather than a process-only report. Use issues and PRs as the collaboration bus. Search for an existing similar issue before creating one; update it if it exists.
 - **Fail fast left to right:** Put the cheapest and likeliest failure checks first.
-- **Review standing authorization:** Resolve a review thread directly after independently verifying it is fixed or obsolete. Do not resolve actionable, ambiguous, or unverified feedback. Automated reviewers may read a redacted GitHub diff rather than source: GitHub can show `"Authorization": f"Bearer ******"` where source has `"Authorization": f"Bearer {token}"`. Check source before judging a report. When a report is false, turn the concern into a falsifiable invariant test rather than merely dismissing it.
+- **Review standing authorization:** Resolve a review thread after verifying in source code (not redacted diffs) that it is fixed or obsolete. Never resolve actionable or unverified feedback. Turn false reports into falsifiable invariant tests.
 - **Weighted review gates:** Each repository defines its own severity weights and blocking thresholds. Read literal `severity: <level>` tags; do not infer severity from prose.
 - **Merge when ready:** Once all merge conditions pass, merge and continue from the latest main rather than piling up divergent branches.
-- **Delivery state invariant:** Never declare complete, done, or finished while a PR is unmerged or uncommitted. Never declare complete when Stage 1 (Merge to main) has landed without a verified Business Reality Probe. Code landing on main is strictly 'Code Landed'. If a PR is open, report state strictly as 'In review' with the PR URL. If uncommitted or local only, report 'Draft' or 'Local verified'. If merged without a reality probe, report 'Stage 1 Landed'.
-- **Anti-exclusion and reality invariant:** Exclusion is not resolution. Marking failing entities as excluded, adding expiring exemptions, or filtering out edge cases to manufacture green checks is a defect. A task is complete only when a physical reality probe confirms non-empty real-world execution.
+- **Delivery state invariant:** Never declare complete, done, or finished before merge to main and a verified Business Reality Probe (`ws-delivery-status`). State labels are `'Draft'`, `'Local verified'`, `'In review'`, `'Stage 1 Landed'`, and `'VERIFIED_COMPLETE'`.
+- **Anti-exclusion and reality invariant:** Exclusion is not resolution. Never exclude failing entities or add exemptions to manufacture green checks. A task is complete only when a physical reality probe confirms non-empty execution.
 - **Three-stage deployment prerequisite:** Stage 1 (Merge to main) is a non-bypassable physical prerequisite for Stage 2 and Stage 3. If HEAD is not on main, fail closed and refuse any deployment request.
 - **Deploy provenance invariant:** Before dispatching any deploy workflow, physically verify that the target ref or tag contains current branch commits (`git merge-base --is-ancestor HEAD <target>`). Never deploy an older tag as completion evidence for current work.
 
@@ -40,16 +40,32 @@ The single definition of the production reservation. Other tiers, skills and gat
 - **Everything else is the agent's:** in a repository that the owner owns, every merge, staging and canary deploy, and release tag. Also rule text, skills, gate code, data and tests, required-check workflows and release code. Before you merge gate or release code, a read-only reviewer that did not write it checks the head. The review states whether the gate gets stricter, stays equal or gets looser. A looser edit in the self-guard list follows the self-guard.
 - **Every other hold is a defect:** a rule, skill, label or gate exit code that holds non-production work for the owner. Do the work, then fix the hold. The dev_env check `ws_owner_scope` fails on it.
 
-# Infra2 SDK Rules
+# Infra2 SDK AI Agent Rules
 
-> **Authority boundary:** An AI agent changes this file through its dev_env source. Standing merge authority applies once all gate checks pass. Production reservation applies to package publication.
+> **Authority boundary:** An AI agent changes this file through its dev_env source and the dev_env rule-text checklist. Standing merge authority applies when every CI check and review gate passes. **Production reservation:** publishing a release tag (`vX.Y.Z` on `.github/workflows/release.yml`, `environment: production`) is a production release and follows the Root section `Production reservation`.
 
 ## SDK role and contract boundaries
 
-The `infra2-sdk` repository provides the single public code contract between `infra2` and external applications (`finance_report`, `truealpha`).
+The `infra2-sdk` repository owns the public code contract between `infra2` and downstream applications (`finance_report`, `truealpha`).
 
-1. **Sole contract carrier:** Stable cross-repository code contracts travel exclusively through published `infra2-sdk` SemVer releases. Applications must not use relative imports into sibling checkouts.
-2. **Backward compatibility:** Do not make unversioned breaking changes to exported interfaces. Changes to exported APIs must increment SemVer appropriately and verify downstream consumer compatibility.
-3. **Downstream verification:** Before merging changes to SDK interfaces, verify that downstream consumers build and pass tests against the updated contract.
-4. **Self-containment:** The SDK must maintain zero runtime dependencies on private harness internals or specific host environments.
+1. **Contract and open-protocol adapter boundary (P1):** Own pure data contracts, offline validators, and explicitly invoked open-protocol adapters (`boto3`, `psycopg`, `httpx`, `opentelemetry`). Never add import-time I/O, network calls, or global provider configuration (`tests/test_exports.py`). Applications must run and pass CI with plain environment variables and zero `infra2` runtime dependency.
+2. **One source per fact and Manifest v2 supply chain (P2):** Every environment field declares one `source` class (`bootstrap`, `human`, `runtime`, `release`, `decision`, `code`). Cross-repository generic libraries (`capacity`, `ci`, `delivery`, `deploy`, `fastapi`, `manifests`, `observability`, `refs`, `routing`, `rules`, `runtime`, `scaffold`, `secrets`, `transport`) live here so applications do not duplicate infrastructure logic. `LlmSettings` in `src/infra2_sdk/runtime/llm.py` owns default `large`, `small`, and `multimodal` model chains.
+3. **100% consumer-reachable public surface (P3):** Every public symbol must have at least one production caller across `infra2`, `finance_report`, or `truealpha`, or an explicit standalone entry in `tests/surface.json`. Package public attributes must equal `__all__` (`tests/test_exports.py`). Prefix internal helpers with `_`.
+4. **Locked environment reads and bidirectional guards (P4):** `tests/test_source_environment_reads.py` locks every environment variable read in `src/infra2_sdk/` to `RuntimeEnvKey` plus `FIXED_READS`. Do not read legacy aliases (`ENV`, `APP_ENV`, `IMAGE_TAG`, `SERVICE_NAME`) directly at call sites; resolve aliases only in `src/infra2_sdk/runtime/environment.py`. Keep `README.md` examples and module tables executable under `tests/test_readme_claims.py` and `tests/test_release_hygiene.py`.
+5. **Pragmatic compatibility and release hygiene (P5):** Add new runtime dataclass fields as `kw_only=True`. Do not add compatibility shims for symbols with zero callers in the cross-repository usage census (`sdk_usage_census`). Any PR that modifies `src/infra2_sdk/` must update `pyproject.toml`, `CHANGELOG.md`, and `README.md` install pins in the same PR (`tests/test_release_hygiene.py`).
+
+## Merge gate and release lifecycle
+
+- Weight unresolved review findings by literal `severity: <level>` label: high=1.0, middle=0.5, low=0.25, unlabeled=middle. A total of 1.0 or more blocks merge.
+- Required CI jobs in `.github/workflows/ci.yml` (`test` across Python 3.11–3.13, `package`, and `extras-smoke` across `core`, `s3`, `postgres`, `http`, `otel`, `fastapi`, `all`) must pass on the current `head SHA`.
+- Merging to `main` is Stage 1 (Code Landed). Pushing a `vX.Y.Z` tag triggers `.github/workflows/release.yml` under `environment: production` and requires a live production release approval from the owner per Root section `Production reservation`.
+
+## Load on demand
+
+| Task | Read |
+|---|---|
+| Read architectural charter and evolution principles (P1–P5) | [`init.md`](init.md) |
+| Check module table, runtime extras, and usage examples | [`README.md`](README.md) |
+| Follow development, census, and release procedures | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
+| Verify public surface and environment-read locks | `tests/surface.json`, `tests/test_exports.py`, `tests/test_source_environment_reads.py` |
 <!-- WS_STATIC_END -->

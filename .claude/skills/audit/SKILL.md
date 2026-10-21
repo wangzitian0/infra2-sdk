@@ -11,40 +11,26 @@ The Director MUST NOT stop or return a final report before completing all 3 Swar
 
 ## Phase 0: Touch Reality (run before any scout)
 
-1. **Label the delivery state.** Run `git status -s`, then `gh pr list --head <branch> --json number,state,mergedAt`.
-   The owner repeatedly found "done" claims for unmerged work.
-
-   | State | Label | Allowed words |
-   |---|---|---|
-   | PR merged | `(PR #N, merged)` | Final, Done |
-   | PR open | `(PR #N, pending merge)` | In review |
-   | Committed, no PR | `(committed, no PR)` | Local verified |
-   | Uncommitted | `(uncommitted)` | Draft |
+1. **Label the delivery state.** Run `ws-delivery-status` (see `z/SKILL.md` for the canonical state table). Never report `Done` or `Complete` before merge and a passing Business Reality Probe (`VERIFIED_COMPLETE`).
 
 2. **Touch two independent oracles** that this repository did not write: the vendor or upstream source,
    and the real runtime (database query, byte check with sha256, scheduler failure log, staging against production).
    Operate the real surface (the real TUI or the browser) when the claim is about user behavior.
 3. **Scan the three failure shapes.** Each passes lint, tests, and CI.
-   - WRONG FORMULA: one formula breaks a special case (a bank with negative profit per head).
+   - WRONG FORMULA: one formula breaks an edge case.
    - GREEN-WHILE-EMPTY: a filter removes all rows and the job reports success.
-   - STALE-REPORTED-AS-FRESH: ten-year-old data carries `fresh`.
+   - STALE-REPORTED-AS-FRESH: stale data carries a fresh label.
 4. **Implausible output is evidence.** Explain it before you propose anything else.
-5. **A score must come from executed checks.** The owner asked how a score could be right if the audit only read documents.
-   Run the command, record the exit code, and cite it. A score without a command is not reported.
+5. **A score must come from executed checks.** Run the command, record the exit code, and cite it. A score without a command is not reported.
 6. **Disclose.** Name the inputs you did not verify, the sample size, the data age, and the oracles you did not use.
    Ask "Sufficient?" (could an unverified input overturn the conclusion?) and "MECE?" (overlap or orphan?). A troubling answer is a finding.
 
 ## Four gates
 
-Each gate came from a measured failure.
-
-1. **The auditor must read code.** Use a read-only native agent, or pass target files via `context_files` (with diffs and contracts) to `subagent_batch` workers so the worker injects code from disk without prompt duplication. Never ask an auditor to judge code that the auditor cannot see. Six of eight false findings came from agents without code access.
+1. **The auditor must read code.** Use a read-only native agent, or pass target files via `context_files` (with diffs and contracts) to `subagent_batch` workers so the worker injects code from disk without prompt duplication. Never ask an auditor to judge code that the auditor cannot see.
 2. **See each new test fail first.** Run only the target test case on unfixed code and confirm RED (`pytest <file>::<test> -x`).
-   Never run full suites during Gate 2. This caught a fake `assertIn(role, text)` assertion that prose satisfied.
 3. **Re-review every fix independently.** The reviewer gets only the new code, not the defect story.
    For a security fix, ask for "the second chain from the same entry".
-   On 2026-09-22 removing `eval` moved the value into an existing `python -c` string concatenation,
-   and a regex guard missed the `git -C <dir>` prefix. One round found 3 HIGH in the Director's own fix.
 4. **Screening output carries anchors.** Each fact cites `file#Lxx-Lyy` or a note id.
    The Director reads 1 to 2 anchors before a decision. Lossy small-model summaries hide facts.
 
