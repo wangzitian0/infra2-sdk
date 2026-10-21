@@ -35,8 +35,9 @@ class LlmSettings:
     """Settings contract for large language model providers.
 
     The SDK owns the default models through three roles. Each role is a model and
-    a reasoning effort: ``large`` and ``small`` both use glm-5.3-flash, with high
-    and low reasoning, and ``multimodal`` uses glm-5.3-flashx. The task slots
+    a reasoning effort: ``large``, ``small`` and ``multimodal`` all use glm-5.3-flash,
+    with high, low and low reasoning. glm-5.3-flash takes image, video and file
+    input and is on the GLM Coding Plan; glm-5.3-flashx is not on the plan. The task slots
     derive from the roles when they are not set: ``primary_model`` uses the small
     model, and ``ocr_model`` and ``vision_model`` use the multimodal model. An
     explicit slot value, ``None`` included, still wins. ``dataclasses.replace``
@@ -64,7 +65,7 @@ class LlmSettings:
     # positional construction of the fields above keeps its meaning.
     large_model: str = field(default="glm-5.3-flash", kw_only=True)
     small_model: str = field(default="glm-5.3-flash", kw_only=True)
-    multimodal_model: str = field(default="glm-5.3-flashx", kw_only=True)
+    multimodal_model: str = field(default="glm-5.3-flash", kw_only=True)
     large_reasoning_effort: str = field(default="high", kw_only=True)
     small_reasoning_effort: str = field(default="low", kw_only=True)
     multimodal_reasoning_effort: str = field(default="low", kw_only=True)

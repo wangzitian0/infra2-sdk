@@ -4,6 +4,16 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.12.0 - 2026-10-21
+
+### Changed
+
+- `LlmSettings.multimodal_model` now defaults to `glm-5.3-flash`, not `glm-5.3-flashx`, and so do `ocr_model` and `vision_model`, which follow it. The reasoning effort stays `low`. glm-5.3-flash takes image, video and file input and is on every GLM Coding Plan. glm-5.3-flashx is not on the plan: a plan key gets Z.ai code 1311 (HTTP 429) on each call ([docs](https://docs.z.ai/guides/vlm/glm-5.3-flash.md)). Usage census: infra2 and truealpha do not use `glm-5.3-flashx`; finance_report asserted the old default in one test, now derived from `LlmSettings()` (finance_report#2604). The release also carries 3.11.1, which was not published ([#144](https://github.com/wangzitian0/infra2-sdk/issues/144)).
+
+### Added
+
+- A test that every default model is in the Coding Plan model set.
+
 ## 3.11.1 - 2026-10-20
 
 ### Fixed

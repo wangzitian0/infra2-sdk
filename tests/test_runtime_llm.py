@@ -15,8 +15,8 @@ def test_llm_settings_defaults() -> None:
     assert settings.base_url == "https://api.z.ai/api/coding/paas/v4"
     assert settings.api_key is None
     assert settings.primary_model == "glm-5.3-flash"
-    assert settings.ocr_model == "glm-5.3-flashx"
-    assert settings.vision_model == "glm-5.3-flashx"
+    assert settings.ocr_model == "glm-5.3-flash"
+    assert settings.vision_model == "glm-5.3-flash"
     assert settings.fallback_models == ()
     assert settings.vision_fallback_models == ()
     assert settings.chat_completions_path == "/chat/completions"
@@ -109,7 +109,7 @@ def test_llm_settings_model_roles_and_derived_slots() -> None:
     settings = LlmSettings()
     assert settings.role_model("large") == settings.large_model == "glm-5.3-flash"
     assert settings.role_model("small") == settings.small_model == "glm-5.3-flash"
-    assert settings.role_model("multimodal") == settings.multimodal_model == "glm-5.3-flashx"
+    assert settings.role_model("multimodal") == settings.multimodal_model == "glm-5.3-flash"
     assert settings.role_reasoning_effort("large") == "high"
     assert settings.role_reasoning_effort("small") == "low"
     assert settings.role_reasoning_effort("multimodal") == "low"
@@ -234,3 +234,26 @@ def test_llm_settings_role_fields_are_keyword_only() -> None:
         "multimodal_reasoning_effort",
     }
     assert all(role_fields.values())
+
+
+# The models that every GLM Coding Plan serves (https://docs.z.ai/devpack/faq: "All plans
+# support GLM-5.3, GLM-5.3-Flash"). glm-5.3-flashx is not on the plan: a plan key gets
+# Z.ai code 1311 (HTTP 429) on every call (finance_report#2580).
+CODING_PLAN_MODELS = {"glm-5.3", "glm-5.3-flash"}
+
+
+def test_every_default_model_is_served_by_the_coding_plan():
+    settings = LlmSettings()
+    defaults = {
+        settings.primary_model,
+        settings.ocr_model,
+        settings.vision_model,
+        settings.large_model,
+        settings.small_model,
+        settings.multimodal_model,
+        *settings.fallback_models,
+        *settings.vision_fallback_models,
+    }
+    defaults.discard(None)
+    assert defaults, "the guard must see the default models"
+    assert defaults <= CODING_PLAN_MODELS, sorted(defaults - CODING_PLAN_MODELS)
