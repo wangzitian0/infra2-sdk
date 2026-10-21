@@ -10,7 +10,7 @@ description: In a repository with a CodeGraph index, use the code graph before g
 Check for a `.codegraph/` directory at the repository root.
 
 - Present: use this skill before grep or find.
-- Absent: use normal search. Never build an index on your own. Indexing is the owner's decision.
+- Absent: use normal search. A full index build is the agent's decision: build one only when the task needs many symbol lookups, and keep `.codegraph/` out of commits.
 
 ## Commands
 
@@ -19,7 +19,7 @@ codegraph explore "<symbol names or a question>"   # verbatim source of the rele
 codegraph node <symbol-or-file-path>                # one symbol's full source and its callers, or a whole file with line numbers
 ```
 
-Examples: `codegraph explore "ServiceRegistry"`, `codegraph node libs/core/registry.py`.
+Examples: `codegraph explore "ServiceRegistry"`, `codegraph node common/core/registry.py`.
 
 ## Rules
 
