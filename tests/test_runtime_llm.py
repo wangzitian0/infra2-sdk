@@ -242,7 +242,7 @@ def test_llm_settings_role_fields_are_keyword_only() -> None:
 CODING_PLAN_MODELS = {"glm-5.3", "glm-5.3-flash"}
 
 
-def test_every_default_model_is_served_by_the_coding_plan():
+def test_every_default_model_is_served_by_the_coding_plan() -> None:
     settings = LlmSettings()
     defaults = {
         settings.primary_model,
