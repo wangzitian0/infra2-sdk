@@ -46,7 +46,7 @@ Clean baseline on `main` reports `CODE_LANDED_STAGE1` for prior tasks. Do not pr
 1. Formulate a read-only, non-mutating Business Reality Probe `<CMD>` verifying live behavior.
    Prohibit bare `echo`/`printf`, trivial prints, mutating commands, and active exemptions.
 2. Execute gate: `ws-delivery-status --assert-complete --reality-probe "<CMD>"`.
-3. If exit code is 0 (`VERIFIED_COMPLETE`), proceed to Branch E; if exit code is 2, fix and re-probe.
+3. If `ws-delivery-status` exits 0 (`VERIFIED_COMPLETE`), proceed to Branch E. If it exits 3, fix the probe and re-run it.
 
 ### Branch E: `VERIFIED_COMPLETE` (Physical proof achieved)
 1. Invoke `close` to record evidence and clean up.
