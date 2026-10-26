@@ -39,7 +39,7 @@ Across 142+ issues and 33 releases (`v0.1.0` through `v3.11.1`), consumer requir
 ### P4 — Mechanism over Prose: AST Locks and Bidirectional Documentation Guards (`#18`, `#70`, `#102`)
 
 - `tests/test_source_environment_reads.py` parses the AST of every file under `src/infra2_sdk/` without importing the modules. It restricts environment variable reads to `RuntimeEnvKey` (9 keys) plus `FIXED_READS` (10 keys). Direct reads of legacy aliases (`ENV`, `APP_ENV`, `IMAGE_TAG`, `SERVICE_NAME`) are forbidden outside `resolve_runtime_env` (`#102`).
-- `tests/test_release_hygiene.py` and `.github/workflows/ci.yml` verify release identity on every change under `src/infra2_sdk/`. A source change must increment the version in `pyproject.toml`, add a `CHANGELOG.md` entry, update `README.md` install pins, and target an unused `v<version>` git tag (`#18`, `#70`). Patch version bumps (`x.y.Z`) cannot add new public API symbols.
+- `tests/test_release_hygiene.py` verifies release identity: the newest `CHANGELOG.md` entry and the `README.md` install pins equal the version in `pyproject.toml` (`#18`, `#70`). `release.yml` publishes only a tag on `main` that equals that version. A change under `src/infra2_sdk/` does not need a release.
 - `tests/test_readme_claims.py` and `tests/test_release_hygiene.py` execute code blocks in `README.md` and verify that the `README.md` module table matches the public modules on disk 1:1.
 
 ### P5 — Pragmatic Compatibility and Zero Dead-Weight Shims (`#102`, `#117`, `#139`)
