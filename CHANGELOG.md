@@ -4,6 +4,14 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.13.0 - 2026-10-26
+
+### Added
+
+- `dispatch_and_wait` adds `sender_deadline` (ISO 8601 UTC) to the dispatch payload: the time when the sender stops waiting, `max_attempts * poll_interval` seconds after the dispatch. The wait now also stops at that time by the clock, so slow API calls cannot extend it (truealpha run 38344114882 waited 2178 s for a 1800 s budget). The field is transport data, not a `DeployRequest` field, so `validate_sender_request` and older receivers do not change ([infra2#1363](https://github.com/wangzitian0/infra2/issues/1363)).
+- `production_request_accept_until(created, sender_deadline)` gives the last time at which a receiver accepts a production request: the sender deadline minus `PRODUCTION_DEPLOY_BUDGET_SECONDS` (300 s), cut to 6 h after the receiver run was created. With no deadline, it is `PRODUCTION_REQUEST_MAX_AGE_SECONDS` (1440 s) after creation, as before. `parse_sender_deadline(payload)` reads the field.
+- `announce_approval_wait` reads `sender_deadline` from the dispatch that passes through it, and its notice gives the deadline from `production_request_accept_until`.
+
 ## 3.12.0 - 2026-10-21
 
 ### Changed

@@ -3,6 +3,7 @@ import io
 import json
 import zipfile
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from urllib.error import HTTPError, URLError
 
 import httpx
@@ -10,6 +11,7 @@ import pytest
 
 from infra2_sdk.deploy import (
     INFRA_REPOSITORY,
+    PRODUCTION_DEPLOY_BUDGET_SECONDS,
     PRODUCTION_REQUEST_MAX_AGE_SECONDS,
     DeployEvidence,
     DeployOperation,
@@ -27,7 +29,9 @@ from infra2_sdk.deploy import (
     default_http_get,
     dispatch_and_wait,
     github_api_client,
+    parse_sender_deadline,
     poll_until_healthy,
+    production_request_accept_until,
 )
 
 SHA = "a" * 40
@@ -725,15 +729,150 @@ def test_dispatch_and_wait_correlates_the_watermarked_run_and_verifies_logs() ->
         fetch_logs=lambda run_id: b'plan {"request_id": "finance-report-run-12345678"}',
         sleep=lambda _: None,
         max_attempts=3,
+        clock=lambda: DISPATCHED_AT,
     )
 
     assert result.run_id == 101
     assert result.url.endswith("/101")
     dispatch = next(call for call in calls if call[0] == "POST")
+    # 3 attempts of 5 s: the sender stops waiting 15 s after the dispatch (infra2#1363).
     assert dispatch[2] == {
         "event_type": "app-deploy-request",
-        "client_payload": req.to_dict(),
+        "client_payload": {**req.to_dict(), "sender_deadline": "2026-10-23T11:01:46Z"},
     }
+
+
+DISPATCHED_AT = datetime(2026, 10, 23, 11, 1, 31, tzinfo=UTC)
+
+
+def test_dispatch_states_the_sender_deadline_from_its_wait_budget() -> None:
+    req = _dispatch_request()
+    posted: list[object] = []
+    done = {
+        "id": 101,
+        "status": "completed",
+        "conclusion": "success",
+        "display_title": DISPATCH_TITLE,
+        "html_url": f"https://github.com/{INFRA_REPOSITORY}/actions/runs/101",
+    }
+    responses = iter([{"workflow_runs": [{"id": 100}]}, {"workflow_runs": [done]}])
+
+    def api(method: str, path: str, body: object = None) -> object:
+        if method == "POST":
+            posted.append(body)
+            return None
+        return next(responses)
+
+    dispatch_and_wait(
+        req,
+        api=api,
+        fetch_logs=lambda run_id: req.request_id.encode(),
+        sleep=lambda _: None,
+        poll_interval=5,
+        max_attempts=720,
+        clock=lambda: DISPATCHED_AT,
+    )
+    payload = posted[0]["client_payload"]  # type: ignore[index]
+    assert parse_sender_deadline(payload) == DISPATCHED_AT + timedelta(seconds=3600)
+    assert {k: v for k, v in payload.items() if k != "sender_deadline"} == req.to_dict()
+
+
+def test_dispatch_stops_polling_at_the_sender_deadline_by_the_clock() -> None:
+    """Slow API calls must not stretch the wait past the stated deadline (run 38344114882)."""
+    req = _dispatch_request()
+    waiting = {
+        "id": 101,
+        "status": "waiting",
+        "display_title": DISPATCH_TITLE,
+        "html_url": f"https://github.com/{INFRA_REPOSITORY}/actions/runs/101",
+    }
+    now = [DISPATCHED_AT]
+    gets: list[str] = []
+
+    def clock() -> datetime:
+        return now[0]
+
+    def api(method: str, path: str, body: object = None) -> object:
+        if method == "POST":
+            return None
+        gets.append(path)
+        # Each poll takes 10 s of API time on top of the 5 s sleep.
+        now[0] += timedelta(seconds=10)
+        return {"workflow_runs": [waiting] if len(gets) > 1 else [{"id": 100}]}
+
+    def sleep(seconds: float) -> None:
+        now[0] += timedelta(seconds=seconds)
+
+    with pytest.raises(RuntimeError, match="timed out waiting"):
+        dispatch_and_wait(
+            req,
+            api=api,
+            fetch_logs=lambda run_id: b"",
+            sleep=sleep,
+            poll_interval=5,
+            max_attempts=360,
+            clock=clock,
+        )
+    # 1800 s budget at 15 s per poll: about 120 polls, not 360.
+    assert len(gets) <= 1 + 121
+    assert now[0] - DISPATCHED_AT <= timedelta(seconds=1800 + 15 + 10)
+
+
+def test_parse_sender_deadline() -> None:
+    assert parse_sender_deadline({}) is None
+    assert parse_sender_deadline({"sender_deadline": "2026-10-23T12:01:31Z"}) == datetime(
+        2026, 10, 23, 12, 1, 31, tzinfo=UTC
+    )
+    assert parse_sender_deadline({"sender_deadline": "2026-10-23T20:01:31+08:00"}) == datetime(
+        2026, 10, 23, 12, 1, 31, tzinfo=UTC
+    )
+    for bad in ("2026-10-23T12:01:31", "tomorrow", "", 1700000000):
+        with pytest.raises(ValueError, match="sender_deadline"):
+            parse_sender_deadline({"sender_deadline": bad})
+
+
+RECEIVER_CREATED = datetime(2026, 10, 23, 11, 2, 13, tzinfo=UTC)
+APPROVAL_CHECK = datetime(2026, 10, 23, 11, 32, 10, tzinfo=UTC)
+
+
+def test_accept_until_keeps_the_fixed_limit_for_a_request_with_no_deadline() -> None:
+    assert production_request_accept_until(RECEIVER_CREATED, None) == RECEIVER_CREATED + timedelta(
+        seconds=PRODUCTION_REQUEST_MAX_AGE_SECONDS
+    )
+    # The v0.2.55 incident: an old sender, so the check at 11:32:10 is 1797 s late.
+    assert production_request_accept_until(RECEIVER_CREATED, None) < APPROVAL_CHECK
+
+
+def test_accept_until_follows_the_sender_deadline_minus_the_deploy_budget() -> None:
+    assert PRODUCTION_DEPLOY_BUDGET_SECONDS == 300
+    one_hour = DISPATCHED_AT + timedelta(seconds=3600)
+    assert production_request_accept_until(RECEIVER_CREATED, one_hour) == one_hour - timedelta(
+        seconds=300
+    )
+    # With a 3600 s sender wait, the v0.2.55 approval at 11:32:10 is accepted.
+    assert production_request_accept_until(RECEIVER_CREATED, one_hour) >= APPROVAL_CHECK
+    # With an 1800 s sender wait, it is refused: the sender would stop during the deploy.
+    half_hour = DISPATCHED_AT + timedelta(seconds=1800)
+    assert production_request_accept_until(RECEIVER_CREATED, half_hour) < APPROVAL_CHECK
+    # A short sender wait gives a stricter limit than the fixed one.
+    short = DISPATCHED_AT + timedelta(seconds=600)
+    fixed = production_request_accept_until(RECEIVER_CREATED, None)
+    assert production_request_accept_until(RECEIVER_CREATED, short) < fixed
+
+
+def test_accept_until_cuts_a_deadline_that_no_job_can_wait_for() -> None:
+    far = RECEIVER_CREATED + timedelta(days=2)
+    assert production_request_accept_until(RECEIVER_CREATED, far) == RECEIVER_CREATED + timedelta(
+        hours=6, seconds=-300
+    )
+
+
+def test_accept_until_needs_time_zones() -> None:
+    naive = datetime(2026, 10, 23, 11, 2, 13)
+    with pytest.raises(ValueError, match="time zone"):
+        production_request_accept_until(naive, None)
+    with pytest.raises(ValueError, match="time zone"):
+        production_request_accept_until(RECEIVER_CREATED, naive)
 
 
 def test_a_concurrent_dispatch_from_another_project_no_longer_blocks_correlation() -> None:
@@ -1263,3 +1402,82 @@ def test_validate_evidence_urls_rejects_a_foreign_repository_and_a_wrong_resourc
     )
     with pytest.raises(ValueError, match="source_run_url"):
         validate_evidence_urls(wrong_resource)
+
+
+SENDER_DEADLINE = "2026-10-23T12:01:31Z"
+
+
+def test_the_approval_notice_uses_the_sender_deadline_of_the_dispatch() -> None:
+    from infra2_sdk.deploy import announce_approval_wait
+
+    waiting = {
+        "workflow_runs": [
+            {
+                "display_title": "Deploy x prod v1.2.3 [request-0001]",
+                "status": "waiting",
+                "created_at": "2026-10-23T11:02:13Z",
+                "html_url": "https://github.com/wangzitian0/infra2/actions/runs/5",
+            }
+        ]
+    }
+    notices: list[str] = []
+    api = announce_approval_wait(
+        lambda method, path, body=None: None if method == "POST" else waiting,
+        "request-0001",
+        "v1.2.3",
+        announce=notices.append,
+    )
+    api(
+        "POST",
+        "/dispatches",
+        {"client_payload": {"request_id": "request-0001", "sender_deadline": SENDER_DEADLINE}},
+    )
+    api("GET", "/runs")
+    # 12:01:31 minus the 300 s deploy budget minus the 120 s approval margin.
+    assert "Approve before 2026-10-23 11:54:31Z" in notices[0]
+    assert "sender stops waiting at 2026-10-23 12:01:31Z" in notices[0]
+
+    old_sender: list[str] = []
+    api = announce_approval_wait(
+        lambda method, path, body=None: waiting,
+        "request-0001",
+        "v1.2.3",
+        announce=old_sender.append,
+    )
+    api("GET", "/runs")
+    # 11:02:13 plus 1440 s minus the 120 s approval margin.
+    assert "Approve before 2026-10-23 11:24:13Z" in old_sender[0]
+
+
+def test_dispatch_states_the_sender_deadline_in_utc_for_any_clock_zone() -> None:
+    from datetime import timezone
+
+    req = _dispatch_request()
+    posted: list[object] = []
+
+    def api(method: str, path: str, body: object = None) -> object:
+        if method == "POST":
+            posted.append(body)
+            return None
+        return {"workflow_runs": []}
+
+    utc8 = DISPATCHED_AT.astimezone(timezone(timedelta(hours=8)))
+    with pytest.raises(RuntimeError, match="timed out"):
+        dispatch_and_wait(
+            req,
+            api=api,
+            fetch_logs=lambda _: b"",
+            sleep=lambda _: None,
+            max_attempts=1,
+            poll_interval=60,
+            clock=lambda: utc8,
+        )
+    assert posted[0]["client_payload"]["sender_deadline"] == "2026-10-23T11:02:31Z"  # type: ignore[index]
+    with pytest.raises(ValueError, match="time zone"):
+        dispatch_and_wait(
+            req,
+            api=api,
+            fetch_logs=lambda _: b"",
+            sleep=lambda _: None,
+            clock=lambda: DISPATCHED_AT.replace(tzinfo=None),
+        )
