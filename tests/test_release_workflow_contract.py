@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -214,6 +215,37 @@ def test_release_ancestor_gate_script_behavior_on_git_repo(tmp_path: Path) -> No
         check=False,
     )
     assert res_off_main.returncode != 0
+
+
+def test_release_tag_version_gate_script_behavior(tmp_path: Path) -> None:
+    release_data = _load_yaml(RELEASE_WORKFLOW_PATH)
+    steps = release_data["jobs"]["release"]["steps"]
+    step = _find_step_by_script(steps, "GITHUB_REF_NAME")
+    publish_step = _find_step_by_script(steps, "gh release create")
+    assert step is not None, "release.yml: missing the tag-equals-version step"
+    assert publish_step is not None
+    assert steps.index(step) < steps.index(publish_step)
+    script = str(step["run"])
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "infra2-sdk"\nversion = "3.5.0"\n', encoding="utf-8"
+    )
+    path = f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}"
+
+    def run(ref_name: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", "-euo", "pipefail", "-c", script],
+            cwd=tmp_path,
+            env={**os.environ, "PATH": path, "GITHUB_REF_NAME": ref_name},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    matching = run("v3.5.0")
+    assert matching.returncode == 0, matching.stderr
+    assert run("v3.5.1").returncode != 0
+    assert run("3.5.0").returncode != 0
 
 
 def test_contributing_documents_release_guards_and_usage_census() -> None:

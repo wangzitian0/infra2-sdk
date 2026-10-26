@@ -53,5 +53,5 @@ The release workflow publishes each release. Do not publish manually. A change u
    `gh release create --verify-tag`.
 3. Do not create the GitHub release manually before the workflow finishes. A manual release
    causes the publish step to fail and leaves unverified assets attached to the tag.
-   Follow the release identity contract in `.github/workflows/ci.yml` and
-   `.github/workflows/release.yml` ([#18](https://github.com/wangzitian0/infra2-sdk/issues/18)).
+   Follow the release identity contract in `.github/workflows/release.yml`
+   ([#18](https://github.com/wangzitian0/infra2-sdk/issues/18)).
