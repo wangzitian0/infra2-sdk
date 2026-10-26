@@ -1,4 +1,4 @@
-<!-- WS_STATIC_START adapter=rules-v2 inputs=663efb6c9418af1e581bd9c357601689c1e3341c81da0f6b3e9a5014aad0be31 -->
+<!-- WS_STATIC_START adapter=rules-v2 inputs=a4f9ac50626ee8f9a34c96f9abb5871e29241d19e8d85fe54287161bc9406528 -->
 <!-- Generated file: do not edit by hand. These rules are maintained in the owner's rule source and re-rendered here. -->
 
 ## Engineering discipline
@@ -42,7 +42,7 @@ The single definition of the production reservation. Other tiers, skills and gat
 
 # Infra2 SDK AI Agent Rules
 
-> **Authority boundary:** An AI agent changes this file through its dev_env source and the dev_env rule-text checklist. Standing merge authority applies when every CI check and review gate passes. **Production reservation:** publishing a release tag (`vX.Y.Z` on `.github/workflows/release.yml`, `environment: production`) is a production release and follows the Root section `Production reservation`.
+> **Authority boundary:** An AI agent changes this file through its dev_env source and the dev_env rule-text checklist. Standing merge authority applies when every CI check and review gate passes. **Production reservation:** this repository has no production path (owner instruction, 2026-10-26: an SDK release tag runs with no environment and no approval). A release tag publishes a wheel and changes nothing that production runs. A consumer pins the wheel by URL and sha256 in its lock file. SDK code, gate code included, reaches production only through a consumer pin bump, which that consumer's merge gate and production path review.
 
 ## SDK role and contract boundaries
 
@@ -52,13 +52,13 @@ The `infra2-sdk` repository owns the public code contract between `infra2` and d
 2. **One source per fact and Manifest v2 supply chain (P2):** Every environment field declares one `source` class (`bootstrap`, `human`, `runtime`, `release`, `decision`, `code`). Cross-repository generic libraries (`capacity`, `ci`, `delivery`, `deploy`, `fastapi`, `manifests`, `observability`, `refs`, `routing`, `rules`, `runtime`, `scaffold`, `secrets`, `transport`) live here so applications do not duplicate infrastructure logic. `LlmSettings` in `src/infra2_sdk/runtime/llm.py` owns default `large`, `small`, and `multimodal` model chains.
 3. **100% consumer-reachable public surface (P3):** Every public symbol must have at least one production caller across `infra2`, `finance_report`, or `truealpha`, or an explicit standalone entry in `tests/surface.json`. Package public attributes must equal `__all__` (`tests/test_exports.py`). Prefix internal helpers with `_`.
 4. **Locked environment reads and bidirectional guards (P4):** `tests/test_source_environment_reads.py` locks every environment variable read in `src/infra2_sdk/` to `RuntimeEnvKey` plus `FIXED_READS`. Do not read legacy aliases (`ENV`, `APP_ENV`, `IMAGE_TAG`, `SERVICE_NAME`) directly at call sites; resolve aliases only in `src/infra2_sdk/runtime/environment.py`. Keep `README.md` examples and module tables executable under `tests/test_readme_claims.py` and `tests/test_release_hygiene.py`.
-5. **Pragmatic compatibility and release hygiene (P5):** Add new runtime dataclass fields as `kw_only=True`. Do not add compatibility shims for symbols with zero callers in the cross-repository usage census (`sdk_usage_census`). Any PR that modifies `src/infra2_sdk/` must update `pyproject.toml`, `CHANGELOG.md`, and `README.md` install pins in the same PR (`tests/test_release_hygiene.py`).
+5. **Pragmatic compatibility and release hygiene (P5):** Add new runtime dataclass fields as `kw_only=True`. Do not add compatibility shims for symbols with zero callers in the cross-repository usage census (`sdk_usage_census`). A change under `src/infra2_sdk/` does not need a release. A release PR updates `pyproject.toml`, `CHANGELOG.md`, and the `README.md` install pins together (`tests/test_release_hygiene.py`).
 
 ## Merge gate and release lifecycle
 
 - Weight unresolved review findings by literal `severity: <level>` label: high=1.0, middle=0.5, low=0.25, unlabeled=middle. A total of 1.0 or more blocks merge.
 - Required CI jobs in `.github/workflows/ci.yml` (`test` across Python 3.11–3.13, `package`, and `extras-smoke` across `core`, `s3`, `postgres`, `http`, `otel`, `fastapi`, `all`) must pass on the current `head SHA`.
-- Merging to `main` is Stage 1 (Code Landed). Pushing a `vX.Y.Z` tag triggers `.github/workflows/release.yml` under `environment: production` and requires a live production release approval from the owner per Root section `Production reservation`.
+- Merging to `main` is Stage 1 (Code Landed). The agent pushes a `vX.Y.Z` tag when a consumer needs the change. The tag triggers `.github/workflows/release.yml`, which publishes the wheel with no approval.
 
 ## Load on demand
 

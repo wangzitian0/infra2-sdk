@@ -1,17 +1,16 @@
 ---
 name: audit
-description: Step 2 of the five-step flow. Executes a deterministic 3-Round Swarm pipeline (each round 10 Interns) to falsify claims and eradicate defects.
+description: Step 2 of the five-step flow. Runs at most 3 Swarm rounds (10 Interns each) to falsify claims and eradicate defects.
 ---
 
 # audit: try to prove it wrong
 
 A system's own tests, CI, and issue states are claims written by the system. A test cannot catch its author's premise.
-Audit executes a **deterministic 3-Round Swarm pipeline** via `subagent_batch`. Each round dispatches 1 Swarm of 10 Interns (`M=10`).
-The Director MUST NOT stop or return a final report before completing all 3 Swarms.
+Audit runs **at most 3 Swarm rounds** via `subagent_batch`. Each round dispatches 1 Swarm of 10 Interns (`M=10`).
 
 ## Phase 0: Touch Reality (run before any scout)
 
-1. **Label the delivery state.** Run `ws-delivery-status` (see `z/SKILL.md` for the canonical state table). Never report `Done` or `Complete` before merge and a passing Business Reality Probe (`VERIFIED_COMPLETE`).
+1. **Label the delivery state.** Run `ws-delivery-status` (the `z` skill holds the canonical state table). Never report `Done` or `Complete` before merge and a passing Business Reality Probe (`VERIFIED_COMPLETE`).
 
 2. **Touch two independent oracles** that this repository did not write: the vendor or upstream source,
    and the real runtime (database query, byte check with sha256, scheduler failure log, staging against production).
@@ -48,18 +47,15 @@ The 10 parallel Interns in Round 1 are allocated across non-overlapping audit di
 - T2 side effects (Intern 9): Latency, rate limits, lock contention, broken global invariants.
 - S1 SSOT and drift (Intern 10): Mismatches between implementation, MANIFEST.yaml keys, and rule boundaries.
 
-## Deterministic 3-Round Swarm Pipeline
+## 3-Round Swarm Pipeline
 
-Audit executes strictly across 3 sequential Swarms (each round M=10 Interns via `subagent_batch`). Premature exit is forbidden:
+This skill is the one source for the audit round count and the Intern count. Rounds run in sequence:
 
 1. **Round 1 (Discovery Swarm: M=10)**: Dispatch 10 Interns across the Scout Matrix (M1-M4, G1-G3, T1-T2, S1). Output dense defect hypotheses with exact `file#Lxx-Lyy` anchors.
 2. **Round 2 (Adversarial Confrontation Swarm: M=10)**: Pair Interns as opponents (Red Team vs Blue Team) to disprove Round 1 hypotheses with code counterexamples. Classify each finding strictly as `[DISPROVEN]` or `[CONFIRMED]`.
 3. **Round 3 (Independent Verdict Swarm: M=10 + Director Touch Reality)**: 10 fresh Interns blind-verify surviving `[CONFIRMED]` findings. The Director executes read-only Touch Reality probes to reject false positives.
 
-## Loop Driver and Exit Guard (MANDATORY)
+## Exit rule
 
-- **Mechanical Loop**: `WHILE round_counter < 3: dispatch_swarm(round=round_counter, M=10); record_checkpoint()`.
-- **Exit Guard**: `IF round_counter < 3: ABORT (premature stop forbidden; dispatch next round immediately)`.
-- **Zero Satisficing**: Never stop after Round 1 or Round 2. Rich findings are unverified hypotheses.
-- **Convergence Rule**: A pipeline with zero HIGH and zero new MIDDLE findings converges at Round 3. If HIGH findings remain contested, extend up to Round 5 at most.
+- **Stop after a round that leaves no open finding:** Round 1 finds no hypothesis, or Round 2 disproves all of them. Round 3 is the last round. A HIGH finding still contested after Round 3 goes to the Senior (SHZP).
 - **Terminal Round**: The final round is audit-only. It edits no code.
