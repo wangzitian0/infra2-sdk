@@ -718,7 +718,10 @@ def dispatch_and_wait(
     baseline = _workflow_runs(api("GET", _RUNS_PATH, None))
     watermark = max((_run_id(run) for run in baseline), default=0)
 
-    deadline = clock() + timedelta(seconds=max_attempts * poll_interval)
+    now = clock()
+    if now.tzinfo is None:
+        raise ValueError("the dispatch clock must return a time with a time zone")
+    deadline = now.astimezone(UTC) + timedelta(seconds=max_attempts * poll_interval)
     payload = {**canonical, SENDER_DEADLINE_KEY: f"{deadline:%Y-%m-%dT%H:%M:%SZ}"}
     api(
         "POST",

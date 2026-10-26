@@ -1447,3 +1447,37 @@ def test_the_approval_notice_uses_the_sender_deadline_of_the_dispatch() -> None:
     api("GET", "/runs")
     # 11:02:13 plus 1440 s minus the 120 s approval margin.
     assert "Approve before 2026-10-23 11:24:13Z" in old_sender[0]
+
+
+def test_dispatch_states_the_sender_deadline_in_utc_for_any_clock_zone() -> None:
+    from datetime import timezone
+
+    req = _dispatch_request()
+    posted: list[object] = []
+
+    def api(method: str, path: str, body: object = None) -> object:
+        if method == "POST":
+            posted.append(body)
+            return None
+        return {"workflow_runs": []}
+
+    utc8 = DISPATCHED_AT.astimezone(timezone(timedelta(hours=8)))
+    with pytest.raises(RuntimeError, match="timed out"):
+        dispatch_and_wait(
+            req,
+            api=api,
+            fetch_logs=lambda _: b"",
+            sleep=lambda _: None,
+            max_attempts=1,
+            poll_interval=60,
+            clock=lambda: utc8,
+        )
+    assert posted[0]["client_payload"]["sender_deadline"] == "2026-10-23T11:02:31Z"  # type: ignore[index]
+    with pytest.raises(ValueError, match="time zone"):
+        dispatch_and_wait(
+            req,
+            api=api,
+            fetch_logs=lambda _: b"",
+            sleep=lambda _: None,
+            clock=lambda: DISPATCHED_AT.replace(tzinfo=None),
+        )
