@@ -32,26 +32,26 @@ do not treat a locally built wheel as a published release or update consumers to
 
 ## Releasing
 
-The release workflow publishes each release. Change the version in the same PR. Do not publish manually.
+The release workflow publishes each release. Do not publish manually. A change under
+`src/infra2_sdk/` does not need a release. Release when a consumer needs the change.
 
 0. A release that removes a public name or changes a default requires a usage census.
    Run `python -m tools.sdk_usage_census --json --check` in `infra2` across `infra2`,
    `finance_report`, and `truealpha`. The census checks `M1` symbol reachability,
    `M2` `runtime_env_contract()` reachability, `M3` pin lag, `M4` `LEFT_THE_PACKAGES`
-   references, and `M5` hardcoded `SERVICE_NAME` lists. Attach the output to the release issue.
+   references, and `M5` hardcoded `SERVICE_NAME` lists.
    Do not remove a name that a consumer uses in a minor release.
-1. In the PR, bump `version` in `pyproject.toml` and run `uv lock`. Add the
-   [CHANGELOG](CHANGELOG.md) entry and update the README version pins.
-   `tests/test_release_hygiene.py` fails when any of the three files is stale. When a pull
-   request modifies `src/infra2_sdk/`, `.github/workflows/ci.yml` requires a new `pyproject.toml`
-   version and an unused `v<version>` git tag.
+1. Between releases, write [CHANGELOG](CHANGELOG.md) lines under `## Unreleased`. In the
+   release PR, bump `version` in `pyproject.toml` and run `uv lock`. Give the CHANGELOG entry
+   its version and date, and update the README version pins.
+   `tests/test_release_hygiene.py` fails when any of the three files is stale.
 2. After you merge the PR, tag the merge commit on `main` as `vX.Y.Z` and push the tag.
-   `.github/workflows/release.yml` runs under `environment: production` and requires reviewer
-   approval. The workflow verifies that `$GITHUB_SHA` is on `origin/main`
+   The agent tags releases; `.github/workflows/release.yml` needs no approval (owner,
+   2026-10-26). The workflow verifies that `$GITHUB_SHA` is on `origin/main`
    (`git merge-base --is-ancestor "$GITHUB_SHA" origin/main`). It also verifies that the tag
    matches `pyproject.toml`, runs lint and tests, smoke-tests each wheel extra, and runs
    `gh release create --verify-tag`.
 3. Do not create the GitHub release manually before the workflow finishes. A manual release
    causes the publish step to fail and leaves unverified assets attached to the tag.
-   Follow the release identity contract in `.github/workflows/ci.yml` and
-   `.github/workflows/release.yml` ([#18](https://github.com/wangzitian0/infra2-sdk/issues/18)).
+   Follow the release identity contract in `.github/workflows/release.yml`
+   ([#18](https://github.com/wangzitian0/infra2-sdk/issues/18)).
