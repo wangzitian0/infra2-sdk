@@ -52,7 +52,63 @@ class DeployType(StrEnum):
 
 
 #: Maximum age in seconds of a production deploy request at the receiver (24 min, #1253).
+#: The receiver uses it only for a request with no ``sender_deadline``.
 PRODUCTION_REQUEST_MAX_AGE_SECONDS = 24 * 60
+#: The time that the receiver keeps for the production deploy job before the sender
+#: deadline (infra2#1232, infra2#1363). The longest of 25 production deploy jobs took 293 s.
+PRODUCTION_DEPLOY_BUDGET_SECONDS = 300
+#: A GitHub Actions job runs for 6 h at most, so no sender waits longer after its dispatch.
+SENDER_MAX_WAIT_SECONDS = 6 * 60 * 60
+#: The dispatch payload key that holds the time when the sender stops waiting (infra2#1363).
+#: ``dispatch_and_wait`` sets it. It is transport data, not a ``DeployRequest`` field.
+SENDER_DEADLINE_KEY = "sender_deadline"
+
+
+def parse_sender_deadline(payload: Mapping[str, Any]) -> datetime | None:
+    """Return the ``sender_deadline`` of a dispatch payload in UTC, or None when it is absent.
+
+    An old sender sends no deadline. A value that is present must be an ISO 8601 time
+    with a time zone; any other value raises ``ValueError``.
+    """
+    value = payload.get(SENDER_DEADLINE_KEY)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{SENDER_DEADLINE_KEY} must be an ISO 8601 string")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        parsed = None
+    if parsed is None or parsed.tzinfo is None:
+        raise ValueError(
+            f"{SENDER_DEADLINE_KEY} {value!r} is not an ISO 8601 time with a time zone"
+        )
+    return parsed.astimezone(UTC)
+
+
+def production_request_accept_until(
+    created: datetime, sender_deadline: datetime | None
+) -> datetime:
+    """Return the last time at which the receiver accepts a production request.
+
+    ``created`` is the creation time of the receiver run. The deploy must end while its
+    sender still waits, because only the sender verifies the deploy (infra2#1232). With
+    a ``sender_deadline``, the limit is that deadline minus
+    ``PRODUCTION_DEPLOY_BUDGET_SECONDS``. A deadline later than
+    ``SENDER_MAX_WAIT_SECONDS`` after ``created`` cannot be true and is cut to that
+    time. With no deadline, the limit is ``PRODUCTION_REQUEST_MAX_AGE_SECONDS`` after
+    ``created``.
+    """
+    if created.tzinfo is None:
+        raise ValueError("the creation time must have a time zone")
+    created = created.astimezone(UTC)
+    if sender_deadline is None:
+        return created + timedelta(seconds=PRODUCTION_REQUEST_MAX_AGE_SECONDS)
+    if sender_deadline.tzinfo is None:
+        raise ValueError("the sender deadline must have a time zone")
+    latest = created + timedelta(seconds=SENDER_MAX_WAIT_SECONDS)
+    deadline = min(sender_deadline.astimezone(UTC), latest)
+    return deadline - timedelta(seconds=PRODUCTION_DEPLOY_BUDGET_SECONDS)
 
 
 @dataclass(frozen=True)
@@ -637,6 +693,10 @@ class ReceiverRun:
     url: str
 
 
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
 def dispatch_and_wait(
     request: DeployRequest,
     *,
@@ -645,20 +705,31 @@ def dispatch_and_wait(
     sleep: Callable[[float], None] = time.sleep,
     poll_interval: float = 5.0,
     max_attempts: int = 300,
+    clock: Callable[[], datetime] = _utc_now,
 ) -> ReceiverRun:
-    """Dispatch ``request`` to infra2 and return the correlated, verified receiver run."""
+    """Dispatch ``request`` to infra2 and return the correlated, verified receiver run.
+
+    The wait ends ``max_attempts * poll_interval`` seconds after the dispatch, by the
+    clock, or after ``max_attempts`` polls. The payload states that time as
+    ``sender_deadline``, so the receiver refuses an approval too late for this sender
+    to verify the deploy (infra2#1363).
+    """
     canonical = request.to_dict()
     baseline = _workflow_runs(api("GET", _RUNS_PATH, None))
     watermark = max((_run_id(run) for run in baseline), default=0)
 
+    deadline = clock() + timedelta(seconds=max_attempts * poll_interval)
+    payload = {**canonical, SENDER_DEADLINE_KEY: f"{deadline:%Y-%m-%dT%H:%M:%SZ}"}
     api(
         "POST",
         f"/repos/{INFRA_REPOSITORY}/dispatches",
-        {"event_type": _RECEIVER_EVENT_TYPE, "client_payload": canonical},
+        {"event_type": _RECEIVER_EVENT_TYPE, "client_payload": payload},
     )
 
     seen: list[str] = []
     for attempt in range(max_attempts):
+        if attempt and clock() >= deadline:
+            break
         runs = _workflow_runs(api("GET", _RUNS_PATH, None))
         fresh = [run for run in runs if _run_id(run) > watermark]
         seen = [f"{_run_id(run)} {run.get('display_title') or '(untitled)'}" for run in fresh]
@@ -912,7 +983,9 @@ def print_approval_notice(message: str) -> None:
     print(message, file=sys.stderr, flush=True)
 
 
-def _approval_times(value: object) -> tuple[datetime, datetime] | None:
+def _approval_times(
+    value: object, sender_deadline: datetime | None
+) -> tuple[datetime, datetime] | None:
     if not isinstance(value, str):
         return None
     try:
@@ -920,16 +993,18 @@ def _approval_times(value: object) -> tuple[datetime, datetime] | None:
         if created.tzinfo is None:
             return None
         created = created.astimezone(UTC)
-        deadline = created + timedelta(
-            seconds=PRODUCTION_REQUEST_MAX_AGE_SECONDS - PRODUCTION_APPROVAL_MARGIN_SECONDS
+        deadline = production_request_accept_until(created, sender_deadline) - timedelta(
+            seconds=PRODUCTION_APPROVAL_MARGIN_SECONDS
         )
     except (ValueError, OverflowError):
         return None
     return created, deadline
 
 
-def _approval_notice(run: Mapping[str, Any], version_ref: str) -> str:
-    times = _approval_times(run.get("created_at"))
+def _approval_notice(
+    run: Mapping[str, Any], version_ref: str, sender_deadline: datetime | None = None
+) -> str:
+    times = _approval_times(run.get("created_at"), sender_deadline)
     if times is None:
         when = (
             "The approval deadline is unknown: the run has no usable creation time. "
@@ -937,11 +1012,17 @@ def _approval_notice(run: Mapping[str, Any], version_ref: str) -> str:
         )
     else:
         created, deadline = times
+        if sender_deadline is None:
+            limit = f"that is older than {PRODUCTION_REQUEST_MAX_AGE_SECONDS} s"
+        else:
+            limit = (
+                f"with less than {PRODUCTION_DEPLOY_BUDGET_SECONDS} s left before the "
+                f"sender stops waiting at {sender_deadline:%Y-%m-%d %H:%M:%S}Z"
+            )
         when = (
             f"Approve before {deadline:%Y-%m-%d %H:%M:%S}Z. "
-            f"The receiver refuses a request that is older than "
-            f"{PRODUCTION_REQUEST_MAX_AGE_SECONDS} s when its check runs, within one minute "
-            f"after the approval. The run was created at {created:%Y-%m-%d %H:%M:%S}Z."
+            f"The receiver refuses a request {limit} when its check runs, within one "
+            f"minute after the approval. The run was created at {created:%Y-%m-%d %H:%M:%S}Z."
         )
     return (
         f"Approval needed: {run.get('html_url')} waits for the owner to approve "
@@ -956,11 +1037,19 @@ def announce_approval_wait(
     version_ref: str,
     announce: Callable[[str], None] = print_approval_notice,
 ) -> Api:
-    """Wrap ``api`` to announce once when the receiver run for ``request_id`` awaits approval."""
+    """Wrap ``api`` to announce once when the receiver run for ``request_id`` awaits approval.
+
+    The notice uses the ``sender_deadline`` of the dispatch that passes through ``api``.
+    """
     announced = False
+    sender_deadline: datetime | None = None
 
     def watching_api(method: str, path: str, body: object = None) -> object:
-        nonlocal announced
+        nonlocal announced, sender_deadline
+        if method == "POST" and isinstance(body, Mapping):
+            client_payload = body.get("client_payload")
+            if isinstance(client_payload, Mapping):
+                sender_deadline = parse_sender_deadline(client_payload)
         payload = api(method, path, body)
         if method == "GET" and not announced:
             runs = payload.get("workflow_runs") if isinstance(payload, Mapping) else None
@@ -970,7 +1059,7 @@ def announce_approval_wait(
                     and request_id in str(run.get("display_title", ""))
                     and run.get("status") == "waiting"
                 ):
-                    announce(_approval_notice(run, version_ref))
+                    announce(_approval_notice(run, version_ref, sender_deadline))
                     announced = True
                     break
         return payload
@@ -1393,6 +1482,7 @@ __all__ = [
     "DeployType",
     "FreshnessFailure",
     "PRODUCTION_APPROVAL_MARGIN_SECONDS",
+    "PRODUCTION_DEPLOY_BUDGET_SECONDS",
     "PRODUCTION_REQUEST_MAX_AGE_SECONDS",
     "ReceiverRun",
     "ReleaseIdentityError",
@@ -1408,8 +1498,10 @@ __all__ = [
     "identifier_kind",
     "identity_from_body",
     "measure_freshness",
+    "parse_sender_deadline",
     "poll_until_healthy",
     "print_approval_notice",
+    "production_request_accept_until",
     "read_deployed_release",
     "render_sender_request",
     "run_deploy_transport_cli",
