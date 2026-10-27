@@ -12,18 +12,6 @@ _ModelRole = Literal["large", "small", "multimodal"]
 _ROLES: tuple[str, ...] = ("large", "small", "multimodal")
 
 
-class _RoleDefault:
-    """Marks a model slot that takes its value from a model role."""
-
-    __slots__ = ()
-
-    def __repr__(self) -> str:
-        return "<role default>"
-
-
-_ROLE_DEFAULT: Any = _RoleDefault()
-
-
 def _coerce_tuple(value: Any) -> tuple[str, ...]:
     if isinstance(value, str):
         return tuple(item.strip() for item in value.split(",") if item.strip())
@@ -36,27 +24,16 @@ def _coerce_tuple(value: Any) -> tuple[str, ...]:
 class LlmSettings:
     """Settings contract for large language model providers.
 
-    The SDK owns the default models through three roles. Each role is a model and
-    a reasoning effort: ``large``, ``small`` and ``multimodal`` all use glm-5.3-flash,
-    with high, low and low reasoning. glm-5.3-flash takes image, video and file
-    input and is on the GLM Coding Plan; glm-5.3-flashx is not on the plan. The task slots
-    derive from the roles when they are not set: ``primary_model`` uses the small
-    model, and ``ocr_model`` and ``vision_model`` use the multimodal model. An
-    explicit slot value, ``None`` included, still wins. ``dataclasses.replace``
-    passes the resolved slots back in, so it does not re-derive them from a
-    changed role; construct a new instance to re-derive.
+    The SDK defines default models through three roles: ``large``, ``small`` and
+    ``multimodal``. Each role pairs ``glm-5.3-flash`` with a reasoning effort
+    (``high``, ``low`` and ``low``). ``glm-5.3-flash`` accepts image, video and
+    file input on the GLM Coding Plan; ``glm-5.3-flashx`` is not on the plan.
     """
 
     provider: str = "zai"
     base_url: str = "https://api.z.ai/api/coding/paas/v4"
     api_key: str | None = field(default=None, repr=False)
-    primary_model: str = _ROLE_DEFAULT
-    ocr_model: str | None = _ROLE_DEFAULT
-    vision_model: str | None = _ROLE_DEFAULT
-    fallback_models: tuple[str, ...] = ()
-    vision_fallback_models: tuple[str, ...] = ()
     chat_completions_path: str = "/chat/completions"
-    layout_parsing_path: str = "/layout_parsing"
     json_timeout_seconds: float = 360.0
     json_max_tokens: int = 8192
     json_disable_thinking: bool = True
@@ -79,31 +56,15 @@ class LlmSettings:
                 value = getattr(self, role_field)
                 if not isinstance(value, str) or not value.strip():
                     raise ValueError(f"{role_field} must be non-empty")
-        if self.primary_model is _ROLE_DEFAULT:
-            object.__setattr__(self, "primary_model", self.small_model)
-        if self.ocr_model is _ROLE_DEFAULT:
-            object.__setattr__(self, "ocr_model", self.multimodal_model)
-        if self.vision_model is _ROLE_DEFAULT:
-            object.__setattr__(self, "vision_model", self.multimodal_model)
-        object.__setattr__(self, "fallback_models", _coerce_tuple(self.fallback_models))
-        object.__setattr__(
-            self,
-            "vision_fallback_models",
-            _coerce_tuple(self.vision_fallback_models),
-        )
         object.__setattr__(self, "encryption_keys", _coerce_tuple(self.encryption_keys))
 
         if not self.provider.strip():
             raise ValueError("provider must be non-empty")
-        if not self.primary_model.strip():
-            raise ValueError("primary_model must be non-empty")
 
         validate_http_url(self.base_url, label="base_url")
 
         if not self.chat_completions_path.startswith("/"):
             raise ValueError("chat_completions_path must start with '/'")
-        if not self.layout_parsing_path.startswith("/"):
-            raise ValueError("layout_parsing_path must start with '/'")
 
         if self.json_timeout_seconds <= 0:
             raise ValueError("json_timeout_seconds must be positive")
