@@ -4,6 +4,12 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.17.0 - 2026-10-27
+
+### Removed
+
+- Remove all 6 remaining cross-module compatibility re-export shims: `infra2_sdk.ci.inspect_compose` (canonical: `infra2_sdk.rules.compose.inspect_compose`), `infra2_sdk.deploy.identifier_kind` (canonical: `infra2_sdk.refs.identifier_kind`), `infra2_sdk.manifests.assert_environment` (canonical: `infra2_sdk.runtime.config_schema.assert_environment`), and `ScheduleError`, `crons_in`, and `largest_gap` from `infra2_sdk.observability.__all__` (canonical: `infra2_sdk.ci`) ([#156](https://github.com/wangzitian0/infra2-sdk/issues/156)).
+
 ## 3.16.0 - 2026-10-27
 
 ### Changed

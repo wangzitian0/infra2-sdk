@@ -25,8 +25,11 @@ from infra2_sdk.ci import (
     TARGET_PER_SHARD_S,
     CoverageArtifactMissing,
     CoverageBaselineInvalid,
+    ScheduleError,
     check_no_regression,
+    crons_in,
     defanged_steps,
+    largest_gap,
     load_baseline,
     load_workflow,
     parse_github_time,
@@ -42,14 +45,13 @@ from infra2_sdk.deploy import (
     DeployType,
     ReleaseIdentityError,
     announce_approval_wait,
-    identifier_kind,
     identity_from_body,
     print_approval_notice,
     read_deployed_release,
     render_sender_request,
     validate_sender_request,
 )
-from infra2_sdk.manifests import _render, assert_environment
+from infra2_sdk.manifests import _render
 from infra2_sdk.observability import (
     DELAY_ALLOWANCE,
     MISSED_TICKS_TOLERATED,
@@ -59,18 +61,15 @@ from infra2_sdk.observability import (
     ListingFailed,
     PeerReadError,
     PeerVerdict,
-    ScheduleError,
     Trail,
     WriteFailed,
     bound_for,
     check_name,
-    crons_in,
     evaluate_consecutive_hysteresis,
     evaluate_peer_liveness,
     github_getter,
     is_recently_flapping,
     issue_trail_mode,
-    largest_gap,
     load_trail,
     newest_tick,
     parse_bound_cap_hours,
@@ -83,8 +82,10 @@ from infra2_sdk.refs import (
     MANIFEST_ACCEPT,
     SHORT_SHA_LENGTH,
     assert_after_on_main,
+    identifier_kind,
     short_sha,
 )
+from infra2_sdk.runtime.config_schema import assert_environment
 from infra2_sdk.secrets import (
     VaultTokenTarget,
     normalize_selector,
@@ -798,11 +799,11 @@ def test_openpanel_observability_engine(tmp_path: Path) -> None:
 def test_ci_edge_cases_and_inspect_compose_reexport(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import infra2_sdk.ci as ci_mod
     from infra2_sdk.ci import (
         CoverageArtifactMissing,
         check_no_regression,
         defanged_steps,
-        inspect_compose,
         load_baseline,
         load_workflow,
         parse_github_time,
@@ -811,9 +812,10 @@ def test_ci_edge_cases_and_inspect_compose_reexport(
         workflow_read_error,
         write_github_output,
     )
-    from infra2_sdk.rules.compose import inspect_compose as rules_inspect_compose
+    from infra2_sdk.rules.compose import inspect_compose
 
-    assert inspect_compose is rules_inspect_compose
+    assert not hasattr(ci_mod, "inspect_compose")
+    assert inspect_compose.__module__ == "infra2_sdk.rules.compose"
 
     missing = tmp_path / "missing.yml"
     assert read_workflow(missing) == ({}, "")
@@ -887,20 +889,19 @@ def test_observability_github_and_trail_branches(
     import base64
     from urllib.error import HTTPError, URLError
 
+    from infra2_sdk.ci import ScheduleError, largest_gap
     from infra2_sdk.observability import (
         CheckVerdict,
         ConsecutiveObservationState,
         GitHubIssues,
         ListingFailed,
         PeerReadError,
-        ScheduleError,
         Trail,
         WriteFailed,
         evaluate_consecutive_hysteresis,
         evaluate_peer_liveness,
         github_getter,
         issue_trail_mode,
-        largest_gap,
         load_trail,
         parse_bound_cap_hours,
         reconcile_issue_trail,
@@ -1108,6 +1109,10 @@ def test_observability_github_and_trail_branches(
 def test_issue154_function_placement_ssot_invariants() -> None:
     import base64
 
+    import infra2_sdk.ci as ci_mod
+    import infra2_sdk.deploy as deploy_mod
+    import infra2_sdk.manifests as manifests_mod
+    import infra2_sdk.observability as obs_mod
     from infra2_sdk._wire import _is_loopback_host, parse_iso_utc
     from infra2_sdk.ci import (
         ScheduleError as CiScheduleError,
@@ -1118,17 +1123,6 @@ def test_issue154_function_placement_ssot_invariants() -> None:
     from infra2_sdk.ci import (
         largest_gap as ci_largest_gap,
     )
-    from infra2_sdk.deploy import identifier_kind as deploy_identifier_kind
-    from infra2_sdk.manifests import assert_environment as manifests_assert_environment
-    from infra2_sdk.observability import (
-        ScheduleError as ObsScheduleError,
-    )
-    from infra2_sdk.observability import (
-        crons_in as obs_crons_in,
-    )
-    from infra2_sdk.observability import (
-        largest_gap as obs_largest_gap,
-    )
     from infra2_sdk.refs import identifier_kind as refs_identifier_kind
     from infra2_sdk.runtime.config_schema import assert_environment as config_assert_environment
     from infra2_sdk.transport import (
@@ -1138,17 +1132,22 @@ def test_issue154_function_placement_ssot_invariants() -> None:
     )
 
     assert config_assert_environment.__module__ == "infra2_sdk.runtime.config_schema"
-    assert manifests_assert_environment is config_assert_environment
+    assert not hasattr(manifests_mod, "assert_environment")
+    assert "assert_environment" not in manifests_mod.__all__
 
     assert refs_identifier_kind.__module__ == "infra2_sdk.refs"
-    assert deploy_identifier_kind is refs_identifier_kind
+    assert not hasattr(deploy_mod, "identifier_kind")
+    assert "identifier_kind" not in deploy_mod.__all__
+
+    assert not hasattr(ci_mod, "inspect_compose")
+    assert "inspect_compose" not in ci_mod.__all__
 
     assert ci_crons_in.__module__ == "infra2_sdk.ci"
     assert ci_largest_gap.__module__ == "infra2_sdk.ci"
     assert CiScheduleError.__module__ == "infra2_sdk.ci"
-    assert obs_crons_in is ci_crons_in
-    assert obs_largest_gap is ci_largest_gap
-    assert ObsScheduleError is CiScheduleError
+    assert "ScheduleError" not in obs_mod.__all__
+    assert "crons_in" not in obs_mod.__all__
+    assert "largest_gap" not in obs_mod.__all__
 
     assert parse_iso_utc("2026-10-27T01:02:03Z") == datetime(2026, 10, 27, 1, 2, 3, tzinfo=UTC)
     assert parse_iso_utc("2026-10-27T01:02:03", allow_naive=True) == datetime(

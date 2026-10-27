@@ -13,7 +13,6 @@ from typing import Any
 from xml.etree import ElementTree
 
 from infra2_sdk._wire import _yaml, parse_iso_utc
-from infra2_sdk.rules.compose import inspect_compose
 
 _GATE_ID_RE = re.compile(r"\A[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+\Z")
 _REQUIRED_GATE_FIELDS = ("id", "stage", "task_category", "workflow", "job")
@@ -140,7 +139,7 @@ def largest_gap(crons: Iterable[str]) -> timedelta:
         if (day, month, weekday) != ("*", "*", "*"):
             raise ScheduleError(
                 f"cron {expression!r} is not daily-periodic; teach "
-                "infra2_sdk.observability.largest_gap to measure it"
+                "infra2_sdk.ci.largest_gap to measure it"
             )
         minutes = _field(minute, "minute", 0, 59)
         hours = _field(hour, "hour", 0, 23)
@@ -431,7 +430,6 @@ __all__ = [
     "check_no_regression",
     "crons_in",
     "defanged_steps",
-    "inspect_compose",
     "largest_gap",
     "load_baseline",
     "load_delivery_stages",

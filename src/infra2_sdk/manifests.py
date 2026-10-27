@@ -40,7 +40,6 @@ from infra2_sdk.runtime.config_schema import (
     EnvironmentManifest,
     _load_manifest,
     _validate_env,
-    assert_environment,
     environment_manifest_from_model,
 )
 
@@ -171,7 +170,6 @@ def main(
 __all__ = [
     "ManifestSpec",
     "all_manifests",
-    "assert_environment",
     "check",
     "load",
     "main",
