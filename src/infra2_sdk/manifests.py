@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -39,8 +38,10 @@ from pathlib import Path
 from infra2_sdk.ci import validate_manifest_offline
 from infra2_sdk.runtime.config_schema import (
     EnvironmentManifest,
+    _load_manifest,
+    _validate_env,
+    assert_environment,
     environment_manifest_from_model,
-    validate_environment,
 )
 
 
@@ -85,8 +86,7 @@ def _render(manifest: EnvironmentManifest) -> str:
 
 
 def load(path: str | Path, *, root: Path | None = None) -> EnvironmentManifest:
-    target = Path(path) if root is None else root / path
-    return EnvironmentManifest.from_dict(json.loads(target.read_text(encoding="utf-8")))
+    return _load_manifest(path, root=root)
 
 
 def all_manifests(
@@ -124,46 +124,6 @@ def _write(
         written.append(spec.path)
         echo(f"wrote {spec.path}")
     return written
-
-
-def _validate_env(
-    manifest: EnvironmentManifest | str | Path,
-    environ: Mapping[str, str] | None = None,
-    *,
-    root: Path | None = None,
-    require_injected: bool = True,
-) -> list[str]:
-    """Names the environment lacks (never values); empty when the process may boot."""
-    if not isinstance(manifest, EnvironmentManifest):
-        manifest = load(manifest, root=root)
-    result = validate_environment(
-        manifest, os.environ if environ is None else environ, require_injected=require_injected
-    )
-    return list(result.missing)
-
-
-def assert_environment(
-    manifest_path: str | Path,
-    *,
-    environ: Mapping[str, str] | None = None,
-    require_injected: bool,
-) -> None:
-    """Raise RuntimeError naming every variable ``manifest_path`` declares and ``environ`` lacks."""
-    path = Path(manifest_path)
-    if not path.is_file():
-        raise RuntimeError(
-            f"environment manifest {path} is not in the image; boot validation cannot run (#759)"
-        )
-    missing = _validate_env(
-        path,
-        os.environ if environ is None else environ,
-        require_injected=require_injected,
-    )
-    if missing:
-        raise RuntimeError(
-            f"environment lacks {len(missing)} value(s) {path} declares: {', '.join(missing)} "
-            f"-- names only; the deployment must inject them (#759)"
-        )
 
 
 def main(

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import binascii
 import json
 import os
@@ -18,15 +17,26 @@ from io import BytesIO
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import urlopen
 
 from infra2_sdk._wire import (
+    canonical_json_bytes,
     parse_contract_version,
+    parse_iso_utc,
     parse_string,
     require_contract_version,
     require_exact_fields,
 )
-from infra2_sdk.transport import GITHUB_API_BASE, _github_api_url, _github_headers
+from infra2_sdk.refs import _TAG_RE as _RELEASE_REF_RE
+from infra2_sdk.refs import identifier_kind
+from infra2_sdk.transport import (
+    GITHUB_API_BASE,
+    _decode_github_contents,
+    _extract_workflow_runs,
+    _github_api_url,
+    _github_headers,
+    _urlopen_json,
+)
 
 CONTRACT_VERSION = 1
 _REQUEST_ID_RE = re.compile(r"\A[a-zA-Z0-9][a-zA-Z0-9._:-]{7,127}\Z")
@@ -76,14 +86,11 @@ def parse_sender_deadline(payload: Mapping[str, Any]) -> datetime | None:
     if not isinstance(value, str):
         raise ValueError(f"{SENDER_DEADLINE_KEY} must be an ISO 8601 string")
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parse_iso_utc(value)
     except ValueError:
-        parsed = None
-    if parsed is None or parsed.tzinfo is None:
         raise ValueError(
             f"{SENDER_DEADLINE_KEY} {value!r} is not an ISO 8601 time with a time zone"
-        )
-    return parsed.astimezone(UTC)
+        ) from None
 
 
 def production_request_accept_until(
@@ -365,15 +372,7 @@ class ProductionEvidencePolicy:
 
 def canonical_json(request: DeployRequest) -> str:
     """Return stable wire JSON for a deployment request."""
-    return (
-        json.dumps(
-            request.to_dict(),
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
-        )
-        + "\n"
-    )
+    return canonical_json_bytes(request.to_dict()).decode("utf-8") + "\n"
 
 
 def _default_github_json_fetcher(
@@ -387,10 +386,10 @@ def _default_github_json_fetcher(
     headers = _github_headers(token=token or os.getenv(token_env, ""), user_agent=user_agent)
 
     def fetch(path: str) -> Any:
-        req = Request(_github_api_url(path), headers=headers)
         try:
-            with urlopen(req, timeout=timeout) as response:
-                return json.loads(response.read())
+            return _urlopen_json(
+                _github_api_url(path), headers=headers, timeout=timeout, opener=urlopen
+            )
         except HTTPError as exc:
             raise ValueError(
                 f"GitHub evidence request failed for {path}: HTTP {exc.code}"
@@ -527,20 +526,17 @@ def _verify_reviewed_pull(
     if reviews is not None:
         user = pull.get("user")
         pull_author = user.get("login") if isinstance(user, Mapping) else None
-
-        latest_states: dict[str, str] = {}
-        for r in reviews:
-            if not isinstance(r, Mapping):
-                continue
-            r_user = r.get("user")
-            reviewer = r_user.get("login") if isinstance(r_user, Mapping) else None
-            state = r.get("state")
-            if reviewer and isinstance(state, str):
-                latest_states[reviewer] = state
-
+        latest_states = {
+            r["user"]["login"]: r["state"]
+            for r in reviews
+            if isinstance(r, Mapping)
+            and isinstance(r.get("user"), Mapping)
+            and isinstance(r["user"].get("login"), str)
+            and r["user"]["login"]
+            and isinstance(r.get("state"), str)
+        }
         if pull_author:
             latest_states.pop(pull_author, None)
-
         if any(s == "CHANGES_REQUESTED" for s in latest_states.values()):
             raise ValueError("reviewed pull request has pending CHANGES_REQUESTED")
 
@@ -551,13 +547,12 @@ def _parse_evidence_policy_payload(
     *,
     service: str | None = None,
 ) -> ProductionEvidencePolicy:
-    if not isinstance(payload, Mapping):
-        raise ValueError(f"{where} must contain a JSON object")
-    content = payload.get("content")
-    if not isinstance(content, str):
-        raise ValueError(f"{where} did not return file content")
     try:
-        raw = json.loads(base64.b64decode(content, validate=False))
+        raw = json.loads(_decode_github_contents(payload))
+    except TypeError:
+        raise ValueError(f"{where} must contain a JSON object") from None
+    except KeyError:
+        raise ValueError(f"{where} did not return file content") from None
     except (binascii.Error, ValueError) as exc:
         raise ValueError(
             f"malformed {PRODUCTION_EVIDENCE_POLICY_PATH}: not valid JSON ({exc})"
@@ -636,26 +631,20 @@ def verify_production_evidence(
             f"GitHub evidence response for "
             f"/repos/{request.source_repository}/pulls/{pull_number}/reviews must be a list"
         )
-    _verify_run(
-        source_run,
-        label="source run",
-        repository=request.source_repository,
-        url=request.evidence.source_run_url,
-        sha=request.source_sha if effective_policy.source.require_head_sha else None,
-        event=effective_policy.source.event,
-        workflow_path=effective_policy.source.workflow_path,
-        display_title=effective_policy.source.expected_display_title(request.version_ref),
-    )
-    _verify_run(
-        staging_run,
-        label="staging run",
-        repository=request.source_repository,
-        url=request.evidence.staging_run_url,
-        sha=request.source_sha if effective_policy.staging.require_head_sha else None,
-        event=effective_policy.staging.event,
-        workflow_path=effective_policy.staging.workflow_path,
-        display_title=effective_policy.staging.expected_display_title(request.version_ref),
-    )
+    for run, label, url, expectation in (
+        (source_run, "source run", request.evidence.source_run_url, effective_policy.source),
+        (staging_run, "staging run", request.evidence.staging_run_url, effective_policy.staging),
+    ):
+        _verify_run(
+            run,
+            label=label,
+            repository=request.source_repository,
+            url=url,
+            sha=request.source_sha if expectation.require_head_sha else None,
+            event=expectation.event,
+            workflow_path=expectation.workflow_path,
+            display_title=expectation.expected_display_title(request.version_ref),
+        )
     _verify_reviewed_pull(
         reviewed_pull,
         reviews=reviews,
@@ -828,12 +817,10 @@ def _require_httpx() -> Any:
 
 
 def _workflow_runs(payload: object) -> list[Mapping[str, object]]:
-    if not isinstance(payload, Mapping):
-        raise RuntimeError("GitHub workflow-runs response must be an object")
-    runs = payload.get("workflow_runs")
-    if not isinstance(runs, list) or not all(isinstance(run, Mapping) for run in runs):
-        raise RuntimeError("GitHub workflow-runs response must contain a run list")
-    return runs
+    try:
+        return _extract_workflow_runs(payload)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(str(exc)) from exc
 
 
 def _run_id(run: Mapping[str, object]) -> int:
@@ -961,8 +948,6 @@ def _version_prefix_matches(actual: str, expected: str) -> bool:
 
 
 PRODUCTION_APPROVAL_MARGIN_SECONDS = 120
-_RELEASE_REF_RE = re.compile(r"\Av[0-9]+\.[0-9]+\.[0-9]+\Z")
-_COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 _SAFE_REF_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._/-]{0,199}$")
 VERSION_KEYS = ("git_sha", "version")
 
@@ -977,13 +962,8 @@ def print_approval_notice(message: str) -> None:
 def _approval_times(
     value: object, sender_deadline: datetime | None
 ) -> tuple[datetime, datetime] | None:
-    if not isinstance(value, str):
-        return None
     try:
-        created = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        if created.tzinfo is None:
-            return None
-        created = created.astimezone(UTC)
+        created = parse_iso_utc(value)
         deadline = production_request_accept_until(created, sender_deadline) - timedelta(
             seconds=PRODUCTION_APPROVAL_MARGIN_SECONDS
         )
@@ -1197,16 +1177,7 @@ def render_sender_request(
     deploy_type: str = DeployType.STAGING.value,
     staging_run_url: str = "",
     reviewed_change_url: str = "",
-    supported_deploy_types: Sequence[str] = (
-        DeployType.STAGING.value,
-        DeployType.PRODUCTION.value,
-    ),
-    version_ref_error: str = "version_ref must be a release tag like vX.Y.Z",
-    prod_staging_required_error: str = "evidence.staging_run_url is required for prod",
-    prod_review_required_error: str = "evidence.reviewed_change_url is required for prod",
-    prod_staging_url_error: str | None = None,
-    prod_review_url_error: str | None = None,
-    non_prod_evidence_error: str | None = None,
+    **validator_kwargs: Any,
 ) -> DeployRequest:
     """Build and validate a sender-side DeployRequest."""
     return validate_sender_request(
@@ -1229,29 +1200,12 @@ def render_sender_request(
         service=service,
         source_repository=source_repository,
         repo_label=repo_label,
-        supported_deploy_types=supported_deploy_types,
-        version_ref_error=version_ref_error,
-        prod_staging_required_error=prod_staging_required_error,
-        prod_review_required_error=prod_review_required_error,
-        prod_staging_url_error=prod_staging_url_error,
-        prod_review_url_error=prod_review_url_error,
-        non_prod_evidence_error=non_prod_evidence_error,
+        **validator_kwargs,
     )
 
 
 class ReleaseIdentityError(RuntimeError):
     """The environment's release identity could not be established."""
-
-
-def identifier_kind(value: str) -> str:
-    """Name the kind of release identifier, for a message a human can act on."""
-    if not value or value == "unknown":
-        return "unset"
-    if _COMMIT_SHA_RE.match(value):
-        return "commit sha"
-    if _RELEASE_REF_RE.match(value):
-        return "release tag"
-    return "unrecognised"
 
 
 def identity_from_body(body: str, *, url: str = "") -> str:

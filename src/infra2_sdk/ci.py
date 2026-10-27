@@ -5,14 +5,14 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections.abc import Mapping
-from datetime import UTC, datetime
+from collections.abc import Iterable, Mapping
+from datetime import datetime, timedelta
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
 
-from infra2_sdk._wire import _yaml
+from infra2_sdk._wire import _yaml, parse_iso_utc
 from infra2_sdk.rules.compose import inspect_compose
 
 _GATE_ID_RE = re.compile(r"\A[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+\Z")
@@ -50,47 +50,105 @@ _JOB_KEY_RE = re.compile(r"^  ([A-Za-z_][\w-]*):\s*$")
 _BLOCK_SCALAR_RE = re.compile(r":\s*[|>][+-]?\d*\s*$")
 
 
-def read_workflow(path: str | Path) -> tuple[dict, str]:
-    """Return a workflow's parsed YAML and its raw text from a single read."""
+def _parse_workflow(path: str | Path) -> tuple[dict, str, str | None]:
     p = Path(path)
     if not p.is_file():
-        return {}, ""
-    try:
-        source = p.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return {}, ""
-    yaml = _yaml()
-    try:
-        parsed = yaml.safe_load(source)
-    except yaml.YAMLError:
-        return {}, source
-    return (parsed if isinstance(parsed, dict) else {}), source
-
-
-def workflow_read_error(path: str | Path) -> str | None:
-    """Return why ``read_workflow`` gave back an empty mapping for ``path``, or None."""
-    p = Path(path)
-    if not p.is_file():
-        return None
+        return {}, "", None
     try:
         source = p.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        return str(exc)
+        return {}, "", str(exc)
     if not source.strip():
-        return None
+        return {}, source, None
     yaml = _yaml()
     try:
         parsed = yaml.safe_load(source)
     except yaml.YAMLError as exc:
-        return str(exc)
+        return {}, source, str(exc)
     if isinstance(parsed, dict):
-        return None
-    return f"top level is {type(parsed).__name__}, not a mapping"
+        return parsed, source, None
+    return {}, source, f"top level is {type(parsed).__name__}, not a mapping"
+
+
+def read_workflow(path: str | Path) -> tuple[dict, str]:
+    """Return a workflow's parsed YAML and its raw text from a single read."""
+    parsed, source, _ = _parse_workflow(path)
+    return parsed, source
+
+
+def workflow_read_error(path: str | Path) -> str | None:
+    """Return why ``read_workflow`` gave back an empty mapping for ``path``, or None."""
+    return _parse_workflow(path)[2]
 
 
 def load_workflow(path: str | Path) -> dict:
     """Return a workflow's parsed YAML, or {} when absent or unreadable."""
     return read_workflow(path)[0]
+
+
+_MINUTES_PER_DAY = 24 * 60
+_CRON_LINE = re.compile(
+    r"""^[ \t]*-?[ \t]*cron:[ \t]*(?P<quote>["']?)(?P<expr>[^"'#\n]+?)(?P=quote)[ \t]*(?:#.*)?$""",
+    re.MULTILINE,
+)
+_ELEMENT = re.compile(r"^(?P<span>\*|\d+(?:-\d+)?)(?:/(?P<step>\d+))?$")
+
+
+class ScheduleError(ValueError):
+    """The workflow's schedule is not one this module can measure."""
+
+
+def crons_in(workflow_text: str) -> list[str]:
+    """Return the ``cron:`` values in a workflow file, in order."""
+    return [match.group("expr").strip() for match in _CRON_LINE.finditer(workflow_text)]
+
+
+def _field(text: str, name: str, low: int, high: int) -> set[int]:
+    values: set[int] = set()
+    for element in text.split(","):
+        match = _ELEMENT.match(element)
+        if not match:
+            raise ScheduleError(f"{name} {element!r} is not a number, range or step")
+        span, step_text = match.group("span"), match.group("step")
+        step = int(step_text) if step_text is not None else 1
+        if step < 1:
+            raise ScheduleError(f"{name} step in {element!r} must be at least 1")
+        if span == "*":
+            first, last = low, high
+        elif "-" in span:
+            first, last = (int(part) for part in span.split("-", 1))
+        else:
+            first = int(span)
+            last = high if step_text is not None else first
+        if not low <= first <= last <= high:
+            raise ScheduleError(f"{name} {element!r} is outside {low}-{high}")
+        values.update(range(first, last + 1, step))
+    return values
+
+
+def largest_gap(crons: Iterable[str]) -> timedelta:
+    """Return the largest gap between consecutive fire times of daily-periodic crons."""
+    fires: set[int] = set()
+    listed = list(crons)
+    if not listed:
+        raise ScheduleError("the workflow has no cron")
+    for expression in listed:
+        parts = expression.split()
+        if len(parts) != 5:
+            raise ScheduleError(f"cron {expression!r} has {len(parts)} fields, not 5")
+        minute, hour, day, month, weekday = parts
+        if (day, month, weekday) != ("*", "*", "*"):
+            raise ScheduleError(
+                f"cron {expression!r} is not daily-periodic; teach "
+                "infra2_sdk.observability.largest_gap to measure it"
+            )
+        minutes = _field(minute, "minute", 0, 59)
+        hours = _field(hour, "hour", 0, 23)
+        fires.update(h * 60 + m for h in hours for m in minutes)
+    ordered = sorted(fires)
+    gaps = [later - earlier for earlier, later in zip(ordered, ordered[1:], strict=False)]
+    gaps.append(ordered[0] + _MINUTES_PER_DAY - ordered[-1])
+    return timedelta(minutes=max(gaps))
 
 
 def _exempt_lines(source: str) -> set[tuple[str, str]]:
@@ -250,10 +308,7 @@ def parse_github_time(value: str | None) -> datetime | None:
     """Parse an optional GitHub ISO timestamp as a UTC datetime."""
     if value is None or not value.strip():
         return None
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
+    return parse_iso_utc(value, allow_naive=True)
 
 
 def write_github_output(
@@ -371,10 +426,13 @@ __all__ = [
     "SHARD_MIN",
     "SOFT_WARN_S",
     "SPEC_VERSION",
+    "ScheduleError",
     "TARGET_PER_SHARD_S",
     "check_no_regression",
+    "crons_in",
     "defanged_steps",
     "inspect_compose",
+    "largest_gap",
     "load_baseline",
     "load_delivery_stages",
     "load_workflow",

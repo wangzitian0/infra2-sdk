@@ -1103,3 +1103,76 @@ def test_observability_github_and_trail_branches(
 
     assert reconcile_issue_trail(_FakeIssueApi(), trail_run, mode="full", run_url="https://x") == 0
     assert reconcile_issue_trail(_FakeIssueApi(), trail_run, mode="open-only") == 0
+
+
+def test_issue154_function_placement_ssot_invariants() -> None:
+    import base64
+
+    from infra2_sdk._wire import _is_loopback_host, parse_iso_utc
+    from infra2_sdk.ci import (
+        ScheduleError as CiScheduleError,
+    )
+    from infra2_sdk.ci import (
+        crons_in as ci_crons_in,
+    )
+    from infra2_sdk.ci import (
+        largest_gap as ci_largest_gap,
+    )
+    from infra2_sdk.deploy import identifier_kind as deploy_identifier_kind
+    from infra2_sdk.manifests import assert_environment as manifests_assert_environment
+    from infra2_sdk.observability import (
+        ScheduleError as ObsScheduleError,
+    )
+    from infra2_sdk.observability import (
+        crons_in as obs_crons_in,
+    )
+    from infra2_sdk.observability import (
+        largest_gap as obs_largest_gap,
+    )
+    from infra2_sdk.refs import identifier_kind as refs_identifier_kind
+    from infra2_sdk.runtime.config_schema import assert_environment as config_assert_environment
+    from infra2_sdk.transport import (
+        _decode_github_contents,
+        _extract_workflow_runs,
+        _urlopen_json,
+    )
+
+    assert config_assert_environment.__module__ == "infra2_sdk.runtime.config_schema"
+    assert manifests_assert_environment is config_assert_environment
+
+    assert refs_identifier_kind.__module__ == "infra2_sdk.refs"
+    assert deploy_identifier_kind is refs_identifier_kind
+
+    assert ci_crons_in.__module__ == "infra2_sdk.ci"
+    assert ci_largest_gap.__module__ == "infra2_sdk.ci"
+    assert CiScheduleError.__module__ == "infra2_sdk.ci"
+    assert obs_crons_in is ci_crons_in
+    assert obs_largest_gap is ci_largest_gap
+    assert ObsScheduleError is CiScheduleError
+
+    assert parse_iso_utc("2026-10-27T01:02:03Z") == datetime(2026, 10, 27, 1, 2, 3, tzinfo=UTC)
+    assert parse_iso_utc("2026-10-27T01:02:03", allow_naive=True) == datetime(
+        2026, 10, 27, 1, 2, 3, tzinfo=UTC
+    )
+    with pytest.raises(ValueError, match="expected non-empty ISO 8601 string"):
+        parse_iso_utc("")
+    with pytest.raises(ValueError, match="timestamp must have a time zone"):
+        parse_iso_utc("2026-10-27T01:02:03")
+
+    assert _is_loopback_host("localhost")
+    assert _is_loopback_host("[::1]")
+    assert not _is_loopback_host("example.com")
+
+    assert _extract_workflow_runs({"workflow_runs": [{"id": 1}]}) == [{"id": 1}]
+    with pytest.raises(TypeError, match="must be an object"):
+        _extract_workflow_runs([])
+    with pytest.raises(ValueError, match="must contain a run list"):
+        _extract_workflow_runs({"workflow_runs": "bad"})
+
+    encoded = base64.b64encode(b'{"a":1}').decode("ascii")
+    assert _decode_github_contents({"encoding": "base64", "content": encoded}) == b'{"a":1}'
+    with pytest.raises(TypeError, match="must contain a JSON object"):
+        _decode_github_contents("bad")
+    with pytest.raises(KeyError, match="did not return file content"):
+        _decode_github_contents({"encoding": "utf-8", "content": encoded}, require_encoding=True)
+    assert callable(_urlopen_json)
