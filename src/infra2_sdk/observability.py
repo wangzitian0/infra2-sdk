@@ -17,6 +17,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
+from infra2_sdk.transport import _github_api_url, _github_headers
+
 # ---------------------------------------------------------------------------
 # Recency & consecutive-observation hysteresis (#531, #475)
 # ---------------------------------------------------------------------------
@@ -98,7 +100,6 @@ _UNFILTERED_PAGE = 50
 _STARTED = ("in_progress", "completed")
 _STARTUP_FAILURE = "startup_failure"
 _MINUTES_PER_DAY = 24 * 60
-_API_BASE = "https://api.github.com"
 _API_TIMEOUT_SECONDS = 20.0
 
 _OK = "OK"
@@ -129,23 +130,40 @@ class PeerVerdict:
         return self.status == _OK
 
 
+def _urlopen_json(
+    url: str,
+    *,
+    headers: Mapping[str, str],
+    method: str = "GET",
+    payload: Mapping[str, object] | None = None,
+    timeout: float = _API_TIMEOUT_SECONDS,
+    opener: Callable[..., object] = urlopen,
+) -> object:
+    request = Request(  # noqa: S310
+        url,
+        headers=dict(headers),
+        data=None if payload is None else json.dumps(dict(payload)).encode("utf-8"),
+        method=method,
+    )
+    with opener(request, timeout=timeout) as response:  # type: ignore[attr-defined]
+        raw = response.read().decode("utf-8")
+    return json.loads(raw) if raw.strip() else None
+
+
 def github_getter(
     token: str = "", *, timeout: float = _API_TIMEOUT_SECONDS, opener=urlopen
 ) -> _Get:
     """Return a reader for the public GitHub REST API; the token is optional."""
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "infra2-scheduler-peer-liveness/1.0",
-    }
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    headers = _github_headers(
+        token=token,
+        user_agent="infra2-scheduler-peer-liveness/1.0",
+    )
 
     def get(path: str) -> object:
-        request = Request(f"{_API_BASE}{path}", headers=headers, method="GET")
         try:
-            with opener(request, timeout=timeout) as response:  # noqa: S310
-                return json.loads(response.read().decode("utf-8"))
+            return _urlopen_json(
+                _github_api_url(path), headers=headers, timeout=timeout, opener=opener
+            )
         except HTTPError as exc:
             raise PeerReadError(f"GET {path} answered HTTP {exc.code}") from exc
         except (OSError, URLError, ValueError) as exc:
@@ -590,21 +608,19 @@ class GitHubIssues:
         self._timeout = timeout
 
     def _call(self, method: str, path: str, payload: dict | None = None) -> object:
-        request = Request(
-            f"{_API_BASE}/repos/{self.repository}{path}",
-            headers={
-                "Authorization": f"Bearer {self._token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-                "User-Agent": "infra2-watchdog-issue-trail/1.0",
-                "Content-Type": "application/json",
-            },
-            data=None if payload is None else json.dumps(payload).encode("utf-8"),
-            method=method,
+        headers = _github_headers(
+            token=self._token,
+            user_agent="infra2-watchdog-issue-trail/1.0",
+            content_type="application/json",
         )
-        with self._opener(request, timeout=self._timeout) as response:  # noqa: S310
-            raw = response.read().decode("utf-8")
-        return json.loads(raw) if raw.strip() else None
+        return _urlopen_json(
+            _github_api_url(f"/repos/{self.repository}{path}"),
+            headers=headers,
+            method=method,
+            payload=payload,
+            timeout=self._timeout,
+            opener=self._opener,
+        )
 
     def open_issues(self, *, with_body: bool = False) -> list[dict]:
         """Return open issues as ``{"number", "title"}`` dicts (plus body/author if *with_body*)."""
@@ -941,18 +957,17 @@ def post_openpanel_json(
     opener: Callable[..., object] = urlopen,
 ) -> dict[str, object]:
     """POST a JSON payload to the OpenPanel export API and return the decoded response."""
-    data = json.dumps(dict(payload)).encode("utf-8")
-    request = Request(  # noqa: S310 - scheme validated by resolve_openpanel_api_url
+    body = _urlopen_json(
         url,
-        data=data,
         headers={
             "Content-Type": "application/json",
             "openpanel-client-secret": api_key,
         },
         method="POST",
+        payload=payload,
+        timeout=timeout,
+        opener=opener,
     )
-    with opener(request, timeout=timeout) as response:  # type: ignore[attr-defined]
-        body = json.loads(response.read().decode("utf-8"))
     if not isinstance(body, dict):
         raise ValueError(f"OpenPanel response from {url} is not a JSON object")
     return body

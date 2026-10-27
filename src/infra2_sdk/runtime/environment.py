@@ -76,10 +76,10 @@ def resolve_runtime_env(
     *,
     default: str | None = None,
     required: bool = False,
-) -> ResolvedEnvValue:
+) -> _ResolvedEnvValue:
     """Resolve a registered key using its single-source aliases and sensitivity."""
     spec = runtime_env_spec(key)
-    return resolve_env(
+    return _resolve_env(
         environ,
         spec.key,
         aliases=spec.aliases,
@@ -94,12 +94,12 @@ class EnvironmentConflictError(ValueError):
 
 
 @dataclass(frozen=True)
-class ResolvedEnvValue:
+class _ResolvedEnvValue:
     value: str | None
     source: str | None
 
 
-def resolve_env(
+def _resolve_env(
     environ: Mapping[str, str] | None,
     key: str | RuntimeEnvKey,
     *,
@@ -107,7 +107,7 @@ def resolve_env(
     default: str | None = None,
     required: bool = False,
     sensitive: bool = False,
-) -> ResolvedEnvValue:
+) -> _ResolvedEnvValue:
     """Resolve one variable and reject ambiguous aliases without logging values."""
     values = os.environ if environ is None else environ
     canonical = str(key)
@@ -128,10 +128,10 @@ def resolve_env(
         by_name = dict(present)
         for name in candidates:
             if name in by_name:
-                return ResolvedEnvValue(by_name[name], name)
+                return _ResolvedEnvValue(by_name[name], name)
     if required and default is None:
         raise ValueError(f"{canonical} is required")
-    return ResolvedEnvValue(default, None)
+    return _ResolvedEnvValue(default, None)
 
 
 def env_int(
@@ -141,7 +141,7 @@ def env_int(
     default: int,
     aliases: tuple[str, ...] = (),
 ) -> int:
-    resolved = resolve_env(environ, key, aliases=aliases)
+    resolved = _resolve_env(environ, key, aliases=aliases)
     if resolved.value is None:
         return default
     try:
@@ -161,14 +161,14 @@ class EnvironmentTier(StrEnum):
     PRODUCTION = "production"
 
 
-class UnknownEnvironmentPolicy(StrEnum):
+class _UnknownEnvironmentPolicy(StrEnum):
     """How a consumer handles an environment name outside the shared vocabulary."""
 
     ERROR = "error"
     PRODUCTION = "production"
 
 
-PLATFORM_OWNED_TIERS = frozenset(
+_PLATFORM_OWNED_TIERS = frozenset(
     {
         EnvironmentTier.PREVIEW,
         EnvironmentTier.STAGING,
@@ -223,7 +223,7 @@ def to_environment_tier(
     value: str | EnvironmentTier | Any,
     *,
     github_actions: bool = False,
-    unknown: str | UnknownEnvironmentPolicy = UnknownEnvironmentPolicy.ERROR,
+    unknown: str | _UnknownEnvironmentPolicy = _UnknownEnvironmentPolicy.ERROR,
 ) -> EnvironmentTier:
     """Map any environment representation to canonical EnvironmentTier.
 
@@ -261,8 +261,8 @@ def to_environment_tier(
         if normalized in _PRODUCTION_ALIASES:
             return EnvironmentTier.PRODUCTION
 
-        policy = UnknownEnvironmentPolicy(unknown)
-        if policy is UnknownEnvironmentPolicy.PRODUCTION:
+        policy = _UnknownEnvironmentPolicy(unknown)
+        if policy is _UnknownEnvironmentPolicy.PRODUCTION:
             return EnvironmentTier.PRODUCTION
         raise ValueError(f"unknown environment: {value!r}")
 
@@ -276,7 +276,7 @@ def resolve_environment_tier(
     value: str | EnvironmentTier | Any,
     *,
     github_actions: bool = False,
-    unknown: str | UnknownEnvironmentPolicy = UnknownEnvironmentPolicy.ERROR,
+    unknown: str | _UnknownEnvironmentPolicy = _UnknownEnvironmentPolicy.ERROR,
 ) -> EnvironmentTier:
     """Normalize common aliases while making fail-closed behavior explicit.
 
@@ -292,7 +292,7 @@ def environment_from_env(
     *,
     required: bool = False,
     github_actions: bool | None = None,
-    unknown: str | UnknownEnvironmentPolicy = UnknownEnvironmentPolicy.ERROR,
+    unknown: str | _UnknownEnvironmentPolicy = _UnknownEnvironmentPolicy.ERROR,
 ) -> RuntimeEnvironment:
     """Resolve locally, optionally requiring an explicit deployed environment."""
 
@@ -321,7 +321,7 @@ def strict_environment_from_env(
     environ: Mapping[str, str] | None = None,
     *,
     github_actions: bool | None = None,
-    unknown: str | UnknownEnvironmentPolicy = UnknownEnvironmentPolicy.ERROR,
+    unknown: str | _UnknownEnvironmentPolicy = _UnknownEnvironmentPolicy.ERROR,
 ) -> RuntimeEnvironment:
     """Require an explicit environment for deployed/protected runtime validation."""
 
@@ -338,8 +338,6 @@ _IDENTITY_ATTRIBUTES = (
     "service.name",
     "service.version",
     "service.instance.id",
-    "vcs.ref.head.revision",
-    "infra.iac.ref",
 )
 
 
@@ -358,10 +356,6 @@ class _ServiceIdentity:
     service_name: str | None
     service_version: str
     instance_id: str
-    commit_sha: str = "unknown"
-    image_digest: str = ""
-    configuration_sha256: str = ""
-    release_id: str = ""
 
 
 def _resolve_service_identity(
@@ -371,24 +365,7 @@ def _resolve_service_identity(
     default_service_name: str | None = None,
     ignore_environment: bool = False,
 ) -> _ServiceIdentity:
-    """Resolve the tier and the service coordinates of one environment.
-
-    This function is the one reader of these facts. ``OtelSettings.from_env`` and
-    ``init_service`` get them from here.
-
-    - Tier: ``environment_from_env``, or ``strict_environment_from_env`` when ``strict`` is true.
-    - Resource attributes: ``OTEL_RESOURCE_ATTRIBUTES``. A malformed value raises ``ValueError``
-      when ``strict`` is true. Otherwise it gives a ``RuntimeWarning`` and no attributes.
-      The values of ``service.name``, ``service.version`` and ``service.instance.id`` lose their
-      blank padding. A blank one counts as missing, as a blank variable does, and the key is
-      dropped. The next source of the chain applies.
-    - Service name: ``OTEL_SERVICE_NAME``, then ``service.name`` in the attributes, then
-      ``default_service_name``. The result is ``None`` when all three are missing.
-    - Service version: ``SERVICE_VERSION``, then ``service.version``, then ``unknown``.
-    - Instance id: ``INSTANCE_ID``, then ``service.instance.id``, then an empty string.
-    - Commit sha: ``GIT_COMMIT_SHA``, then ``vcs.ref.head.revision``, then ``infra.iac.ref``,
-      then ``unknown``.
-    """
+    """Resolve the tier and the service coordinates of one environment."""
 
     if ignore_environment:
         runtime = RuntimeEnvironment(
@@ -406,8 +383,6 @@ def _resolve_service_identity(
         resolve_runtime_env(environ, RuntimeEnvKey.OTEL_RESOURCE_ATTRIBUTES, default="").value
         or "",
         strict=strict,
-        # Frames: 1 load_resource_attributes, 2 this function, 3 from_env, 4 the caller of
-        # from_env. The warning names the caller of from_env.
         stacklevel=4,
     )
     for key in _IDENTITY_ATTRIBUTES:
@@ -417,19 +392,7 @@ def _resolve_service_identity(
             else:
                 del attributes[key]
     version = resolve_runtime_env(environ, RuntimeEnvKey.SERVICE_VERSION).value
-    instance = resolve_env(environ, "INSTANCE_ID").value
-    commit = resolve_runtime_env(environ, RuntimeEnvKey.GIT_COMMIT_SHA).value
-    image_digest = resolve_runtime_env(environ, RuntimeEnvKey.IMAGE_DIGEST, default="").value or ""
-    configuration_sha256 = (
-        resolve_runtime_env(environ, RuntimeEnvKey.CONFIGURATION_SHA256, default="").value or ""
-    )
-    release_id = resolve_runtime_env(environ, RuntimeEnvKey.RELEASE_ID, default="").value or ""
-    commit_sha = (
-        commit
-        or attributes.get("vcs.ref.head.revision")
-        or attributes.get("infra.iac.ref")
-        or "unknown"
-    )
+    instance = _resolve_env(environ, "INSTANCE_ID").value
     return _ServiceIdentity(
         environment=runtime,
         environment_is_set=environment_is_set,
@@ -438,14 +401,10 @@ def _resolve_service_identity(
         service_name=named or attributes.get("service.name") or default_service_name or None,
         service_version=version or attributes.get("service.version", "unknown"),
         instance_id=instance or attributes.get("service.instance.id", ""),
-        commit_sha=commit_sha,
-        image_digest=image_digest,
-        configuration_sha256=configuration_sha256,
-        release_id=release_id,
     )
 
 
-def normalize_deployment_environment(
+def _normalize_deployment_environment(
     value: str,
     tier: str | EnvironmentTier,
 ) -> str:

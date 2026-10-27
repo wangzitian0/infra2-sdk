@@ -25,7 +25,7 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.14.0"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.15.0"
 ```
 
 ## Modules
@@ -73,10 +73,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.14.0'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.15.0'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.14.0'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.15.0'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -200,7 +200,7 @@ Install the published wheel in a fresh Python 3.11+ environment:
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install \
-  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.14.0/infra2_sdk-3.14.0-py3-none-any.whl'
+  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.15.0/infra2_sdk-3.15.0-py3-none-any.whl'
 ```
 
 For a local connectivity exercise, start this server in another terminal:
@@ -517,28 +517,19 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
 - In v3.4.0, `init_service` raises `ValueError` for a blank `name` before it changes the app. A
   strict check that fails leaves no marker and no probe route. A failure while the providers
   start is the one exception. The `init_service` documentation describes it.
-- In v3.4.0, 24 names left `__all__` of `infra2_sdk` and `infra2_sdk.runtime` and are no longer
-  attributes of these packages (eight other names that left `__all__` in v3.4.0 or v3.5.1 were
-  deleted in v3.5.1, v3.5.2, and v3.8.2 and are listed in the notes below). No consumer imports them
-  from the package, and no recorded decision holds them. Five of them are imported from their module
-  in test code. In infra2 these are `BudgetStatus`, `DisagreementKind`, `PipelineStage` and
-  `validate_gate`. In finance_report and truealpha it is `ProductionEvidencePolicy`. That import
-  works as before. All 24 names below stay defined in their modules. Import them from the module,
-  for example `from infra2_sdk.deploy import ProductionEvidencePolicy`:
+- In v3.4.0, 10 names left `__all__` of `infra2_sdk` and `infra2_sdk.runtime` and are no longer
+  attributes of these packages (22 other names that left `__all__` in v3.4.0 or v3.5.1 were
+  deleted or made private in v3.5.1, v3.5.2, v3.8.2, and v3.15.0 and are listed in the notes below).
+  No consumer imports them from the package, and no recorded decision holds them. All 10 names below
+  stay defined in their modules. Import them from the module, for example
+  `from infra2_sdk.deploy import ProductionEvidencePolicy`:
   - in `infra2_sdk`:
-    - `capacity`: `CapacityLimit`;
     - `ci`: `validate_gate`;
-    - `delivery`: `BudgetStatus`, `DisagreementKind`, `PipelineStage`;
-    - `deploy`: `CONTRACT_VERSION`, `DeployEvidence`, `HealthCheckResult`,
-      `ProductionEvidencePolicy`, `fetch_production_evidence_policy`;
-    - `routing`: `DEFAULT_BASE_DOMAIN`;
-    - `secrets`: `SecretsBackend`, `TokenStatus`;
+    - `delivery`: `BudgetStatus`, `PipelineStage`;
+    - `deploy`: `CONTRACT_VERSION`, `DeployEvidence`, `ProductionEvidencePolicy`;
   - in `infra2_sdk.runtime`:
-    - `config_schema`: `EnvironmentValidation`, `validate_environment`;
-    - `environment`: `EnvironmentConflictError`, `PLATFORM_OWNED_TIERS`,
-      `ResolvedEnvValue`, `RuntimeEnvSpec`, `UnknownEnvironmentPolicy`,
-      `normalize_deployment_environment`, `resolve_env`, `strict_environment_from_env`;
-    - `health`: `HealthStatus`.
+    - `config_schema`: `validate_environment`;
+    - `environment`: `EnvironmentConflictError`, `RuntimeEnvSpec`, `strict_environment_from_env`.
 - In v3.4.0, `infra2_sdk.__version__` left `infra2_sdk.__all__` and stays importable. The root
   package no longer exposes `version` and `PackageNotFoundError`, which it imported from
   `importlib.metadata`.

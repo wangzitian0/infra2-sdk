@@ -17,11 +17,11 @@ from infra2_sdk.runtime.environment import (
     EnvironmentTier,
     RuntimeEnvironment,
     RuntimeEnvKey,
+    _normalize_deployment_environment,
+    _resolve_env,
     _resolve_service_identity,
     env_int,
     is_preview_alias,
-    normalize_deployment_environment,
-    resolve_env,
     resolve_environment_tier,
     resolve_runtime_env,
 )
@@ -55,7 +55,7 @@ class OtelSettings:
     def __post_init__(self) -> None:
         tier = resolve_environment_tier(self.environment)
         object.__setattr__(self, "environment", tier.value)
-        display = normalize_deployment_environment(self.deployment_environment, tier)
+        display = _normalize_deployment_environment(self.deployment_environment, tier)
         object.__setattr__(self, "deployment_environment", display)
         if not self.service_name:
             raise ValueError("service_name is required")
@@ -103,7 +103,7 @@ class OtelSettings:
         identity = _resolve_service_identity(environ, **resolver_kwargs)
         endpoint = resolve_runtime_env(environ, RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT).value
         try:
-            disabled = parse_otel_boolean(resolve_env(environ, "OTEL_SDK_DISABLED").value)
+            disabled = parse_otel_boolean(_resolve_env(environ, "OTEL_SDK_DISABLED").value)
         except ValueError as exc:
             if strict:
                 raise ValueError(f"invalid OTEL_SDK_DISABLED: {exc}") from exc
@@ -129,7 +129,7 @@ class OtelSettings:
                 not identity.environment_is_set or require_issued_identity
             ):
                 inferred_tier = resolve_environment_tier(deployment_environment)
-                normalized_display = normalize_deployment_environment(
+                normalized_display = _normalize_deployment_environment(
                     deployment_environment,
                     inferred_tier,
                 )
@@ -140,14 +140,14 @@ class OtelSettings:
                 and runtime.tier is EnvironmentTier.STAGING
                 and is_preview_alias(deployment_environment)
             ):
-                normalized_preview = normalize_deployment_environment(
+                normalized_preview = _normalize_deployment_environment(
                     deployment_environment,
                     EnvironmentTier.PREVIEW,
                 )
                 runtime = RuntimeEnvironment(normalized_preview, EnvironmentTier.PREVIEW)
                 deployment_environment = normalized_preview
             elif deployment_environment:
-                deployment_environment = normalize_deployment_environment(
+                deployment_environment = _normalize_deployment_environment(
                     deployment_environment,
                     runtime.tier,
                 )
@@ -155,8 +155,8 @@ class OtelSettings:
             if strict:
                 raise ValueError(f"invalid deployment.environment.name: {exc}") from exc
             raise
-        sampler_name = resolve_env(environ, "OTEL_TRACES_SAMPLER").value
-        sampler_arg = resolve_env(environ, "OTEL_TRACES_SAMPLER_ARG").value
+        sampler_name = _resolve_env(environ, "OTEL_TRACES_SAMPLER").value
+        sampler_arg = _resolve_env(environ, "OTEL_TRACES_SAMPLER_ARG").value
         sampler_name, sampler_arg = sampler_name or "", sampler_arg or ""
         try:
             parse_traces_sampler(sampler_name, sampler_arg)

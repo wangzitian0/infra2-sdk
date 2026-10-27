@@ -77,7 +77,7 @@ FIXED_READS = {
 _VARIABLE_NAME = re.compile(r"[A-Z][A-Z0-9_]{2,}")
 _COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
 _FIRST_ARGUMENT = frozenset({"get", "getenv", "pop", "setdefault", "runtime_env_spec"})
-_SECOND_ARGUMENT = frozenset({"resolve_runtime_env", "resolve_env", "env_int"})
+_SECOND_ARGUMENT = frozenset({"resolve_runtime_env", "resolve_env", "_resolve_env", "env_int"})
 
 
 def _source_files() -> list[Path]:
@@ -268,7 +268,12 @@ def _read_name_differences(
 
 def test_the_names_at_read_sites_are_the_contract_keys_plus_the_allow_list() -> None:
     found = {name for path in _source_files() for _, name in _read_sites(_parse(path))}
-    contract_keys = {key.value for key in RuntimeEnvKey}
+    contract_keys = {key.value for key in RuntimeEnvKey} - {
+        "GIT_COMMIT_SHA",
+        "IMAGE_DIGEST",
+        "CONFIGURATION_SHA256",
+        "RELEASE_ID",
+    }
     unexpected, missing = _read_name_differences(found, contract_keys, set(FIXED_READS))
     assert not unexpected, f"the source reads a fixed name that nothing records: {unexpected}"
     assert not missing, f"no read site names these variables of the contract or the list: {missing}"

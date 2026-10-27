@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from enum import StrEnum
+from functools import cache
 
+from infra2_sdk.ci import _load_pipeline_stage_deadlines
 from infra2_sdk.runtime.environment import EnvironmentTier, to_environment_tier
 
 __all__ = [
@@ -66,26 +68,15 @@ class BudgetStatus(StrEnum):
     NOT_APPLICABLE = "not-applicable"
 
 
-class DisagreementKind(StrEnum):
+class _DisagreementKind(StrEnum):
     NONE = "none"
     INTERNAL_HEALTH_PUBLIC_ROUTE = "internal-health-public-route"
 
 
-_STAGE_DEADLINE_MS: dict[PipelineStage, int] = {
-    PipelineStage.CHANGED_AFFECTED_UT: 120_000,
-    PipelineStage.LINT_STATIC: 180_000,
-    PipelineStage.FULL_UT: 600_000,
-    PipelineStage.INTEGRATION: 600_000,
-    PipelineStage.REGRESSION_E2E: 900_000,
-    PipelineStage.IMAGE_BUILD: 600_000,
-    PipelineStage.DEPLOY_SMOKE: 180_000,
-    PipelineStage.PROVIDER_GATE: 300_000,
-    PipelineStage.RELEASE_INTEGRITY: 180_000,
-    PipelineStage.CONFIG_PREFLIGHT: 60_000,
-    PipelineStage.DEPLOY_START: 120_000,
-    PipelineStage.DEPLOY_STATUS: 1_200_000,
-    PipelineStage.WATCHDOG: 120_000,
-}
+@cache
+def _stage_deadlines_ms() -> dict[PipelineStage, int]:
+    raw = _load_pipeline_stage_deadlines()
+    return {stage: int(raw[stage.value]) for stage in PipelineStage}
 
 
 @dataclass(frozen=True)
@@ -103,7 +94,7 @@ class StageResult:
     skipped_reason: str = ""
     current_stage_age_ms: int = 0
     budget_status: BudgetStatus = BudgetStatus.NOT_APPLICABLE
-    disagreement_kind: DisagreementKind = DisagreementKind.NONE
+    disagreement_kind: _DisagreementKind = _DisagreementKind.NONE
     evidence_url: str = ""
 
     def to_dict(self) -> dict[str, object]:
@@ -147,7 +138,7 @@ def make_stage_result(
     duration_ms: int = 0,
     deadline_ms: int | None = None,
     failure_domain: str | FailureDomain = FailureDomain.NONE,
-    disagreement_kind: str | DisagreementKind = DisagreementKind.NONE,
+    disagreement_kind: str | _DisagreementKind = _DisagreementKind.NONE,
     external_dependency: bool = False,
     suppressed_reason: str = "",
     skipped_reason: str = "",
@@ -161,7 +152,9 @@ def make_stage_result(
     stage_value = PipelineStage(stage)
     status_value = StageStatus(status)
     domain_value = FailureDomain(failure_domain)
-    resolved_deadline_ms = _STAGE_DEADLINE_MS[stage_value] if deadline_ms is None else deadline_ms
+    resolved_deadline_ms = (
+        _stage_deadlines_ms()[stage_value] if deadline_ms is None else deadline_ms
+    )
 
     result = StageResult(
         source=source,
@@ -177,7 +170,7 @@ def make_stage_result(
         skipped_reason=skipped_reason,
         current_stage_age_ms=current_stage_age_ms,
         budget_status=classify_budget(duration_ms, deadline_ms=resolved_deadline_ms),
-        disagreement_kind=DisagreementKind(disagreement_kind)
+        disagreement_kind=_DisagreementKind(disagreement_kind)
         if isinstance(disagreement_kind, str)
         else disagreement_kind,
         evidence_url=evidence_url,

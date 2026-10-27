@@ -11,13 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
-def _yaml() -> Any:
-    """Lazy-import PyYAML only when compose YAML parsing is invoked."""
-    import yaml
-
-    return yaml
-
+from infra2_sdk._wire import _yaml
 
 # 512m, 1.5g, 2G, 1073741824. A bare 0, "0", "0b" or prose is not a ceiling.
 _SIZE_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([kmgtb]?b?)\s*$", re.I)

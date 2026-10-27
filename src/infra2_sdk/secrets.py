@@ -19,8 +19,6 @@ from infra2_sdk.runtime.config_schema import (
     EnvironmentField,
     EnvironmentManifest,
     _FieldSource,
-    _reconcile,
-    _ReconcileReport,
 )
 from infra2_sdk.transport import HttpResponse, HttpTransport, urllib_transport
 
@@ -43,7 +41,7 @@ class WriteResult:
         return bool(self.changed)
 
 
-class SecretsBackend(Protocol):
+class _SecretsBackend(Protocol):
     def read(self, path: str) -> Mapping[str, str]: ...
 
     def write(self, path: str, values: Mapping[str, str]) -> WriteResult: ...
@@ -168,7 +166,7 @@ class VaultKvBackend:
             raise SecretsError(f"Vault write to {path} failed with HTTP {response.status}")
         return WriteResult(changed)
 
-    def token_status(self) -> TokenStatus:
+    def token_status(self) -> _TokenStatus:
         """``auth/token/lookup-self`` for this backend's token (names and numbers only)."""
         return vault_token_status(self._address, self._token, transport=self._send)
 
@@ -219,7 +217,7 @@ _Runner = Callable[..., subprocess.CompletedProcess[str]]
 
 
 @dataclass(frozen=True)
-class TokenStatus:
+class _TokenStatus:
     """What ``auth/token/lookup-self`` says about a token; never the token itself."""
 
     valid: bool
@@ -248,7 +246,7 @@ def vault_token_status(
     transport: HttpTransport | None = None,
     min_ttl_seconds: int = 0,
     user_agent: str = _VAULT_USER_AGENT,
-) -> TokenStatus:
+) -> _TokenStatus:
     """Look a token up; ``valid`` also requires ``ttl >= min_ttl_seconds``.
 
     A transport failure or a non-200 answer is a status with ``valid=False`` and a
@@ -263,17 +261,17 @@ def vault_token_status(
             None,
         )
     except OSError as error:
-        return TokenStatus(False, -1, False, f"cannot reach Vault: {error}")
+        return _TokenStatus(False, -1, False, f"cannot reach Vault: {error}")
     if response.status == 403:
-        return TokenStatus(False, -1, False, "token expired or invalid (HTTP 403)")
+        return _TokenStatus(False, -1, False, "token expired or invalid (HTTP 403)")
     if response.status != 200:
-        return TokenStatus(False, -1, False, f"Vault returned HTTP {response.status}")
+        return _TokenStatus(False, -1, False, f"Vault returned HTTP {response.status}")
     data = _json(response).get("data", {})
     ttl = int(data.get("ttl", 0) or 0)
     renewable = bool(data.get("renewable", False))
     if ttl < min_ttl_seconds:
-        return TokenStatus(False, ttl, renewable, f"TTL too low: {ttl}s < {min_ttl_seconds}s")
-    return TokenStatus(True, ttl, renewable)
+        return _TokenStatus(False, ttl, renewable, f"TTL too low: {ttl}s < {min_ttl_seconds}s")
+    return _TokenStatus(True, ttl, renewable)
 
 
 class OnePasswordBackend:
@@ -377,6 +375,60 @@ class OnePasswordBackend:
 
 
 @dataclass(frozen=True)
+class _ReconcileReport:
+    """Store contents checked against the manifest. Carries names only, never values."""
+
+    missing: tuple[str, ...] = ()
+    empty: tuple[str, ...] = ()
+    unclassified: tuple[str, ...] = ()
+    stale: tuple[str, ...] = ()
+
+    @property
+    def ok(self) -> bool:
+        return not (self.missing or self.empty or self.unclassified or self.stale)
+
+    def to_dict(self) -> dict[str, list[str]]:
+        return {
+            "missing": list(self.missing),
+            "empty": list(self.empty),
+            "unclassified": list(self.unclassified),
+            "stale": list(self.stale),
+        }
+
+
+def _reconcile(
+    manifest: EnvironmentManifest,
+    values: Mapping[str, str],
+    *,
+    expected: Mapping[str, str] | None = None,
+    ignore_prefixes: tuple[str, ...] = ("_",),
+) -> _ReconcileReport:
+    """Check one secret-store path against the manifest's store-backed fields."""
+    missing: list[str] = []
+    empty: list[str] = []
+    for field in manifest.store_backed:
+        if field.key not in values:
+            if not field.empty_ok:
+                missing.append(field.key)
+            continue
+        if not values[field.key].strip() and not field.empty_ok:
+            empty.append(field.key)
+    declared = {field.key for field in manifest.fields}
+    unclassified = [
+        key for key in values if key not in declared and not key.startswith(ignore_prefixes)
+    ]
+    stale = [
+        key for key, wanted in (expected or {}).items() if key in values and values[key] != wanted
+    ]
+    return _ReconcileReport(
+        tuple(sorted(missing)),
+        tuple(sorted(empty)),
+        tuple(sorted(unclassified)),
+        tuple(sorted(stale)),
+    )
+
+
+@dataclass(frozen=True)
 class _SyncReport:
     changed: tuple[str, ...] = ()
     unchanged: tuple[str, ...] = ()
@@ -409,8 +461,8 @@ class SecretsResolver:
         project: str,
         service: str,
         env: str,
-        store: SecretsBackend,
-        human: SecretsBackend | None = None,
+        store: _SecretsBackend,
+        human: _SecretsBackend | None = None,
         release: Mapping[str, str] | None = None,
         decisions: Mapping[str, str] | None = None,
         generator: Callable[[EnvironmentField], str] = _generate_secret,

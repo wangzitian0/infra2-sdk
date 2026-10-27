@@ -106,7 +106,15 @@ def validate_http_url(
         raise ValueError(f"{label} must not contain a fragment")
 
 
+def _yaml() -> Any:
+    """Import PyYAML on demand when a YAML helper runs."""
+    import yaml
+
+    return yaml
+
+
 __all__ = [
+    "_yaml",
     "canonical_json_bytes",
     "canonical_sha256",
     "parse_contract_version",

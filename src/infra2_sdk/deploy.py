@@ -26,6 +26,7 @@ from infra2_sdk._wire import (
     require_contract_version,
     require_exact_fields,
 )
+from infra2_sdk.transport import GITHUB_API_BASE, _github_api_url, _github_headers
 
 CONTRACT_VERSION = 1
 _REQUEST_ID_RE = re.compile(r"\A[a-zA-Z0-9][a-zA-Z0-9._:-]{7,127}\Z")
@@ -383,20 +384,13 @@ def _default_github_json_fetcher(
     timeout: float = 10.0,
 ) -> Callable[[str], Any]:
     """Return a GitHub API JSON fetcher using the standard library."""
-    auth_token = token or os.getenv(token_env, "")
+    headers = _github_headers(token=token or os.getenv(token_env, ""), user_agent=user_agent)
 
     def fetch(path: str) -> Any:
-        url = path if path.startswith("https://") else f"https://api.github.com{path}"
-        req = Request(url)
-        req.add_header("Accept", "application/vnd.github+json")
-        req.add_header("User-Agent", user_agent)
-        req.add_header("X-GitHub-Api-Version", "2022-11-28")
-        if auth_token:
-            req.add_header("Authorization", f"Bearer {auth_token}")
+        req = Request(_github_api_url(path), headers=headers)
         try:
             with urlopen(req, timeout=timeout) as response:
-                content = response.read()
-                return json.loads(content)
+                return json.loads(response.read())
         except HTTPError as exc:
             raise ValueError(
                 f"GitHub evidence request failed for {path}: HTTP {exc.code}"
@@ -579,7 +573,7 @@ def _parse_evidence_policy_payload(
     return policy
 
 
-def fetch_production_evidence_policy(
+def _fetch_production_evidence_policy(
     request: DeployRequest,
     *,
     fetch_json: Callable[[str], Any] | None = None,
@@ -631,7 +625,7 @@ def verify_production_evidence(
         resource="pull",
         field="reviewed_change_url",
     )
-    effective_policy = policy or fetch_production_evidence_policy(request, fetch_json=fetch)
+    effective_policy = policy or _fetch_production_evidence_policy(request, fetch_json=fetch)
 
     source_run = fetch(f"/repos/{request.source_repository}/actions/runs/{source_run_id}")
     staging_run = fetch(f"/repos/{request.source_repository}/actions/runs/{staging_run_id}")
@@ -786,13 +780,8 @@ def github_api_client(
     """Build the default httpx-backed (``api``, ``fetch_logs``) pair for ``dispatch_and_wait``."""
     httpx = _require_httpx()
     client = httpx.Client(
-        base_url="https://api.github.com",
-        headers={
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {token}",
-            "User-Agent": user_agent,
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
+        base_url=GITHUB_API_BASE,
+        headers=_github_headers(token=token, user_agent=user_agent),
         follow_redirects=True,
         timeout=timeout,
         transport=transport,
@@ -860,7 +849,7 @@ HttpGet = Callable[[str], tuple[int, str]]
 
 
 @dataclass(frozen=True)
-class HealthCheckResult:
+class _HealthCheckResult:
     attempts: int
     status_code: int
     body: str
@@ -877,7 +866,7 @@ def poll_until_healthy(
     max_version_mismatch_attempts: int | None = None,
     interval_seconds: float = 10.0,
     sleep: Callable[[float], None] = time.sleep,
-) -> HealthCheckResult:
+) -> _HealthCheckResult:
     """Poll ``url`` until healthy, or raise ``RuntimeError`` once exhausted."""
     mismatch_budget = max_version_mismatch_attempts or max_attempts
     mismatch_streak = 0
@@ -916,7 +905,7 @@ def poll_until_healthy(
                 _maybe_sleep(sleep, interval_seconds, attempt, max_attempts)
                 continue
 
-        return HealthCheckResult(attempts=attempt, status_code=status_code, body=body)
+        return _HealthCheckResult(attempts=attempt, status_code=status_code, body=body)
 
     raise RuntimeError(
         f"{url}: did not become healthy after {max_attempts} attempts "

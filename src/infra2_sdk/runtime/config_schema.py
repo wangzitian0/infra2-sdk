@@ -212,37 +212,38 @@ class EnvironmentManifest:
             fields=tuple(EnvironmentField.from_dict(value) for value in fields),
         )
 
+    def validate_offline(self) -> list[str]:
+        """Return contract violations in this manifest without external infrastructure."""
+        errors: list[str] = []
+        declared = {field.env for field in self.fields}
+        for field in self.fields:
+            name = field.env
+            settled = field.empty_ok or field.required or field.injected
+            if field.store_backed and field.has_default and not settled:
+                errors.append(
+                    f"{name}: {field.source} value must be required, injected or empty_ok"
+                )
+            if field.source in _COMPOSE_SOURCES and not field.injected:
+                errors.append(f"{name}: {field.source} value must be injected by the deployment")
+            if field.sensitive and field.source == _FieldSource.CODE and not field.provided_by:
+                errors.append(f"{name}: a sensitive value cannot be a code default")
+            if field.source == _FieldSource.BOOTSTRAP:
+                errors.append(f"{name}: bootstrap values never enter an application manifest")
+            for key in field.composed_keys:
+                provider_key = field.provided_by.split(":", 1)[1] if field.provided_by else ""
+                if key not in declared and key != provider_key:
+                    errors.append(f"{name}: composed_from references undeclared {key}")
+        return errors
+
 
 @dataclass(frozen=True)
-class EnvironmentValidation:
+class _EnvironmentValidation:
     missing: tuple[str, ...]
     resolved: Mapping[str, str]
 
     @property
     def valid(self) -> bool:
         return not self.missing
-
-
-@dataclass(frozen=True)
-class _ReconcileReport:
-    """Store contents checked against the manifest. Carries names only, never values."""
-
-    missing: tuple[str, ...] = ()
-    empty: tuple[str, ...] = ()
-    unclassified: tuple[str, ...] = ()
-    stale: tuple[str, ...] = ()
-
-    @property
-    def ok(self) -> bool:
-        return not (self.missing or self.empty or self.unclassified or self.stale)
-
-    def to_dict(self) -> dict[str, list[str]]:
-        return {
-            "missing": list(self.missing),
-            "empty": list(self.empty),
-            "unclassified": list(self.unclassified),
-            "stale": list(self.stale),
-        }
 
 
 def environment_manifest_from_model(
@@ -344,7 +345,7 @@ def validate_environment(
     environ: Mapping[str, str],
     *,
     require_injected: bool = False,
-) -> EnvironmentValidation:
+) -> _EnvironmentValidation:
     """Resolve canonical names and aliases without exposing secret values."""
 
     missing: list[str] = []
@@ -364,44 +365,7 @@ def validate_environment(
             resolved[field.env] = present[0][0]
         elif field.required or (require_injected and field.injected):
             missing.append(field.env)
-    return EnvironmentValidation(tuple(sorted(missing)), resolved)
-
-
-def _reconcile(
-    manifest: EnvironmentManifest,
-    values: Mapping[str, str],
-    *,
-    expected: Mapping[str, str] | None = None,
-    ignore_prefixes: tuple[str, ...] = ("_",),
-) -> _ReconcileReport:
-    """Check one secret-store path against the manifest's store-backed fields.
-
-    ``values`` is the store content; ``expected`` (optional) is the human source of truth
-    for human-class fields. Only names are reported.
-    """
-
-    missing: list[str] = []
-    empty: list[str] = []
-    for field in manifest.store_backed:
-        if field.key not in values:
-            if not field.empty_ok:
-                missing.append(field.key)
-            continue
-        if not values[field.key].strip() and not field.empty_ok:
-            empty.append(field.key)
-    declared = {field.key for field in manifest.fields}
-    unclassified = [
-        key for key in values if key not in declared and not key.startswith(ignore_prefixes)
-    ]
-    stale = [
-        key for key, wanted in (expected or {}).items() if key in values and values[key] != wanted
-    ]
-    return _ReconcileReport(
-        tuple(sorted(missing)),
-        tuple(sorted(empty)),
-        tuple(sorted(unclassified)),
-        tuple(sorted(stale)),
-    )
+    return _EnvironmentValidation(tuple(sorted(missing)), resolved)
 
 
 def manifest_config_fingerprint(manifest: EnvironmentManifest, values: Mapping[str, str]) -> str:

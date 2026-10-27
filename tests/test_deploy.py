@@ -17,9 +17,9 @@ from infra2_sdk.deploy import (
     DeployOperation,
     DeployRequest,
     DeployType,
-    HealthCheckResult,
     ProductionEvidencePolicy,
     _default_github_json_fetcher,
+    _HealthCheckResult,
     _run_id,
     _RunEvidenceExpectation,
     _validate_wire_shape,
@@ -333,7 +333,7 @@ def prod_request(**overrides) -> DeployRequest:
 def test_fetch_production_evidence_policy_success() -> None:
     import base64
 
-    from infra2_sdk.deploy import fetch_production_evidence_policy
+    from infra2_sdk.deploy import _fetch_production_evidence_policy
 
     policy = sample_policy()
     encoded = base64.b64encode(json.dumps(policy.to_dict()).encode("utf-8")).decode("utf-8")
@@ -342,13 +342,13 @@ def test_fetch_production_evidence_policy_success() -> None:
     def fake_fetch(path: str) -> dict:
         return {"content": encoded}
 
-    fetched = fetch_production_evidence_policy(req, fetch_json=fake_fetch)
+    fetched = _fetch_production_evidence_policy(req, fetch_json=fake_fetch)
     assert fetched.service == "finance_report/app"
     assert fetched.review_base_ref == "main"
 
 
 def test_fetch_production_evidence_policy_missing_contract_raises() -> None:
-    from infra2_sdk.deploy import fetch_production_evidence_policy
+    from infra2_sdk.deploy import _fetch_production_evidence_policy
 
     req = prod_request()
 
@@ -356,13 +356,13 @@ def test_fetch_production_evidence_policy_missing_contract_raises() -> None:
         raise ValueError("HTTP 404")
 
     with pytest.raises(ValueError, match="has no Production evidence contract"):
-        fetch_production_evidence_policy(req, fetch_json=fake_fetch)
+        _fetch_production_evidence_policy(req, fetch_json=fake_fetch)
 
 
 def test_fetch_production_evidence_policy_service_mismatch_raises() -> None:
     import base64
 
-    from infra2_sdk.deploy import fetch_production_evidence_policy
+    from infra2_sdk.deploy import _fetch_production_evidence_policy
 
     policy = sample_policy()
     raw = policy.to_dict()
@@ -373,7 +373,7 @@ def test_fetch_production_evidence_policy_service_mismatch_raises() -> None:
     with pytest.raises(
         ValueError, match="declares service 'other/service', not 'finance_report/app'"
     ):
-        fetch_production_evidence_policy(req, fetch_json=lambda p: {"content": encoded})
+        _fetch_production_evidence_policy(req, fetch_json=lambda p: {"content": encoded})
 
 
 def test_verify_production_evidence_success() -> None:
@@ -510,7 +510,7 @@ def test_succeeds_immediately_on_a_plain_200() -> None:
         http_get=_health_responses((200, '{"status": "healthy"}')),
         sleep=lambda _: None,
     )
-    assert result == HealthCheckResult(attempts=1, status_code=200, body='{"status": "healthy"}')
+    assert result == _HealthCheckResult(attempts=1, status_code=200, body='{"status": "healthy"}')
 
 
 def test_retries_through_connection_failures_then_succeeds() -> None:
@@ -1121,7 +1121,7 @@ def test_github_api_client_close_releases_underlying_client() -> None:
 
 
 def test_fetch_production_evidence_policy_raises_on_malformed_policy_file() -> None:
-    from infra2_sdk.deploy import fetch_production_evidence_policy
+    from infra2_sdk.deploy import _fetch_production_evidence_policy
 
     def fetch_json(url: str):
         if "contents" in url:
@@ -1129,7 +1129,7 @@ def test_fetch_production_evidence_policy_raises_on_malformed_policy_file() -> N
         return {}
 
     with pytest.raises(ValueError, match="not valid JSON"):
-        fetch_production_evidence_policy(prod_request(), fetch_json=fetch_json)
+        _fetch_production_evidence_policy(prod_request(), fetch_json=fetch_json)
 
 
 # --- Coverage hardening tests for issue #76 ---

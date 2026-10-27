@@ -9,6 +9,7 @@ from typing import Any, Literal
 from infra2_sdk._wire import validate_http_url
 
 _ModelRole = Literal["large", "small", "multimodal"]
+_ROLES: tuple[str, ...] = ("large", "small", "multimodal")
 
 
 class _RoleDefault:
@@ -72,17 +73,12 @@ class LlmSettings:
     multimodal_reasoning_effort: str = field(default="low", kw_only=True)
 
     def __post_init__(self) -> None:
-        for role_field in (
-            "large_model",
-            "small_model",
-            "multimodal_model",
-            "large_reasoning_effort",
-            "small_reasoning_effort",
-            "multimodal_reasoning_effort",
-        ):
-            value = getattr(self, role_field)
-            if not isinstance(value, str) or not value.strip():
-                raise ValueError(f"{role_field} must be non-empty")
+        for role in _ROLES:
+            for suffix in ("model", "reasoning_effort"):
+                role_field = f"{role}_{suffix}"
+                value = getattr(self, role_field)
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(f"{role_field} must be non-empty")
         if self.primary_model is _ROLE_DEFAULT:
             object.__setattr__(self, "primary_model", self.small_model)
         if self.ocr_model is _ROLE_DEFAULT:
@@ -116,27 +112,18 @@ class LlmSettings:
         if self.extract_max_attempts < 1:
             raise ValueError("extract_max_attempts must be at least 1")
 
+    def _role_attr(self, role: _ModelRole, suffix: str) -> str:
+        if role not in _ROLES:
+            raise ValueError(f"unknown model role: {role!r}")
+        return getattr(self, f"{role}_{suffix}")
+
     def role_model(self, role: _ModelRole) -> str:
         """Return the model id of one role: ``large``, ``small`` or ``multimodal``."""
-        models = {
-            "large": self.large_model,
-            "small": self.small_model,
-            "multimodal": self.multimodal_model,
-        }
-        if role not in models:
-            raise ValueError(f"unknown model role: {role!r}")
-        return models[role]
+        return self._role_attr(role, "model")
 
     def role_reasoning_effort(self, role: _ModelRole) -> str:
         """Return the reasoning effort of one role: ``large``, ``small`` or ``multimodal``."""
-        efforts = {
-            "large": self.large_reasoning_effort,
-            "small": self.small_reasoning_effort,
-            "multimodal": self.multimodal_reasoning_effort,
-        }
-        if role not in efforts:
-            raise ValueError(f"unknown model role: {role!r}")
-        return efforts[role]
+        return self._role_attr(role, "reasoning_effort")
 
 
 __all__ = [
