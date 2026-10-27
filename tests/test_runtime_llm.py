@@ -27,8 +27,6 @@ def test_llm_settings_defaults() -> None:
     assert settings.json_seed is None
     assert settings.extract_max_attempts == 2
     assert settings.encryption_keys == ()
-    assert settings.chat_completions_url == "https://api.z.ai/api/coding/paas/v4/chat/completions"
-    assert settings.layout_parsing_url == "https://api.z.ai/api/coding/paas/v4/layout_parsing"
 
 
 def test_llm_settings_repr_hides_sensitive_fields() -> None:
@@ -82,29 +80,6 @@ def test_llm_settings_validation_errors() -> None:
         LlmSettings(extract_max_attempts=0)
 
 
-def test_llm_settings_model_chain_deduplication() -> None:
-    settings = LlmSettings(
-        primary_model="primary-1",
-        fallback_models=("fb-1", "primary-1", "fb-2"),
-        vision_model="vision-main",
-        vision_fallback_models=("vision-fb-1", "vision-main", "vision-fb-2"),
-    )
-    assert settings.model_chain(vision=False) == ("primary-1", "fb-1", "fb-2")
-    assert settings.model_chain(vision=True) == (
-        "vision-main",
-        "vision-fb-1",
-        "vision-fb-2",
-    )
-
-    # When vision_model is None, falls back to primary_model for vision chain
-    settings_no_vision = LlmSettings(
-        primary_model="primary-1",
-        vision_model=None,
-        vision_fallback_models=("vfb-1", "primary-1"),
-    )
-    assert settings_no_vision.model_chain(vision=True) == ("primary-1", "vfb-1")
-
-
 def test_llm_settings_model_roles_and_derived_slots() -> None:
     settings = LlmSettings()
     assert settings.role_model("large") == settings.large_model == "glm-5.3-flash"
@@ -123,8 +98,6 @@ def test_llm_settings_slots_follow_a_changed_role() -> None:
     assert settings.primary_model == "small-x"
     assert settings.ocr_model == "vision-x"
     assert settings.vision_model == "vision-x"
-    assert settings.model_chain() == ("small-x",)
-    assert settings.model_chain(vision=True) == ("vision-x",)
 
 
 def test_llm_settings_explicit_slots_win_over_roles() -> None:
@@ -132,7 +105,6 @@ def test_llm_settings_explicit_slots_win_over_roles() -> None:
     assert settings.primary_model == "custom"
     assert settings.vision_model is None
     assert settings.ocr_model == "ocr-x"
-    assert settings.model_chain(vision=True) == ("custom",)
 
 
 def test_llm_settings_rejects_an_unknown_role_and_an_empty_role() -> None:

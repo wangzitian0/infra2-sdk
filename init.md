@@ -22,13 +22,13 @@ Across 142+ issues and 33 releases (`v0.1.0` through `v3.11.1`), consumer requir
 - `import infra2_sdk` and `import infra2_sdk.runtime` perform zero network I/O, zero filesystem mutation, and zero global provider registration (`tests/test_exports.py`).
 - Core runtime contracts declare zero third-party adapter dependencies in `pyproject.toml` (only `pyyaml` for offline manifest and workflow parsing, lazy-loaded where required). Consumers install only the optional extras they need (`s3`, `postgres`, `http`, `otel`, `fastapi`, `all`).
 - Protocol adapters return standard upstream objects (`boto3` S3 client, `psycopg` connection probe, `httpx.Client` and `httpx.AsyncClient`, OpenTelemetry providers) rather than custom wrapper abstractions. Application policy (object keys, SQL schemas, retry budgets, trace propagation) stays in the application.
-- Pure cross-repository validators (`compare_enum_definitions`, `validate_schema_compatibility`, `validate_manifest_offline`) execute offline without importing consumer repositories (`#19`, `#33`).
+- Pure cross-repository validators (`validate_manifest_offline`, `validate_inventory`, `validate_workflow_step_contracts`) execute offline without importing consumer repositories (`#19`, `#33`).
 
 ### P2 — One Source per Fact and the Manifest v2 Supply Chain (`#16`, `#38`, `#115`, `#137`)
 
 - Every environment variable in an application manifest (`EnvironmentManifest`) declares one `source` class (`bootstrap`, `human`, `runtime`, `release`, `decision`, `code`). The source class defines who produces the value, where truth lives, and how the value reaches the container (`#16`, `#38`).
 - Shared cross-repository mechanisms (`capacity`, `ci`, `delivery`, `deploy`, `fastapi`, `manifests`, `observability`, `refs`, `routing`, `rules`, `runtime`, `scaffold`, `secrets`, `transport`) live in `infra2-sdk` (`v3.7.0`, `#115`). Extracting these modules from `infra2` and consumer applications ensures that all repositories share one tested implementation.
-- `LlmSettings` (`src/infra2_sdk/runtime/llm.py`, `#137`) owns default model chains and reasoning efforts across three capability roles (`large`, `small`, `multimodal`). Consumer applications map per-role environment overrides (`LLM_LARGE_MODELS`, `LLM_SMALL_MODELS`, `LLM_MULTIMODAL_MODELS`) onto this single contract.
+- `LlmSettings` (`src/infra2_sdk/runtime/llm.py`, `#137`) owns default models and reasoning efforts across three capability roles (`large`, `small`, `multimodal`). Consumer applications map per-role environment overrides (`LLM_LARGE_MODELS`, `LLM_SMALL_MODELS`, `LLM_MULTIMODAL_MODELS`) onto this single contract.
 
 ### P3 — 100% Consumer-Reachable Public Surface (`#102`, `#108`, `#121`, `#126`)
 
@@ -58,15 +58,15 @@ Application processes import these modules directly at runtime:
 | Module | Responsibility |
 |---|---|
 | `infra2_sdk.runtime.environment` | Six-tier environment vocabulary (`EnvironmentTier`), `RuntimeEnvKey` resolution, and `runtime_env_contract()` |
-| `infra2_sdk.runtime.config_schema` | `EnvironmentField`, `EnvironmentManifest`, JSON Schema 2020-12 export, and manifest config fingerprints |
+| `infra2_sdk.runtime.config_schema` | `EnvironmentField`, `EnvironmentManifest`, and manifest config fingerprints |
 | `infra2_sdk.runtime.health` | Framework-agnostic readiness probes (`check_health`, `run_probes`) and dependency status contracts |
 | `infra2_sdk.runtime.http` | `HttpClientSettings`, standard `httpx` client builders (`create_http_client`), and `probe_http` |
-| `infra2_sdk.runtime.llm` | `LlmSettings` contract, capability roles (`large`, `small`, `multimodal`), and fallback model chain resolution |
+| `infra2_sdk.runtime.llm` | `LlmSettings` contract, capability roles (`large`, `small`, `multimodal`), and role-based model defaults |
 | `infra2_sdk.runtime.otel` | Explicit OTLP/HTTP trace, metric, and log provider bootstrap (`OtelSettings`, `configure_telemetry`) |
 | `infra2_sdk.runtime.postgres` | `PostgresSettings`, PostgreSQL DSN normalization, credential redaction, and `probe_postgres` |
 | `infra2_sdk.runtime.s3` | `S3Settings`, `boto3` S3 client initialization, bucket reachability probe (`probe_s3`), and `ensure_bucket` |
 | `infra2_sdk.fastapi` | `init_service` turnkey bootstrap mounting `/livez`, `/readyz`, and `/health` routes with OTLP lifecycle management |
-| `infra2_sdk.transport` | Injectable `HttpTransport`, `urllib_transport`, transport error classification, rate-window pacing, and Decimal-safe JSON decoding |
+| `infra2_sdk.transport` | Injectable `HttpTransport`, `HttpResponse`, and `urllib_transport` |
 
 ### Control-Plane and Delivery Contract Layer
 
@@ -76,7 +76,7 @@ Application processes import these modules directly at runtime:
 |---|---|
 | `infra2_sdk.capacity` | Capacity limits, `CapacityReading`, `evaluate` thresholds, and Cloudflare analytics collection |
 | `infra2_sdk.ci` | Delivery-stage vocabulary, CI gate inventory validation, workflow step inspection, and coverage ratchets |
-| `infra2_sdk.delivery` | Stage evidence (`StageResult`), failure taxonomy (`FailureDomain`), smoke checks, and schema compatibility validators |
+| `infra2_sdk.delivery` | Stage evidence (`StageResult`, `make_stage_result`) and failure taxonomy (`FailureDomain`, `StageStatus`) |
 | `infra2_sdk.deploy` | `DeployRequest` wire contracts, dispatch client, health poller, deployed release reader, and production evidence verification |
 | `infra2_sdk.manifests` | Settings manifest CLI driver (`--write`, `--check`, `--validate-env`) and startup environment assertions (`assert_environment`) |
 | `infra2_sdk.observability` | Flap hysteresis trackers, scheduled peer workflow liveness evaluation, self-healing GitHub issue trails, and OpenPanel query primitives |

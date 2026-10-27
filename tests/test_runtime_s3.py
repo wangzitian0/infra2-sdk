@@ -299,10 +299,6 @@ def test_s3_settings_extended_fields_and_fallbacks() -> None:
         access_key_id="internal-key",
         secret_access_key="internal-secret",
     )
-    assert settings.effective_public_bucket == "my-private-bucket"
-    assert settings.effective_public_endpoint_url == "https://s3.internal:9000"
-    assert settings.effective_public_access_key_id == "internal-key"
-    assert settings.effective_public_secret_access_key == "internal-secret"
     assert settings.presign_expiry_seconds == 900
     assert settings.raw_prefix == "raw"
     assert settings.documents_prefix == "documents"
@@ -320,24 +316,11 @@ def test_s3_settings_extended_fields_and_fallbacks() -> None:
         raw_prefix="custom-raw",
         documents_prefix="custom-docs",
     )
-    assert override.effective_public_bucket == "my-public-bucket"
-    assert override.effective_public_endpoint_url == "https://s3.public:9000"
-    assert override.effective_public_access_key_id == "pub-key"
-    assert override.effective_public_secret_access_key == "pub-secret"
+    assert override.public_bucket == "my-public-bucket"
+    assert override.public_endpoint_url == "https://s3.public:9000"
+    assert override.public_access_key_id == "pub-key"
     assert override.presign_expiry_seconds == 1800
     assert "pub-secret" not in repr(override)
-
-
-def test_s3_settings_object_key_helpers() -> None:
-    settings = S3Settings(bucket="my-bucket")
-    assert settings.raw_object_key("dataset", "item.json") == "raw/dataset/item.json"
-    assert settings.raw_object_key("/dataset/", "/item.json") == "raw/dataset/item.json"
-    assert settings.raw_object_key() == "raw"
-    assert (
-        settings.document_object_key("invoices", "2026", "inv1.pdf")
-        == "documents/invoices/2026/inv1.pdf"
-    )
-    assert settings.document_object_key() == "documents"
 
 
 def test_s3_settings_extended_validation() -> None:

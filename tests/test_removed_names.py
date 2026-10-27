@@ -342,3 +342,60 @@ def test_the_wheel_smoke_names_the_list_that_changed_size(
     monkeypatch.setattr(wheel_smoke, attribute, shorter)
     with pytest.raises(AssertionError, match=rf"{attribute} has {expected - 1} entries"):
         getattr(wheel_smoke, smoke)()
+
+
+REMOVED_IN_3_14_0: tuple[tuple[str, str], ...] = (
+    ("infra2_sdk.transport", "TransportErrorKind"),
+    ("infra2_sdk.transport", "TransportFailure"),
+    ("infra2_sdk.transport", "classify_transport_error"),
+    ("infra2_sdk.transport", "ThrottlePolicy"),
+    ("infra2_sdk.transport", "paced_transport"),
+    ("infra2_sdk.transport", "decode_decimal_json"),
+    ("infra2_sdk.delivery", "SmokeCheckResult"),
+    ("infra2_sdk.delivery", "SmokeCheck"),
+    ("infra2_sdk.delivery", "CanaryReport"),
+    ("infra2_sdk.delivery", "SchemaDiscrepancy"),
+    ("infra2_sdk.delivery", "compare_enum_definitions"),
+    ("infra2_sdk.delivery", "validate_schema_compatibility"),
+    ("infra2_sdk.deploy", "FreshnessFailure"),
+    ("infra2_sdk.deploy", "Staleness"),
+    ("infra2_sdk.deploy", "measure_freshness"),
+    ("infra2_sdk.deploy", "format_freshness_failure"),
+    ("infra2_sdk.deploy", "check_deploy_freshness"),
+    ("infra2_sdk.runtime.s3", "S3Settings.effective_public_bucket"),
+    ("infra2_sdk.runtime.s3", "S3Settings.effective_public_endpoint_url"),
+    ("infra2_sdk.runtime.s3", "S3Settings.effective_public_access_key_id"),
+    ("infra2_sdk.runtime.s3", "S3Settings.effective_public_secret_access_key"),
+    ("infra2_sdk.runtime.s3", "S3Settings.raw_object_key"),
+    ("infra2_sdk.runtime.s3", "S3Settings.document_object_key"),
+    ("infra2_sdk.runtime.postgres", "PostgresSettings.effective_migrations_dsn"),
+    ("infra2_sdk.runtime.postgres", "PostgresSettings.sqlalchemy_engine_kwargs"),
+    ("infra2_sdk.runtime.postgres", "PostgresSettings.migration_pgoptions"),
+    ("infra2_sdk.runtime.llm", "LlmSettings.chat_completions_url"),
+    ("infra2_sdk.runtime.llm", "LlmSettings.layout_parsing_url"),
+    ("infra2_sdk.runtime.llm", "LlmSettings.model_chain"),
+    ("infra2_sdk.runtime.config_schema", "EnvironmentManifest.to_json_schema"),
+    ("infra2_sdk.runtime.health", "DependencyManifest.json_schema"),
+    ("infra2_sdk.runtime.health", "ProbeResult.json_schema"),
+    ("infra2_sdk.secrets", "VaultKvBackend.read_version"),
+    ("infra2_sdk._wire", "JSON_SCHEMA_DIALECT"),
+)
+
+
+@pytest.mark.parametrize(
+    ("module", "dotted"),
+    REMOVED_IN_3_14_0,
+    ids=[f"{m}.{n}" for m, n in REMOVED_IN_3_14_0],
+)
+def test_symbols_removed_in_3_14_0_are_absent_from_modules_and_packages(
+    module: str, dotted: str
+) -> None:
+    owner = importlib.import_module(module)
+    *parents, leaf = dotted.split(".")
+    for part in parents:
+        owner = getattr(owner, part)
+    assert not hasattr(owner, leaf), f"{module}.{dotted} was removed in 3.14.0"
+    if not parents:
+        for package in (infra2_sdk, infra2_sdk.runtime):
+            assert leaf not in package.__all__, f"{package.__name__}.__all__ lists {leaf}"
+            assert not hasattr(package, leaf), f"{package.__name__} still exposes {leaf}"

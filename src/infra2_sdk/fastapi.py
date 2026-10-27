@@ -36,6 +36,7 @@ from infra2_sdk.runtime.health import (
     DependencyStatus,
     HealthStatus,
     ProbeResult,
+    _elapsed,
     check_health,
 )
 
@@ -77,8 +78,7 @@ class _DatabaseCheck:
         ok, detail = outcome if isinstance(outcome, tuple) else (outcome, "")
         status = DependencyStatus.PRESENT if ok else DependencyStatus.ABSENT
         fallback = "ok" if ok else "db_checker returned a false value"
-        elapsed_ms = (time.perf_counter() - started) * 1000
-        return ProbeResult(self.name, status, str(detail or fallback), elapsed_ms)
+        return ProbeResult(self.name, status, str(detail or fallback), _elapsed(started))
 
 
 def _in_deployed_tier() -> bool:

@@ -4,6 +4,24 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.14.0 - 2026-10-27
+
+### Removed
+
+- Remove 17 zero-caller top-level public symbols across `infra2`, `finance_report`, and `truealpha` ([#147](https://github.com/wangzitian0/infra2-sdk/issues/147)):
+  - `infra2_sdk.transport`: `TransportErrorKind`, `TransportFailure`, `classify_transport_error`, `ThrottlePolicy`, `paced_transport`, `decode_decimal_json`.
+  - `infra2_sdk.delivery` (and `infra2_sdk.__all__` / `tests/surface.json`): `SmokeCheckResult`, `SmokeCheck`, `CanaryReport`, `SchemaDiscrepancy`, `compare_enum_definitions`, `validate_schema_compatibility`.
+  - `infra2_sdk.deploy`: `FreshnessFailure`, `Staleness`, `measure_freshness`, `format_freshness_failure`, `check_deploy_freshness`.
+- Remove 16 zero-caller class methods and `JSON_SCHEMA_DIALECT` ([#147](https://github.com/wangzitian0/infra2-sdk/issues/147)):
+  - `S3Settings`: `effective_public_bucket`, `effective_public_endpoint_url`, `effective_public_access_key_id`, `effective_public_secret_access_key`, `raw_object_key`, `document_object_key`.
+  - `PostgresSettings`: `effective_migrations_dsn`, `sqlalchemy_engine_kwargs`, `migration_pgoptions`.
+  - `LlmSettings`: `chat_completions_url`, `layout_parsing_url`, `model_chain`.
+  - `EnvironmentManifest.to_json_schema`, `DependencyManifest.json_schema`, `ProbeResult.json_schema`, and `VaultKvBackend.read_version`.
+
+### Changed
+
+- Consolidate HTTP(S) URL validation into `infra2_sdk._wire.validate_http_url` across `S3Settings`, `LlmSettings`, and `OtelSettings`; share `infra2_sdk.runtime.health._elapsed` across `http`, `postgres`, `s3`, and `fastapi`; prefix internal helpers in `infra2_sdk.rules.compose` and align `__all__` in `rules` and `runtime.otel` ([#147](https://github.com/wangzitian0/infra2-sdk/issues/147)).
+
 ## 3.13.0 - 2026-10-26
 
 ### Added

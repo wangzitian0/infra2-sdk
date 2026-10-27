@@ -31,7 +31,6 @@ from threading import Thread
 from typing import Any, Protocol, runtime_checkable
 
 from infra2_sdk._wire import (
-    JSON_SCHEMA_DIALECT,
     parse_contract_version,
     parse_string,
     require_contract_version,
@@ -175,46 +174,6 @@ class DependencyManifest:
             contract_version=version,
         )
 
-    @staticmethod
-    def json_schema() -> dict[str, Any]:
-        return {
-            "$schema": JSON_SCHEMA_DIALECT,
-            "title": "Runtime dependency manifest",
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["contract_version", "dependencies"],
-            "properties": {
-                "contract_version": {"const": _DEPENDENCY_MANIFEST_VERSION},
-                "dependencies": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["name", "kind", "required_in", "env_vars"],
-                        "properties": {
-                            "name": {"type": "string", "minLength": 1},
-                            "kind": {"enum": [kind.value for kind in DependencyKind]},
-                            "required_in": {
-                                "type": "array",
-                                "items": {"enum": [tier.value for tier in EnvironmentTier]},
-                                "minItems": 1,
-                                "uniqueItems": True,
-                            },
-                            "env_vars": {
-                                "type": "array",
-                                "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"},
-                                "minItems": 1,
-                                "uniqueItems": True,
-                            },
-                            "summary": {"type": "string"},
-                            "local_backend": {"type": "string"},
-                            "deployed_backend": {"type": "string"},
-                        },
-                    },
-                },
-            },
-        }
-
 
 class DependencyStatus(StrEnum):
     PRESENT = "present"
@@ -256,22 +215,6 @@ class ProbeResult:
             detail=parse_string(raw, "detail", required=False),
             duration_ms=duration_ms,
         )
-
-    @staticmethod
-    def json_schema() -> dict[str, Any]:
-        return {
-            "$schema": JSON_SCHEMA_DIALECT,
-            "title": "Runtime dependency probe result",
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["name", "status", "detail", "duration_ms"],
-            "properties": {
-                "name": {"type": "string", "minLength": 1},
-                "status": {"enum": [status.value for status in DependencyStatus]},
-                "detail": {"type": "string"},
-                "duration_ms": {"type": "number", "minimum": 0},
-            },
-        }
 
 
 @runtime_checkable

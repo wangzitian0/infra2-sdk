@@ -9,8 +9,9 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from infra2_sdk._wire import validate_http_url
 from infra2_sdk.runtime._optional import require
-from infra2_sdk.runtime.health import DependencyStatus, ProbeResult
+from infra2_sdk.runtime.health import DependencyStatus, ProbeResult, _elapsed
 
 _BUCKET_RE = re.compile(r"\A[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]\Z")
 _NOT_FOUND_CODES = frozenset({"404", "NoSuchBucket", "NoSuchKey", "NotFound"})
@@ -59,53 +60,9 @@ class S3Settings:
         if self.session_token and not self.access_key_id:
             raise ValueError("explicit S3 session token requires explicit access credentials")
         if self.endpoint_url:
-            endpoint = urlsplit(self.endpoint_url)
-            if (
-                endpoint.scheme not in {"http", "https"}
-                or not endpoint.netloc
-                or not endpoint.hostname
-                or any(char.isspace() for char in endpoint.netloc)
-            ):
-                raise ValueError("S3 endpoint URL must use http:// or https:// with a host")
-            if endpoint.username is not None or endpoint.password is not None:
-                raise ValueError("S3 endpoint URL must not contain credentials")
+            validate_http_url(self.endpoint_url, label="S3 endpoint URL")
         if self.public_endpoint_url:
-            public_endpoint = urlsplit(self.public_endpoint_url)
-            if (
-                public_endpoint.scheme not in {"http", "https"}
-                or not public_endpoint.netloc
-                or not public_endpoint.hostname
-                or any(char.isspace() for char in public_endpoint.netloc)
-            ):
-                raise ValueError("public S3 endpoint URL must use http:// or https:// with a host")
-            if public_endpoint.username is not None or public_endpoint.password is not None:
-                raise ValueError("public S3 endpoint URL must not contain credentials")
-
-    @property
-    def effective_public_bucket(self) -> str:
-        return self.public_bucket or self.bucket
-
-    @property
-    def effective_public_endpoint_url(self) -> str | None:
-        return self.public_endpoint_url or self.endpoint_url
-
-    @property
-    def effective_public_access_key_id(self) -> str | None:
-        return self.public_access_key_id or self.access_key_id
-
-    @property
-    def effective_public_secret_access_key(self) -> str | None:
-        return self.public_secret_access_key or self.secret_access_key
-
-    def raw_object_key(self, *parts: str) -> str:
-        elements = [self.raw_prefix.strip("/")]
-        elements.extend(p.strip("/") for p in parts if p.strip("/"))
-        return "/".join(elements)
-
-    def document_object_key(self, *parts: str) -> str:
-        elements = [self.documents_prefix.strip("/")]
-        elements.extend(p.strip("/") for p in parts if p.strip("/"))
-        return "/".join(elements)
+            validate_http_url(self.public_endpoint_url, label="public S3 endpoint URL")
 
 
 def create_s3_client(settings: S3Settings, *, session: Any | None = None) -> Any:
@@ -210,10 +167,6 @@ def redact_presigned_url(url: str | None) -> str | None:
         return "<invalid-url>"
     query = "signature=<redacted>" if parsed.query else ""
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, ""))
-
-
-def _elapsed(started: float) -> float:
-    return (time.perf_counter() - started) * 1000
 
 
 __all__ = [

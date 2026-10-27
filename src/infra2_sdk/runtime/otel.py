@@ -10,6 +10,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 from warnings import warn
 
+from infra2_sdk._wire import validate_http_url
 from infra2_sdk.runtime._optional import require
 from infra2_sdk.runtime._otel_env import parse_otel_boolean, parse_traces_sampler
 from infra2_sdk.runtime.environment import (
@@ -61,7 +62,12 @@ class OtelSettings:
         if self.enabled and not self.endpoint:
             raise ValueError("enabled telemetry requires an OTLP HTTP endpoint")
         if self.endpoint:
-            _validate_endpoint(self.endpoint)
+            validate_http_url(
+                self.endpoint,
+                label="OTLP endpoint",
+                allow_fragment=False,
+                validate_port=True,
+            )
         if self.export_interval_millis <= 0:
             raise ValueError(_INTERVAL_MESSAGE)
         sampler, _ = parse_traces_sampler(self.traces_sampler, self.traces_sampler_arg)
@@ -399,30 +405,11 @@ def signal_endpoint(base: str | None, signal: str) -> str:
     return urlunsplit((endpoint.scheme, endpoint.netloc, path, endpoint.query, ""))
 
 
-def _validate_endpoint(value: str) -> None:
-    try:
-        endpoint = urlsplit(value)
-        hostname = endpoint.hostname
-        _port = endpoint.port
-    except ValueError:
-        raise ValueError("OTLP endpoint must be a valid HTTP URL") from None
-    if (
-        endpoint.scheme not in {"http", "https"}
-        or not endpoint.netloc
-        or not hostname
-        or any(char.isspace() for char in endpoint.netloc)
-    ):
-        raise ValueError("OTLP endpoint must use http:// or https:// with a host")
-    # urlsplit returns a username (maybe "") whenever a password exists: one check is enough.
-    if endpoint.username is not None:
-        raise ValueError("OTLP endpoint must not contain credentials")
-    if endpoint.fragment:
-        raise ValueError("OTLP endpoint must not contain a fragment")
-
-
 __all__ = [
     "OtelSettings",
     "REQUIRED_IDENTITY_ATTRIBUTES",
+    "TelemetryProviders",
     "configure_telemetry",
+    "resource_attributes",
     "signal_endpoint",
 ]

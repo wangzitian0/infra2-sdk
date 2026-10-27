@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, Literal
-from urllib.parse import urlsplit
+
+from infra2_sdk._wire import validate_http_url
 
 _ModelRole = Literal["large", "small", "multimodal"]
 
@@ -101,16 +102,7 @@ class LlmSettings:
         if not self.primary_model.strip():
             raise ValueError("primary_model must be non-empty")
 
-        base = urlsplit(self.base_url)
-        if (
-            base.scheme not in {"http", "https"}
-            or not base.netloc
-            or not base.hostname
-            or any(char.isspace() for char in base.netloc)
-        ):
-            raise ValueError("base_url must use http:// or https:// with a host")
-        if base.username is not None or base.password is not None:
-            raise ValueError("base_url must not contain credentials")
+        validate_http_url(self.base_url, label="base_url")
 
         if not self.chat_completions_path.startswith("/"):
             raise ValueError("chat_completions_path must start with '/'")
@@ -123,14 +115,6 @@ class LlmSettings:
             raise ValueError("json_max_tokens must be at least 1")
         if self.extract_max_attempts < 1:
             raise ValueError("extract_max_attempts must be at least 1")
-
-    @property
-    def chat_completions_url(self) -> str:
-        return f"{self.base_url.rstrip('/')}{self.chat_completions_path}"
-
-    @property
-    def layout_parsing_url(self) -> str:
-        return f"{self.base_url.rstrip('/')}{self.layout_parsing_path}"
 
     def role_model(self, role: _ModelRole) -> str:
         """Return the model id of one role: ``large``, ``small`` or ``multimodal``."""
@@ -153,13 +137,6 @@ class LlmSettings:
         if role not in efforts:
             raise ValueError(f"unknown model role: {role!r}")
         return efforts[role]
-
-    def model_chain(self, *, vision: bool = False) -> tuple[str, ...]:
-        if vision:
-            initial = (self.vision_model or self.primary_model, *self.vision_fallback_models)
-        else:
-            initial = (self.primary_model, *self.fallback_models)
-        return tuple(dict.fromkeys(initial))
 
 
 __all__ = [

@@ -3,7 +3,6 @@ from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from infra2_sdk.runtime.config_schema import (
-    JSON_SCHEMA_DIALECT,
     EnvironmentField,
     EnvironmentManifest,
     _reconcile,
@@ -44,8 +43,6 @@ def test_pydantic_model_renders_a_manifest() -> None:
     assert manifest.fields[1].injected is True
     assert manifest.fields[1].has_default is True
     assert manifest.fields[1].sensitive is True
-    assert manifest.to_json_schema()["required"] == ["DATABASE_URL"]
-    assert manifest.to_json_schema()["$schema"] == JSON_SCHEMA_DIALECT
     assert manifest.to_dict()["contract_version"] == 2
     assert EnvironmentManifest.from_dict(manifest.to_dict()) == manifest
 
@@ -173,8 +170,6 @@ def test_manifest_from_model_reads_source_classes() -> None:
         "IMAGE_DIGEST",
         "APPROVED_BY",
     ]
-    schema = manifest.to_json_schema()["properties"]["DATABASE_URL"]
-    assert schema["x-source"] == "runtime" and schema["x-provided-by"] == db.provided_by
     round_trip = EnvironmentManifest.from_dict(manifest.to_dict())
     assert round_trip == manifest
 

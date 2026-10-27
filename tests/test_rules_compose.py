@@ -6,42 +6,42 @@ import pytest
 
 from infra2_sdk.rules.compose import (
     _ComposeReport,
+    _inspect_service_resource_limits,
+    _is_memory_ceiling,
     _main,
+    _tag_of_image_ref,
     find_bare_latest_violations,
     inspect_compose,
-    inspect_service_resource_limits,
-    is_memory_ceiling,
-    tag_of_image_ref,
 )
 
 
 def test_is_memory_ceiling_values() -> None:
-    assert not is_memory_ceiling(None)
-    assert not is_memory_ceiling(False)
-    assert not is_memory_ceiling(True)
-    assert not is_memory_ceiling(0)
-    assert not is_memory_ceiling(-100)
-    assert not is_memory_ceiling("0")
-    assert not is_memory_ceiling("0b")
-    assert not is_memory_ceiling("not-a-number")
-    assert not is_memory_ceiling([])
+    assert not _is_memory_ceiling(None)
+    assert not _is_memory_ceiling(False)
+    assert not _is_memory_ceiling(True)
+    assert not _is_memory_ceiling(0)
+    assert not _is_memory_ceiling(-100)
+    assert not _is_memory_ceiling("0")
+    assert not _is_memory_ceiling("0b")
+    assert not _is_memory_ceiling("not-a-number")
+    assert not _is_memory_ceiling([])
 
-    assert is_memory_ceiling(1024)
-    assert is_memory_ceiling(1.5)
-    assert is_memory_ceiling("512m")
-    assert is_memory_ceiling("512M")
-    assert is_memory_ceiling("1.5g")
-    assert is_memory_ceiling("2G")
-    assert is_memory_ceiling("1073741824")
-    assert is_memory_ceiling("64k")
-    assert is_memory_ceiling("1t")
+    assert _is_memory_ceiling(1024)
+    assert _is_memory_ceiling(1.5)
+    assert _is_memory_ceiling("512m")
+    assert _is_memory_ceiling("512M")
+    assert _is_memory_ceiling("1.5g")
+    assert _is_memory_ceiling("2G")
+    assert _is_memory_ceiling("1073741824")
+    assert _is_memory_ceiling("64k")
+    assert _is_memory_ceiling("1t")
 
 
 def test_tag_of_image_ref() -> None:
-    assert tag_of_image_ref("postgres:16-alpine") == "16-alpine"
-    assert tag_of_image_ref("registry.example.com:5000/app:v1.0") == "v1.0"
-    assert tag_of_image_ref("redis") == ""
-    assert tag_of_image_ref("registry.example.com:5000/redis") == ""
+    assert _tag_of_image_ref("postgres:16-alpine") == "16-alpine"
+    assert _tag_of_image_ref("registry.example.com:5000/app:v1.0") == "v1.0"
+    assert _tag_of_image_ref("redis") == ""
+    assert _tag_of_image_ref("registry.example.com:5000/redis") == ""
 
 
 def test_find_bare_latest_violations() -> None:
@@ -70,13 +70,13 @@ def test_inspect_service_resource_limits() -> None:
         "cache": {"image": "redis"},
         "broken": "not a dict",
     }
-    compliant, non_compliant = inspect_service_resource_limits(services)
+    compliant, non_compliant = _inspect_service_resource_limits(services)
     assert compliant == ["web", "worker"]
     assert non_compliant == ["broken", "cache", "db"]
 
     # Test passing a root document dict containing 'services'
     root_doc = {"version": "3", "services": services}
-    compliant, non_compliant = inspect_service_resource_limits(root_doc)
+    compliant, non_compliant = _inspect_service_resource_limits(root_doc)
     assert compliant == ["web", "worker"]
     assert non_compliant == ["broken", "cache", "db"]
 
@@ -139,4 +139,4 @@ def test_inspect_compose_missing_file(tmp_path: Path) -> None:
 def test_inspect_service_resource_limits_propagates_error() -> None:
     bad_yaml = "services: [invalid yaml"
     with pytest.raises(ValueError, match="Failed to inspect compose"):
-        inspect_service_resource_limits(bad_yaml)
+        _inspect_service_resource_limits(bad_yaml)

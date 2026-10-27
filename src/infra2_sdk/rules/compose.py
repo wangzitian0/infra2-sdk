@@ -37,7 +37,7 @@ _UNITS = {
 _IMAGE_RE = re.compile(r"^\s*image:\s*(\S+)\s*$")
 
 
-def is_memory_ceiling(value: object) -> bool:
+def _is_memory_ceiling(value: object) -> bool:
     """Return whether value actually caps memory. Docker treats 0 as unlimited."""
     if isinstance(value, bool) or value is None:
         return False
@@ -51,7 +51,7 @@ def is_memory_ceiling(value: object) -> bool:
     return float(match.group(1)) * _UNITS.get(match.group(2).lower(), 0) > 0
 
 
-def tag_of_image_ref(ref: str) -> str:
+def _tag_of_image_ref(ref: str) -> str:
     """Return the tag of an image ref, or '' if untagged. Ignores a registry:port colon."""
     last = ref.rsplit("/", 1)[-1]
     return last.rsplit(":", 1)[-1] if ":" in last else ""
@@ -71,7 +71,7 @@ def find_bare_latest_violations(compose_text: str) -> list[str]:
         ref = match.group(1)
         if "${" in ref or "@sha256:" in ref:
             continue
-        if tag_of_image_ref(ref) == "latest":
+        if _tag_of_image_ref(ref) == "latest":
             violations.append(ref)
     return violations
 
@@ -95,7 +95,7 @@ class _ComposeReport:
         )
 
 
-def inspect_service_resource_limits(
+def _inspect_service_resource_limits(
     services: Mapping[str, Any] | str | Path,
 ) -> tuple[list[str], list[str]]:
     """Return (compliant_services, non_compliant_services) from services mapping or compose source.
@@ -124,7 +124,7 @@ def inspect_service_resource_limits(
             continue
         if "extends" in spec:
             continue  # ceiling may reside in parent
-        if is_memory_ceiling(spec.get("mem_limit")):
+        if _is_memory_ceiling(spec.get("mem_limit")):
             compliant.append(name)
         else:
             non_compliant.append(name)
@@ -184,7 +184,7 @@ def inspect_compose(path_or_text: str | Path) -> _ComposeReport:
         services = doc.get("services")
         if not isinstance(services, dict):
             continue
-        comp, unlim = inspect_service_resource_limits(services)
+        comp, unlim = _inspect_service_resource_limits(services)
         compliant.extend(comp)
         unlimited.extend(unlim)
 

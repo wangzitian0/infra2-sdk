@@ -192,18 +192,11 @@ def test_postgres_module_has_no_private_redact_error_alias() -> None:
 def test_postgres_settings_extended_fields_defaults_and_helpers() -> None:
     settings = PostgresSettings("postgresql://user:pass@db.internal:5432/app")
     assert settings.migrations_dsn is None
-    assert settings.effective_migrations_dsn == "postgresql://user:pass@db.internal:5432/app"
     assert settings.pool_size == 5
     assert settings.pool_max_overflow == 10
     assert settings.migration_lock_budget_seconds == 15.0
     assert settings.migration_lock_timeout_seconds == 5.0
     assert settings.migration_statement_timeout_seconds == 30.0
-    assert settings.sqlalchemy_engine_kwargs() == {
-        "pool_size": 5,
-        "max_overflow": 10,
-        "pool_pre_ping": True,
-    }
-    assert settings.migration_pgoptions() == "-c lock_timeout=5000ms -c statement_timeout=30000ms"
 
     custom = PostgresSettings(
         dsn="postgresql://user:pass@db.internal:5432/app",
@@ -214,14 +207,10 @@ def test_postgres_settings_extended_fields_defaults_and_helpers() -> None:
         migration_lock_timeout_seconds=8.0,
         migration_statement_timeout_seconds=45.0,
     )
-    assert custom.effective_migrations_dsn == "postgresql://admin:admin-secret@db.internal:5432/app"
+    assert custom.migrations_dsn == "postgresql+asyncpg://admin:admin-secret@db.internal:5432/app"
     assert "admin-secret" not in repr(custom)
-    assert custom.sqlalchemy_engine_kwargs() == {
-        "pool_size": 12,
-        "max_overflow": 20,
-        "pool_pre_ping": True,
-    }
-    assert custom.migration_pgoptions() == "-c lock_timeout=8000ms -c statement_timeout=45000ms"
+    assert custom.pool_size == 12
+    assert custom.pool_max_overflow == 20
 
 
 def test_postgres_settings_extended_validation() -> None:
