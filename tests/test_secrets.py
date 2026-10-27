@@ -253,7 +253,6 @@ def test_vault_backend_reads_patches_only_changed_keys_and_creates_when_absent()
     assert fake.calls[-1][0] == "PATCH"
     assert json.loads(fake.calls[-1][3]) == {"data": {"B": "3"}}
     assert backend.write("p/staging/s", {"A": "1", "B": "3"}) == WriteResult()
-    assert backend.read_version("p/staging/s") == 2
     assert all(c[2]["User-Agent"].startswith("infra2-sdk") for c in fake.calls)
 
     empty = FakeVault(None)

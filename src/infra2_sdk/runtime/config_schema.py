@@ -1,4 +1,4 @@
-"""Open JSON Schema contracts for environment-provided application settings.
+"""Environment-provided application settings contracts.
 
 Contract version 2 adds the *source class* of every field: who may legitimately produce
 its value. Everything a deployment derives from the manifest (secret-store paths, agent
@@ -15,13 +15,12 @@ from enum import StrEnum
 from typing import Any, get_args
 
 from infra2_sdk._wire import (
-    JSON_SCHEMA_DIALECT,
+    canonical_sha256 as _canonical_sha256,
+)
+from infra2_sdk._wire import (
     parse_contract_version,
     parse_string,
     require_contract_version,
-)
-from infra2_sdk._wire import (
-    canonical_sha256 as _canonical_sha256,
 )
 from infra2_sdk.runtime.environment import EnvironmentConflictError
 
@@ -212,42 +211,6 @@ class EnvironmentManifest:
             source=parse_string(raw, "source"),
             fields=tuple(EnvironmentField.from_dict(value) for value in fields),
         )
-
-    def to_json_schema(self) -> dict[str, Any]:
-        properties: dict[str, Any] = {}
-        required: list[str] = []
-        for field in self.fields:
-            item: dict[str, Any] = {
-                "type": "string",
-                "title": field.field,
-                "x-env-aliases": list(field.aliases),
-                "x-injected": field.injected,
-                "x-has-default": field.has_default,
-                "x-sensitive": field.sensitive,
-                "x-group": field.group,
-                "x-source": field.source,
-                "x-empty-ok": field.empty_ok,
-                "x-scope": field.scope,
-            }
-            if field.description:
-                item["description"] = field.description
-            if field.provided_by:
-                item["x-provided-by"] = field.provided_by
-            if field.composed_from:
-                item["x-composed-from"] = field.composed_from
-            properties[field.env] = item
-            if field.required:
-                required.append(field.env)
-        schema: dict[str, Any] = {
-            "$schema": JSON_SCHEMA_DIALECT,
-            "title": self.source,
-            "type": "object",
-            "additionalProperties": True,
-            "properties": properties,
-        }
-        if required:
-            schema["required"] = required
-        return schema
 
 
 @dataclass(frozen=True)

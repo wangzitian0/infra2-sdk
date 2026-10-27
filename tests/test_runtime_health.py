@@ -238,9 +238,6 @@ def test_dependency_manifest_round_trip_and_tier_lookup() -> None:
     assert restored.required_for("staging") == frozenset({"database"})
     assert restored.required_for("preview") == frozenset()
     assert len(restored) == 1
-    schema = DependencyManifest.json_schema()
-    assert schema["$schema"].endswith("2020-12/schema")
-    assert schema["properties"]["contract_version"] == {"const": 1}
     normalized = Dependency(
         "cache",
         "code_dominant",
@@ -393,7 +390,6 @@ def test_probe_wire_round_trip() -> None:
     result = ProbeResult("database", DependencyStatus.PRESENT, "ok", 1.5)
     assert ProbeResult("database", "present").present
     assert ProbeResult.from_dict(result.to_dict()) == result
-    assert result.json_schema()["properties"]["status"]["enum"] == ["present", "absent"]
 
 
 def test_probe_validation_rejects_ambiguous_results() -> None:

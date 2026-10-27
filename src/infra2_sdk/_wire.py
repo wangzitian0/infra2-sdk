@@ -6,8 +6,7 @@ import hashlib
 import json
 from collections.abc import Mapping
 from typing import Any
-
-JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
+from urllib.parse import urlsplit
 
 
 def canonical_json_bytes(payload: Any) -> bytes:
@@ -80,12 +79,39 @@ def require_exact_fields(
         raise ValueError(message)
 
 
+def validate_http_url(
+    value: str,
+    *,
+    label: str,
+    allow_fragment: bool = True,
+    validate_port: bool = False,
+) -> None:
+    try:
+        endpoint = urlsplit(value)
+        hostname = endpoint.hostname
+        if validate_port:
+            _ = endpoint.port
+    except ValueError:
+        raise ValueError(f"{label} must be a valid HTTP URL") from None
+    if (
+        endpoint.scheme not in {"http", "https"}
+        or not endpoint.netloc
+        or not hostname
+        or any(char.isspace() for char in endpoint.netloc)
+    ):
+        raise ValueError(f"{label} must use http:// or https:// with a host")
+    if endpoint.username is not None or endpoint.password is not None:
+        raise ValueError(f"{label} must not contain credentials")
+    if not allow_fragment and endpoint.fragment:
+        raise ValueError(f"{label} must not contain a fragment")
+
+
 __all__ = [
-    "JSON_SCHEMA_DIALECT",
     "canonical_json_bytes",
     "canonical_sha256",
     "parse_contract_version",
     "parse_string",
     "require_contract_version",
     "require_exact_fields",
+    "validate_http_url",
 ]

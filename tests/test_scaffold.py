@@ -471,16 +471,12 @@ def test_infra2_app_starts_with_a_known_tier(tmp_path: Path):
 
 
 def test_scaffold_manifest_declares_the_database_url_as_a_required_sensitive_human_secret():
-    # The Vault renderers ignore `sensitive`. The flag changes the JSON schema and how
-    # validate_environment compares values, so those are the observable outputs.
     manifest = _scaffold_manifest("demo-service", "apps", "postgres")
 
-    schema = manifest.to_json_schema()
-
-    assert list(schema["properties"]) == ["DATABASE_URL"]
-    assert schema["properties"]["DATABASE_URL"]["x-sensitive"] is True
-    assert schema["properties"]["DATABASE_URL"]["x-source"] == "human"
-    assert schema["required"] == ["DATABASE_URL"]
+    assert [f.env for f in manifest.fields] == ["DATABASE_URL"]
+    assert manifest.fields[0].sensitive is True
+    assert manifest.fields[0].source == "human"
+    assert manifest.fields[0].required is True
     assert validate_manifest_offline(manifest) == []
 
 
@@ -488,7 +484,6 @@ def test_scaffold_manifest_without_database_declares_no_field():
     manifest = _scaffold_manifest("demo-service", "apps", "none")
 
     assert manifest.fields == ()
-    assert manifest.to_json_schema()["properties"] == {}
     assert validate_manifest_offline(manifest) == []
 
 

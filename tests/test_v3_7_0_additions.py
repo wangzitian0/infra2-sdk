@@ -41,13 +41,9 @@ from infra2_sdk.deploy import (
     VERSION_KEYS,
     DeployType,
     ReleaseIdentityError,
-    Staleness,
     announce_approval_wait,
-    check_deploy_freshness,
-    format_freshness_failure,
     identifier_kind,
     identity_from_body,
-    measure_freshness,
     print_approval_notice,
     read_deployed_release,
     render_sender_request,
@@ -259,36 +255,6 @@ def test_deployed_release_and_freshness() -> None:
 
     with pytest.raises(ReleaseIdentityError, match="answered HTTP 502"):
         read_deployed_release("https://example.com/bad", lambda url: (502, "bad"))
-
-    def git_runner(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        if "rev-parse" in cmd:
-            return subprocess.CompletedProcess(cmd, 0, stdout=sha + "\n", stderr="")
-        if "log" in cmd:
-            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-
-    staleness = measure_freshness("staging", sha, run=git_runner)
-    assert isinstance(staleness, Staleness)
-    assert staleness.unreleased_commits == 0
-
-    stale_obj = Staleness(
-        environment="staging",
-        deployed_ref=sha[:7],
-        unreleased_commits=4,
-        oldest_unreleased_age=timedelta(days=5, hours=2),
-        oldest_unreleased_subject="feat: add new feature",
-    )
-    msg = format_freshness_failure(stale_obj, timedelta(days=3))
-    assert "staging is stale" in msg
-
-    code = check_deploy_freshness(
-        "https://example.com/health",
-        environment="staging",
-        max_age_days=3,
-        http_get=lambda url: (200, json.dumps({"git_sha": sha})),
-        run=git_runner,
-    )
-    assert code == 0
 
 
 def test_ci_workflow_and_coverage_ratchet(tmp_path: Path) -> None:

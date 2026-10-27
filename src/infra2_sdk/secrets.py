@@ -190,14 +190,6 @@ class VaultKvBackend:
         data = _json(response).get("data", {}).get("data", {})
         return {str(k): "" if v is None else str(v) for k, v in data.items()}
 
-    def read_version(self, path: str) -> int:
-        response = self._send("GET", self._url("data", path), self._headers(), None)
-        if response.status == 404:
-            return 0
-        if response.status != 200:
-            raise SecretsError(f"Vault read of {path} failed with HTTP {response.status}")
-        return int(_json(response).get("data", {}).get("metadata", {}).get("version", 0))
-
     def write(self, path: str, values: Mapping[str, str]) -> WriteResult:
         current = self.read(path)
         changed = {k: v for k, v in values.items() if current.get(k) != v}

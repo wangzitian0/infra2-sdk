@@ -7,7 +7,6 @@ import binascii
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 import zipfile
@@ -1303,118 +1302,6 @@ def read_deployed_release(url: str, http_get: HttpGet) -> str:
     return identity_from_body(body, url=url)
 
 
-class FreshnessFailure(RuntimeError):
-    """The environment could not be confirmed fresh."""
-
-
-@dataclass(frozen=True)
-class Staleness:
-    environment: str
-    deployed_ref: str
-    unreleased_commits: int
-    oldest_unreleased_age: timedelta | None
-    oldest_unreleased_subject: str
-
-
-def _git_freshness(
-    args: Sequence[str],
-    repo: str,
-    run: Callable[..., subprocess.CompletedProcess[str]],
-) -> str:
-    result = run(["git", "-C", repo, *args], capture_output=True, text=True, check=False)
-    if result.returncode != 0:
-        raise FreshnessFailure(f"git {' '.join(args)} failed: {result.stderr.strip()}")
-    return result.stdout.strip()
-
-
-def measure_freshness(
-    environment: str,
-    deployed_ref: str,
-    *,
-    repo: str = ".",
-    now: datetime | None = None,
-    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
-) -> Staleness:
-    """Measure how far behind ``origin/main`` the deployed release is."""
-    resolved = run(
-        ["git", "-C", repo, "rev-parse", "--verify", f"{deployed_ref}^{{commit}}"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if resolved.returncode != 0 or not resolved.stdout.strip():
-        raise FreshnessFailure(
-            f"{environment} reports {deployed_ref!r}, which is not a commit here — fetch tags, "
-            f"or check that the environment reports a ref this repository knows"
-        )
-    log = _git_freshness(
-        ["log", "--reverse", "--format=%cI%x1f%s", f"{deployed_ref}..origin/main"],
-        repo,
-        run,
-    )
-    lines = [line for line in log.splitlines() if line]
-    if not lines:
-        return Staleness(environment, deployed_ref, 0, None, "")
-    oldest_iso, _, subject = lines[0].partition("\x1f")
-    oldest = datetime.fromisoformat(oldest_iso)
-    reference = now or datetime.now(UTC)
-    return Staleness(environment, deployed_ref, len(lines), reference - oldest, subject)
-
-
-def format_freshness_failure(staleness: Staleness, max_age: timedelta) -> str:
-    """Render an actionable one-line staleness failure message."""
-    age = staleness.oldest_unreleased_age
-    assert age is not None
-    return (
-        f"{staleness.environment} is stale: it serves {staleness.deployed_ref} while "
-        f"{staleness.unreleased_commits} commit(s) sit unreleased on main, the oldest merged "
-        f"{age.days}d{age.seconds // 3600}h ago (limit {max_age.days}d) — "
-        f"{staleness.oldest_unreleased_subject[:80]!r}. Finished work is invisible to every user "
-        f"of this environment until a release carries it (#560)."
-    )
-
-
-def check_deploy_freshness(
-    url: str,
-    *,
-    environment: str = "",
-    max_age_days: int = 3,
-    repo: str = ".",
-    http_get: HttpGet | None = None,
-    now: datetime | None = None,
-    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
-    warn_only: bool = False,
-) -> int:
-    """Evaluate deploy freshness against ``origin/main`` and return a shell exit code."""
-    http_get = http_get or default_http_get()
-    max_age = timedelta(days=max_age_days)
-    try:
-        deployed_ref = read_deployed_release(url, http_get)
-        staleness = measure_freshness(environment or url, deployed_ref, repo=repo, now=now, run=run)
-    except (FreshnessFailure, ReleaseIdentityError) as exc:
-        print(f"freshness check failed: {exc}", file=sys.stderr)
-        return 1
-
-    if staleness.unreleased_commits == 0:
-        print(f"{staleness.environment} is current: serving {deployed_ref}, nothing newer on main")
-        return 0
-    age = staleness.oldest_unreleased_age
-    assert age is not None
-    if age > max_age:
-        failure_msg = format_freshness_failure(staleness, max_age)
-        if warn_only:
-            print(f"::warning::{failure_msg}")
-            return 0
-        print(f"freshness check failed: {failure_msg}", file=sys.stderr)
-        return 1
-    print(
-        f"{staleness.environment} is fresh enough: serving {deployed_ref}, "
-        f"{staleness.unreleased_commits} commit(s) unreleased, oldest {age.days}d "
-        f"(limit {max_age.days}d)"
-    )
-    return 0
-
-
 _DEFAULT_TOKEN_ENV = "_".join(("INFRA2", "PAT"))
 
 
@@ -1483,24 +1370,19 @@ __all__ = [
     "DeployOperation",
     "DeployRequest",
     "DeployType",
-    "FreshnessFailure",
     "PRODUCTION_APPROVAL_MARGIN_SECONDS",
     "PRODUCTION_DEPLOY_BUDGET_SECONDS",
     "PRODUCTION_REQUEST_MAX_AGE_SECONDS",
     "ReceiverRun",
     "ReleaseIdentityError",
-    "Staleness",
     "VERSION_KEYS",
     "announce_approval_wait",
     "canonical_json",
-    "check_deploy_freshness",
     "default_http_get",
     "dispatch_and_wait",
-    "format_freshness_failure",
     "github_api_client",
     "identifier_kind",
     "identity_from_body",
-    "measure_freshness",
     "parse_sender_deadline",
     "poll_until_healthy",
     "print_approval_notice",

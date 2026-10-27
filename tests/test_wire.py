@@ -1,13 +1,10 @@
-import ast
-from pathlib import Path
-
 import pytest
 
-from infra2_sdk import _wire
 from infra2_sdk._wire import (
     parse_contract_version,
     parse_string,
     require_contract_version,
+    validate_http_url,
 )
 
 
@@ -38,30 +35,30 @@ def test_parse_string() -> None:
         parse_string({"key": 123}, "key")
 
 
-_SRC = Path(__file__).resolve().parents[1] / "src" / "infra2_sdk"
-_DIALECT_URL = "https://json-schema.org/draft/2020-12/schema"
-
-
-def test_json_schema_dialect_has_one_definition_in_the_source_tree() -> None:
-    literal_sites = []
-    for path in sorted(_SRC.rglob("*.py")):
-        tree = ast.parse(path.read_text("utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Constant) and node.value == _DIALECT_URL:
-                literal_sites.append(path.relative_to(_SRC).as_posix())
-    assert literal_sites == ["_wire.py"]
-    assert _wire.JSON_SCHEMA_DIALECT == _DIALECT_URL
-
-
-def test_json_schema_dialect_is_the_same_value_in_every_schema_emitter() -> None:
-    from infra2_sdk.runtime import config_schema, health
-
-    for module in (config_schema, health):
-        assert module.JSON_SCHEMA_DIALECT is _wire.JSON_SCHEMA_DIALECT, module.__name__
-
-
-def test_json_schema_dialect_is_the_exact_2020_12_uri() -> None:
-    assert _wire.JSON_SCHEMA_DIALECT == "https://json-schema.org/draft/2020-12/schema"
+def test_validate_http_url() -> None:
+    validate_http_url("https://api.example.test/v1#section", label="endpoint")
+    validate_http_url(
+        "http://collector.internal:4318",
+        label="OTLP endpoint",
+        allow_fragment=False,
+        validate_port=True,
+    )
+    with pytest.raises(ValueError, match="endpoint must use http:// or https:// with a host"):
+        validate_http_url("ftp://example.test", label="endpoint")
+    with pytest.raises(ValueError, match="endpoint must not contain credentials"):
+        validate_http_url("https://user:pass@example.test", label="endpoint")
+    with pytest.raises(ValueError, match="OTLP endpoint must not contain a fragment"):
+        validate_http_url(
+            "https://collector.internal:4318#frag",
+            label="OTLP endpoint",
+            allow_fragment=False,
+        )
+    with pytest.raises(ValueError, match="OTLP endpoint must be a valid HTTP URL"):
+        validate_http_url(
+            "http://collector.internal:badport",
+            label="OTLP endpoint",
+            validate_port=True,
+        )
 
 
 def test_canonical_sha256_is_key_order_independent_and_matches_the_runtime_helpers() -> None:

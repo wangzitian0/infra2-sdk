@@ -333,7 +333,7 @@ wheels = [
 
 [[package]]
 name = "infra2-sdk"
-version = "3.13.0"
+version = "3.14.0"
 source = { editable = "." }
 dependencies = [
     { name = "pyyaml" },

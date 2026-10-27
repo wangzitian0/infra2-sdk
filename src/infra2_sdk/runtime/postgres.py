@@ -11,7 +11,7 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from infra2_sdk.runtime._optional import require
-from infra2_sdk.runtime.health import DependencyStatus, ProbeResult
+from infra2_sdk.runtime.health import DependencyStatus, ProbeResult, _elapsed
 
 _SQLALCHEMY_DRIVER_RE = re.compile(r"\Apostgresql\+[a-zA-Z0-9_]+://")
 
@@ -59,23 +59,6 @@ class PostgresSettings:
     @property
     def psycopg_dsn(self) -> str:
         return normalize_postgres_dsn(self.dsn)
-
-    @property
-    def effective_migrations_dsn(self) -> str:
-        return normalize_postgres_dsn(self.migrations_dsn or self.dsn)
-
-    def sqlalchemy_engine_kwargs(self) -> dict[str, Any]:
-        return {
-            "pool_size": self.pool_size,
-            "max_overflow": self.pool_max_overflow,
-            "pool_pre_ping": True,
-        }
-
-    def migration_pgoptions(self) -> str:
-        return (
-            f"-c lock_timeout={int(self.migration_lock_timeout_seconds * 1000)}ms "
-            f"-c statement_timeout={int(self.migration_statement_timeout_seconds * 1000)}ms"
-        )
 
 
 def normalize_postgres_dsn(dsn: str) -> str:
@@ -131,20 +114,17 @@ def probe_postgres(
                 target.close()
 
 
-def _elapsed(started: float) -> float:
-    return (time.perf_counter() - started) * 1000
-
-
 def redact_postgres_error(detail: str, settings: PostgresSettings) -> str:
     """Redact DSN and password from PostgreSQL error strings."""
     redacted = detail
-    targets = {settings.dsn, settings.psycopg_dsn, settings.effective_migrations_dsn}
+    effective_migrations = normalize_postgres_dsn(settings.migrations_dsn or settings.dsn)
+    targets = {settings.dsn, settings.psycopg_dsn, effective_migrations}
     if settings.migrations_dsn:
         targets.add(settings.migrations_dsn)
     for dsn in sorted(targets, key=len, reverse=True):
         if dsn:
             redacted = redacted.replace(dsn, "<redacted-postgres-dsn>")
-    for dsn_to_check in (settings.psycopg_dsn, settings.effective_migrations_dsn):
+    for dsn_to_check in (settings.psycopg_dsn, effective_migrations):
         try:
             password = urlsplit(dsn_to_check).password
         except ValueError:

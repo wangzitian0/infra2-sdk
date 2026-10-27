@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 from infra2_sdk import __version__
 from infra2_sdk.runtime._optional import require
-from infra2_sdk.runtime.health import DependencyStatus, ProbeResult
+from infra2_sdk.runtime.health import DependencyStatus, ProbeResult, _elapsed
 
 
 @dataclass(frozen=True)
@@ -119,10 +119,6 @@ async def probe_http(
     finally:
         if owned and transport is not None:
             await transport.aclose()
-
-
-def _elapsed(started: float) -> float:
-    return (time.perf_counter() - started) * 1000
 
 
 __all__ = [
