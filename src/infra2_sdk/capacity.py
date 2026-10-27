@@ -18,7 +18,7 @@ _WINDOWS = ("hour", "day", "month")
 
 
 @dataclass(frozen=True)
-class CapacityLimit:
+class _CapacityLimit:
     name: str
     limit: int
     window: str = "day"
@@ -75,7 +75,7 @@ class CapacityReport:
 
 
 def evaluate(
-    limits: Iterable[CapacityLimit],
+    limits: Iterable[_CapacityLimit],
     readings: Iterable[CapacityReading],
     *,
     warn_ratio: float = 0.8,
@@ -101,11 +101,11 @@ def evaluate(
 # --------------------------------------------------------------------------- known limits
 
 CLOUDFLARE_FREE_TIER = (
-    CapacityLimit("cloudflare.kv.write", 1_000),
-    CapacityLimit("cloudflare.kv.delete", 1_000),
-    CapacityLimit("cloudflare.kv.list", 1_000),
-    CapacityLimit("cloudflare.kv.read", 100_000),
-    CapacityLimit("cloudflare.workers.requests", 100_000),
+    _CapacityLimit("cloudflare.kv.write", 1_000),
+    _CapacityLimit("cloudflare.kv.delete", 1_000),
+    _CapacityLimit("cloudflare.kv.list", 1_000),
+    _CapacityLimit("cloudflare.kv.read", 100_000),
+    _CapacityLimit("cloudflare.workers.requests", 100_000),
 )
 
 # --------------------------------------------------------------------------- collectors

@@ -13,7 +13,7 @@ from infra2_sdk.runtime.environment import (
     to_environment_tier,
 )
 
-DEFAULT_BASE_DOMAIN = "zitian.party"
+_DEFAULT_BASE_DOMAIN = "zitian.party"
 
 _SLUG_RE = re.compile(r"\A[a-z0-9][a-z0-9_-]*\Z")
 
@@ -22,7 +22,7 @@ def resolve_app_hostname(
     slug: str,
     tier: EnvironmentTier | str,
     *,
-    base_domain: str = DEFAULT_BASE_DOMAIN,
+    base_domain: str = _DEFAULT_BASE_DOMAIN,
     slot_id: str | int | None = None,
     custom_prod_domain: str | None = None,
     is_canary: bool = False,
@@ -88,7 +88,7 @@ def resolve_service_url(
     slug: str,
     tier: EnvironmentTier | str,
     *,
-    base_domain: str = DEFAULT_BASE_DOMAIN,
+    base_domain: str = _DEFAULT_BASE_DOMAIN,
     path: str = "/",
     slot_id: str | int | None = None,
     is_canary: bool = False,
@@ -126,7 +126,7 @@ def derive_preview_coordinates(
     slug: str,
     tier: EnvironmentTier | str,
     *,
-    base_domain: str = DEFAULT_BASE_DOMAIN,
+    base_domain: str = _DEFAULT_BASE_DOMAIN,
     slot_id: str | int | None = None,
     custom_prod_domain: str | None = None,
     is_canary: bool = False,

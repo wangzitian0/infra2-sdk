@@ -329,7 +329,7 @@ def _elapsed(started: float) -> float:
     return (time.perf_counter() - started) * 1000
 
 
-class HealthStatus(StrEnum):
+class _HealthStatus(StrEnum):
     HEALTHY = "healthy"
     DEGRADED = "degraded"
     UNHEALTHY = "unhealthy"
@@ -373,17 +373,17 @@ def _health_response(
         key=lambda name: (not checks[name]["required"], name),
     )
     if any(checks[name]["required"] for name in absent):
-        status = HealthStatus.UNHEALTHY
+        status = _HealthStatus.UNHEALTHY
     elif absent:
-        status = HealthStatus.DEGRADED
+        status = _HealthStatus.DEGRADED
     else:
-        status = HealthStatus.HEALTHY
+        status = _HealthStatus.HEALTHY
     body = {
         "status": status.value,
         "checks": dict(sorted(checks.items())),
         "reasons": [f"{name}: {checks[name]['detail'] or 'absent'}" for name in absent],
     }
-    return (_HTTP_SERVICE_UNAVAILABLE if status is HealthStatus.UNHEALTHY else _HTTP_OK), body
+    return (_HTTP_SERVICE_UNAVAILABLE if status is _HealthStatus.UNHEALTHY else _HTTP_OK), body
 
 
 async def check_health(

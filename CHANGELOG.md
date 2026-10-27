@@ -4,6 +4,20 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.15.0 - 2026-10-27
+
+### Added
+
+- Add `EnvironmentManifest.validate_offline()` on `infra2_sdk.runtime.config_schema.EnvironmentManifest` (`infra2_sdk.ci.validate_manifest_offline` delegates to it) and re-export `inspect_compose` from `infra2_sdk.ci` ([#152](https://github.com/wangzitian0/infra2-sdk/issues/152)).
+
+### Changed
+
+- Move `PipelineStage` default deadlines (`pipeline_stage_deadlines_ms`) into `src/infra2_sdk/data/stages.yaml` as the single source of truth; move `_ReconcileReport` and `_reconcile` into `infra2_sdk.secrets`; share `_yaml()` in `infra2_sdk._wire` and GitHub REST API headers/URL builders in `infra2_sdk.transport`; prefix 14 internal-only `LEFT_THE_PACKAGES` symbols with leading underscores ([#152](https://github.com/wangzitian0/infra2-sdk/issues/152)).
+
+### Removed
+
+- Remove 7 unused application-owned fields from `S3Settings` (`public_endpoint_url`, `public_bucket`, `public_access_key_id`, `public_secret_access_key`, `presign_expiry_seconds`, `raw_prefix`, `documents_prefix`) and 4 unused release-metadata fields from internal `_ServiceIdentity` ([#152](https://github.com/wangzitian0/infra2-sdk/issues/152)).
+
 ## 3.14.0 - 2026-10-27
 
 ### Removed

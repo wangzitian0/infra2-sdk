@@ -21,11 +21,11 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 from infra2_sdk.runtime.environment import (
-    PLATFORM_OWNED_TIERS,
+    _PLATFORM_OWNED_TIERS,
     EnvironmentConflictError,
     EnvironmentTier,
     RuntimeEnvKey,
-    UnknownEnvironmentPolicy,
+    _UnknownEnvironmentPolicy,
     environment_from_env,
     resolve_runtime_env,
     runtime_env_spec,
@@ -34,9 +34,9 @@ from infra2_sdk.runtime.environment import (
 from infra2_sdk.runtime.health import (
     _HTTP_OK,
     DependencyStatus,
-    HealthStatus,
     ProbeResult,
     _elapsed,
+    _HealthStatus,
     check_health,
 )
 
@@ -94,10 +94,10 @@ def _in_deployed_tier() -> bool:
     Strict mode never calls this function.
     """
     try:
-        tier = environment_from_env(unknown=UnknownEnvironmentPolicy.PRODUCTION).tier
+        tier = environment_from_env(unknown=_UnknownEnvironmentPolicy.PRODUCTION).tier
     except ValueError:
         return True
-    return tier in PLATFORM_OWNED_TIERS
+    return tier in _PLATFORM_OWNED_TIERS
 
 
 def _require_known_tier() -> None:
@@ -185,7 +185,7 @@ def _resolve_telemetry(
         # The tier that from_env resolved, also when it inferred the tier from the attribute
         # deployment.environment.name.
         _log_missing_endpoint(
-            deployed=EnvironmentTier(settings.environment) in PLATFORM_OWNED_TIERS
+            deployed=EnvironmentTier(settings.environment) in _PLATFORM_OWNED_TIERS
         )
         return None
     return settings
@@ -334,7 +334,7 @@ def init_service(
 
     async def report() -> tuple[int, dict[str, Any]]:
         if db_checker is None:
-            return _HTTP_OK, {"status": HealthStatus.HEALTHY.value, "checks": {}, "reasons": []}
+            return _HTTP_OK, {"status": _HealthStatus.HEALTHY.value, "checks": {}, "reasons": []}
         return await check_health(
             [_DatabaseCheck(db_checker)], timeout_seconds=check_timeout_seconds
         )

@@ -3,8 +3,8 @@ import warnings
 import pytest
 
 from infra2_sdk.routing import (
+    _DEFAULT_BASE_DOMAIN,
     CANARY_SLOT,
-    DEFAULT_BASE_DOMAIN,
     PreviewStackCoordinates,
     derive_preview_coordinates,
     resolve_app_hostname,
@@ -60,10 +60,12 @@ def test_resolve_app_hostname_standards():
 
 def test_canary_hostname_resolution_and_slot_999_is_not_special():
     # Canonical canary
-    assert resolve_app_hostname("report", "canary") == f"report-{CANARY_SLOT}.{DEFAULT_BASE_DOMAIN}"
+    assert (
+        resolve_app_hostname("report", "canary") == f"report-{CANARY_SLOT}.{_DEFAULT_BASE_DOMAIN}"
+    )
     assert (
         resolve_app_hostname("report", EnvironmentTier.PREVIEW, is_canary=True)
-        == f"report-{CANARY_SLOT}.{DEFAULT_BASE_DOMAIN}"
+        == f"report-{CANARY_SLOT}.{_DEFAULT_BASE_DOMAIN}"
     )
 
     # Slot 999 is an ordinary PR alias: the legacy canary mapping is gone.
@@ -71,18 +73,18 @@ def test_canary_hostname_resolution_and_slot_999_is_not_special():
         warnings.simplefilter("error")
         assert (
             resolve_app_hostname("report", EnvironmentTier.PREVIEW, slot_id=999)
-            == f"report-pr-999.{DEFAULT_BASE_DOMAIN}"
+            == f"report-pr-999.{_DEFAULT_BASE_DOMAIN}"
         )
         assert (
             resolve_app_hostname("report", EnvironmentTier.PREVIEW, slot_id="pr-999")
-            == f"report-pr-999.{DEFAULT_BASE_DOMAIN}"
+            == f"report-pr-999.{_DEFAULT_BASE_DOMAIN}"
         )
 
     # Canonical CANARY_SLOT slot_id resolves to the canary host and raises no warning
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         host = resolve_app_hostname("report", EnvironmentTier.PREVIEW, slot_id=CANARY_SLOT)
-        assert host == f"report-{CANARY_SLOT}.{DEFAULT_BASE_DOMAIN}"
+        assert host == f"report-{CANARY_SLOT}.{_DEFAULT_BASE_DOMAIN}"
 
 
 def test_resolve_service_url():

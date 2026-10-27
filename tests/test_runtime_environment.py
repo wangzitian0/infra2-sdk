@@ -3,7 +3,7 @@ from typing import get_type_hints
 import pytest
 
 from infra2_sdk.runtime.environment import (
-    PLATFORM_OWNED_TIERS,
+    _PLATFORM_OWNED_TIERS,
     RUNTIME_ENV_CONTRACT_VERSION,
     RUNTIME_ENV_SPECS,
     EnvironmentConflictError,
@@ -11,9 +11,9 @@ from infra2_sdk.runtime.environment import (
     RuntimeEnvironment,
     RuntimeEnvKey,
     RuntimeEnvSpec,
+    _resolve_env,
     env_int,
     environment_from_env,
-    resolve_env,
     resolve_environment_tier,
     resolve_runtime_env,
     runtime_env_contract,
@@ -57,7 +57,7 @@ def test_ci_and_unknown_policies_are_explicit() -> None:
 
 
 def test_platform_owned_tiers_are_the_three_deployed_tiers() -> None:
-    assert set(PLATFORM_OWNED_TIERS) == {
+    assert set(_PLATFORM_OWNED_TIERS) == {
         EnvironmentTier.PREVIEW,
         EnvironmentTier.STAGING,
         EnvironmentTier.PRODUCTION,
@@ -90,16 +90,16 @@ def test_strict_environment_requires_explicit_configuration() -> None:
 
 
 def test_normalize_deployment_environment() -> None:
-    from infra2_sdk.runtime.environment import normalize_deployment_environment
+    from infra2_sdk.runtime.environment import _normalize_deployment_environment
 
-    assert normalize_deployment_environment("", EnvironmentTier.STAGING) == "staging"
+    assert _normalize_deployment_environment("", EnvironmentTier.STAGING) == "staging"
     assert (
-        normalize_deployment_environment("branch-feature", EnvironmentTier.PREVIEW)
+        _normalize_deployment_environment("branch-feature", EnvironmentTier.PREVIEW)
         == "branch-feature"
     )
-    assert normalize_deployment_environment("staging", EnvironmentTier.STAGING) == "staging"
+    assert _normalize_deployment_environment("staging", EnvironmentTier.STAGING) == "staging"
     with pytest.raises(ValueError, match="disagrees with environment tier"):
-        normalize_deployment_environment("staging", EnvironmentTier.PRODUCTION)
+        _normalize_deployment_environment("staging", EnvironmentTier.PRODUCTION)
 
 
 def test_environment_from_env_detects_github_actions_from_supplied_mapping() -> None:
@@ -150,7 +150,7 @@ def test_the_canary_slot_is_a_preview_tier_and_routing_shares_the_definition() -
     assert routing.CANARY_SLOT is environment.CANARY_SLOT == "canary-preview"
     assert to_environment_tier(environment.CANARY_SLOT) is EnvironmentTier.PREVIEW
     assert to_environment_tier(environment.CANARY_SLOT.upper()) is EnvironmentTier.PREVIEW
-    normalize = environment.normalize_deployment_environment
+    normalize = environment._normalize_deployment_environment
     assert normalize(environment.CANARY_SLOT, EnvironmentTier.PREVIEW) == "canary-preview"
     with pytest.raises(ValueError, match="disagrees"):
         normalize(environment.CANARY_SLOT, EnvironmentTier.STAGING)
@@ -160,19 +160,19 @@ def test_the_canary_slot_is_a_preview_tier_and_routing_shares_the_definition() -
 
 
 def test_canonical_alias_and_default_resolution_are_explicit() -> None:
-    assert resolve_env({"ENVIRONMENT": "staging"}, RuntimeEnvKey.ENVIRONMENT).value == "staging"
-    alias = resolve_env(
+    assert _resolve_env({"ENVIRONMENT": "staging"}, RuntimeEnvKey.ENVIRONMENT).value == "staging"
+    alias = _resolve_env(
         {"ENV": "pr-42"},
         RuntimeEnvKey.ENVIRONMENT,
         aliases=("ENV", "APP_ENV"),
     )
     assert (alias.value, alias.source) == ("pr-42", "ENV")
-    default = resolve_env({}, RuntimeEnvKey.ENVIRONMENT, default="local_dev")
+    default = _resolve_env({}, RuntimeEnvKey.ENVIRONMENT, default="local_dev")
     assert (default.value, default.source) == ("local_dev", None)
 
 
 def test_equal_aliases_are_allowed_but_conflicts_fail_closed() -> None:
-    resolved = resolve_env(
+    resolved = _resolve_env(
         {"ENVIRONMENT": "staging", "ENV": "staging"},
         RuntimeEnvKey.ENVIRONMENT,
         aliases=("ENV",),
@@ -180,7 +180,7 @@ def test_equal_aliases_are_allowed_but_conflicts_fail_closed() -> None:
     assert resolved.source == "ENVIRONMENT"
 
     with pytest.raises(EnvironmentConflictError, match="ENVIRONMENT.*ENV"):
-        resolve_env(
+        _resolve_env(
             {"ENVIRONMENT": "staging", "ENV": "production"},
             RuntimeEnvKey.ENVIRONMENT,
             aliases=("ENV",),
@@ -189,12 +189,12 @@ def test_equal_aliases_are_allowed_but_conflicts_fail_closed() -> None:
 
 def test_required_and_secret_errors_never_expose_values() -> None:
     with pytest.raises(ValueError, match="ENVIRONMENT is required"):
-        resolve_env({}, RuntimeEnvKey.ENVIRONMENT, required=True)
+        _resolve_env({}, RuntimeEnvKey.ENVIRONMENT, required=True)
 
     # No variable of the contract is sensitive, so the secret rules run on a caller-chosen name.
     secret = "do-not-leak-this-secret"
     with pytest.raises(EnvironmentConflictError) as captured:
-        resolve_env(
+        _resolve_env(
             {"EXAMPLE_API_KEY": secret, "EXAMPLE_API_TOKEN": "different-secret"},
             "EXAMPLE_API_KEY",
             aliases=("EXAMPLE_API_TOKEN",),
@@ -203,7 +203,7 @@ def test_required_and_secret_errors_never_expose_values() -> None:
     assert secret not in str(captured.value)
 
     spaced = "  value with intentional spaces  "
-    resolved = resolve_env({"EXAMPLE_API_KEY": spaced}, "EXAMPLE_API_KEY", sensitive=True)
+    resolved = _resolve_env({"EXAMPLE_API_KEY": spaced}, "EXAMPLE_API_KEY", sensitive=True)
     assert resolved.value == spaced
 
 
@@ -293,15 +293,15 @@ def test_a_sensitive_spec_serializes_its_flag() -> None:
 def test_underscore_preview_aliases_resolve_to_the_hyphen_form(alias: str, canonical: str) -> None:
     from infra2_sdk.runtime.environment import (
         EnvironmentTier,
+        _normalize_deployment_environment,
         is_preview_alias,
-        normalize_deployment_environment,
         to_environment_tier,
     )
 
     assert is_preview_alias(alias)
     assert is_preview_alias(canonical)
     assert to_environment_tier(alias) is EnvironmentTier.PREVIEW
-    assert normalize_deployment_environment(alias, EnvironmentTier.PREVIEW) == canonical
+    assert _normalize_deployment_environment(alias, EnvironmentTier.PREVIEW) == canonical
 
 
 @pytest.mark.parametrize("value", ["staging", "production", "preview", "pr_0", "branch_", "typo"])

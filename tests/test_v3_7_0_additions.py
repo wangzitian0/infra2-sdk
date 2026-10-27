@@ -793,3 +793,313 @@ def test_openpanel_observability_engine(tmp_path: Path) -> None:
             {"limit": 1},
             opener=lambda req, timeout=30.0: _FakeResp("[1, 2, 3]"),
         )
+
+
+def test_ci_edge_cases_and_inspect_compose_reexport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from infra2_sdk.ci import (
+        CoverageArtifactMissing,
+        check_no_regression,
+        defanged_steps,
+        inspect_compose,
+        load_baseline,
+        load_workflow,
+        parse_github_time,
+        read_coverage_summary,
+        read_workflow,
+        workflow_read_error,
+        write_github_output,
+    )
+    from infra2_sdk.rules.compose import inspect_compose as rules_inspect_compose
+
+    assert inspect_compose is rules_inspect_compose
+
+    missing = tmp_path / "missing.yml"
+    assert read_workflow(missing) == ({}, "")
+    assert workflow_read_error(missing) is None
+    assert load_workflow(missing) == {}
+
+    blank = tmp_path / "blank.yml"
+    blank.write_text("   \n", encoding="utf-8")
+    assert workflow_read_error(blank) is None
+
+    bad_yaml = tmp_path / "bad.yml"
+    bad_yaml.write_text("jobs: [\n", encoding="utf-8")
+    assert read_workflow(bad_yaml)[0] == {}
+    assert workflow_read_error(bad_yaml) is not None
+
+    list_yaml = tmp_path / "list.yml"
+    list_yaml.write_text("- a\n- b\n", encoding="utf-8")
+    assert read_workflow(list_yaml)[0] == {}
+    assert workflow_read_error(list_yaml) == "top level is list, not a mapping"
+
+    bad_utf8 = tmp_path / "bad_utf8.yml"
+    bad_utf8.write_bytes(b"\xff\xfe")
+    assert read_workflow(bad_utf8) == ({}, "")
+    assert workflow_read_error(bad_utf8) is not None
+
+    wf_src = (
+        "name: test\n"
+        "jobs:\n"
+        "  lint:\n"
+        "    continue-on-error: true\n"
+        "    steps:\n"
+        "      - run: |\n"
+        "          echo hi\n"
+        "\n"
+        "      - name: allowed\n"
+        "        continue-on-error: true # gate-exempt: advisory\n"
+        "      - name: flagged\n"
+        "        continue-on-error: true\n"
+    )
+    wf_file = tmp_path / "wf.yml"
+    wf_file.write_text(wf_src, encoding="utf-8")
+    wf_parsed, wf_raw = read_workflow(wf_file)
+    assert defanged_steps(wf_parsed, "missing", "") == []
+    assert defanged_steps(wf_parsed, "lint", wf_raw) == ["<job>", "flagged"]
+
+    bad_xml = tmp_path / "bad.xml"
+    bad_xml.write_text("<coverage lines-valid='bad'/>", encoding="utf-8")
+    with pytest.raises(CoverageArtifactMissing):
+        read_coverage_summary(bad_xml)
+
+    assert load_baseline(tmp_path / "no_baseline.json") is None
+    ok, msg = check_no_regression({"line_rate": 0.9, "lines_covered": 9, "lines_valid": 10}, None)
+    assert ok and "no committed baseline yet" in msg
+
+    assert parse_github_time(None) is None
+    assert parse_github_time("  ") is None
+    assert parse_github_time("2026-10-01T12:00:00").tzinfo is not None
+
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    write_github_output({"a": "1"})
+    out_file = tmp_path / "gh_out.txt"
+    with pytest.raises(ValueError, match="invalid GitHub output key"):
+        write_github_output({"bad-key": "1"}, output_path=out_file)
+    write_github_output({"multi": "line1\nline2"}, output_path=out_file)
+    assert "multi<<FINANCE_REPORT_OUTPUT_" in out_file.read_text(encoding="utf-8")
+
+
+def test_observability_github_and_trail_branches(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import base64
+    from urllib.error import HTTPError, URLError
+
+    from infra2_sdk.observability import (
+        CheckVerdict,
+        ConsecutiveObservationState,
+        GitHubIssues,
+        ListingFailed,
+        PeerReadError,
+        ScheduleError,
+        Trail,
+        WriteFailed,
+        evaluate_consecutive_hysteresis,
+        evaluate_peer_liveness,
+        github_getter,
+        issue_trail_mode,
+        largest_gap,
+        load_trail,
+        parse_bound_cap_hours,
+        reconcile_issue_trail,
+    )
+
+    state = ConsecutiveObservationState(active=True, bad_streak=2, last_alert_at=10.0)
+    assert (
+        evaluate_consecutive_hysteresis(
+            state=state,
+            is_bad_now=True,
+            now=25.0,
+            failure_threshold=2,
+            recovery_threshold=2,
+            renotify_seconds=10,
+        )
+        == "fire"
+    )
+    assert (
+        evaluate_consecutive_hysteresis(
+            state=state,
+            is_bad_now=False,
+            now=26.0,
+            failure_threshold=2,
+            recovery_threshold=2,
+            renotify_seconds=10,
+        )
+        == "none"
+    )
+
+    class _Resp:
+        def __init__(self, body: str) -> None:
+            self._body = body
+
+        def __enter__(self) -> _Resp:
+            return self
+
+        def __exit__(self, *args: object) -> bool:
+            return False
+
+        def read(self) -> bytes:
+            return self._body.encode("utf-8")
+
+    get_ok = github_getter(token="tok", opener=lambda req, timeout=20.0: _Resp('{"ok": 1}'))
+    assert get_ok("/repos/x/y") == {"ok": 1}
+
+    def raise_http(req: Any, timeout: float = 20.0) -> Any:
+        raise HTTPError(req.full_url, 502, "Bad Gateway", None, None)  # type: ignore[arg-type]
+
+    with pytest.raises(PeerReadError, match="HTTP 502"):
+        github_getter(opener=raise_http)("/repos/x/y")
+
+    def raise_url(req: Any, timeout: float = 20.0) -> Any:
+        raise URLError("dns failure")
+
+    with pytest.raises(PeerReadError, match="dns failure"):
+        github_getter(opener=raise_url)("/repos/x/y")
+
+    with pytest.raises(ScheduleError, match="no cron"):
+        largest_gap([])
+    with pytest.raises(ScheduleError, match="not 5"):
+        largest_gap(["* * * *"])
+    with pytest.raises(ScheduleError, match="not daily-periodic"):
+        largest_gap(["0 0 1 * *"])
+    with pytest.raises(ScheduleError, match="not a number"):
+        largest_gap(["bad * * * *"])
+    with pytest.raises(ScheduleError, match="at least 1"):
+        largest_gap(["*/0 * * * *"])
+    with pytest.raises(ScheduleError, match="outside"):
+        largest_gap(["70 * * * *"])
+    assert largest_gap(["0 */6 * * *", "30 1-2 * * *"]).total_seconds() > 0
+
+    assert parse_bound_cap_hours("") is None
+    with pytest.raises(ValueError, match="bound cap"):
+        parse_bound_cap_hours("-1")
+
+    now = datetime(2026, 10, 27, 12, 0, tzinfo=UTC)
+    wf_path = "/repos/wangzitian0/truealpha/actions/workflows/scheduler-liveness.yml"
+    disabled = evaluate_peer_liveness(lambda p: {"state": "disabled"}, now=now)
+    assert disabled.status == "DISABLED" and not disabled.ok
+
+    unverifiable = evaluate_peer_liveness(lambda p: "not-a-dict", now=now)
+    assert unverifiable.status == "UNVERIFIABLE"
+
+    def never_ran_getter(path: str) -> object:
+        if path == wf_path:
+            return {"state": "active", "path": ".github/workflows/s.yml"}
+        if path == "/repos/wangzitian0/truealpha":
+            return {"default_branch": "main"}
+        if "contents/" in path:
+            content = base64.b64encode(b"on:\n  schedule:\n    - cron: '0 * * * *'\n").decode()
+            return {"encoding": "base64", "content": content}
+        if "/runs" in path:
+            return {"workflow_runs": []}
+        if "/commits?" in path:
+            return [{"commit": {"committer": {"date": "2026-10-20T00:00:00Z"}}}]
+        return {}
+
+    assert evaluate_peer_liveness(never_ran_getter, now=now).status == "NEVER"
+
+    trail_file = tmp_path / "trail.jsonl"
+    trail_file.write_text(
+        "\nnot-json\n"
+        + json.dumps({"source": "", "checks": []})
+        + "\n"
+        + json.dumps(
+            {
+                "source": "out-of-band-watchdog",
+                "checks": [{"name": "c1", "ok": True}],
+                "complete": True,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    loaded = load_trail(trail_file)
+    assert "iac-runner-health" in loaded.failing
+
+    assert issue_trail_mode({"WATCHDOG_DRY_RUN": "1"}) == "off"
+    assert issue_trail_mode({"GITHUB_EVENT_NAME": "push"}) == "off"
+    assert (
+        issue_trail_mode(
+            {"GITHUB_EVENT_NAME": "schedule", "INFRA2_PEER_LIVENESS_BOUND_CAP_HOURS": "2"}
+        )
+        == "open-only"
+    )
+    assert (
+        issue_trail_mode(
+            {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/feat"}
+        )
+        == "open-only"
+    )
+
+    calls: list[tuple[str, str]] = []
+
+    def gh_opener(req: Any, timeout: float = 20.0) -> _Resp:
+        calls.append((req.get_method(), req.full_url))
+        if req.get_method() == "GET":
+            return _Resp(
+                json.dumps(
+                    [
+                        {
+                            "number": 1,
+                            "title": "ops-checks watchdog is red: c1",
+                            "pull_request": {},
+                        },
+                        {
+                            "number": 2,
+                            "title": "ops-checks watchdog is red: c2",
+                            "body": "b",
+                            "user": {"login": "bot"},
+                        },
+                    ]
+                )
+            )
+        return _Resp(json.dumps({"number": 99}))
+
+    gh = GitHubIssues("wangzitian0/infra2", "tok", opener=gh_opener)
+    listed = gh.open_issues(with_body=True)
+    assert listed == [
+        {"number": 2, "title": "ops-checks watchdog is red: c2", "body": "b", "author": "bot"}
+    ]
+    assert gh.create("t", "b", ["incident"]) == 99
+    gh.comment(2, "c")
+    gh.update_body(2, "u")
+    gh.close(2)
+
+    bad_gh = GitHubIssues("wangzitian0/infra2", "tok", opener=raise_url)
+    with pytest.raises(ListingFailed):
+        bad_gh.open_issues()
+    with pytest.raises(WriteFailed):
+        bad_gh.create("t", "b", [])
+
+    assert reconcile_issue_trail(gh, Trail(), mode="invalid") == 1
+    assert reconcile_issue_trail(gh, Trail(), mode="off") == 0
+    assert reconcile_issue_trail(bad_gh, Trail(), mode="full") == 0
+
+    trail_run = Trail(
+        failing={"c2": CheckVerdict(name="c2", ok=False, detail="down", severity="P1")},
+        green={"c_green"},
+        complete=True,
+    )
+
+    class _FakeIssueApi:
+        def open_issues(self) -> list[dict]:
+            return [
+                {"number": 2, "title": "ops-checks watchdog is red: c2"},
+                {"number": 3, "title": "ops-checks watchdog is red: c_green"},
+                {"number": 4, "title": "ops-checks watchdog is red: c_retired"},
+                {"number": 5, "title": "unrelated issue"},
+            ]
+
+        def create(self, title: str, body: str, labels: Any) -> int:
+            return 10
+
+        def comment(self, number: int, body: str) -> None:
+            pass
+
+        def close(self, number: int) -> None:
+            pass
+
+    assert reconcile_issue_trail(_FakeIssueApi(), trail_run, mode="full", run_url="https://x") == 0
+    assert reconcile_issue_trail(_FakeIssueApi(), trail_run, mode="open-only") == 0

@@ -24,3 +24,18 @@ stages:
   manual.adjudication:
     order: 7
     definition: Human adjudication or manually triggered evidence gates.
+pipeline_stage_deadlines_ms:
+  changed-affected-ut: 120000
+  lint-static: 180000
+  full-ut: 600000
+  integration: 600000
+  regression-e2e: 900000
+  image-build: 600000
+  deploy-smoke: 180000
+  provider-gate: 300000
+  release-integrity: 180000
+  config-preflight: 60000
+  deploy-start: 120000
+  deploy-status: 1200000
+  watchdog: 120000
+

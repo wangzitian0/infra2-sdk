@@ -28,41 +28,20 @@ class S3Settings:
     connect_timeout_seconds: float = 5.0
     read_timeout_seconds: float = 5.0
     addressing_style: str | None = None
-    public_endpoint_url: str | None = None
-    public_bucket: str | None = None
-    public_access_key_id: str | None = None
-    public_secret_access_key: str | None = field(default=None, repr=False)
-    presign_expiry_seconds: int = 900
-    raw_prefix: str = "raw"
-    documents_prefix: str = "documents"
 
     def __post_init__(self) -> None:
         if not _BUCKET_RE.match(self.bucket) or ".." in self.bucket:
             raise ValueError("bucket must be a lowercase S3-compatible name")
-        if self.public_bucket is not None and (
-            not _BUCKET_RE.match(self.public_bucket) or ".." in self.public_bucket
-        ):
-            raise ValueError("public_bucket must be a lowercase S3-compatible name")
         if self.connect_timeout_seconds <= 0 or self.read_timeout_seconds <= 0:
             raise ValueError("S3 timeouts must be positive")
-        if self.presign_expiry_seconds <= 0:
-            raise ValueError("presign_expiry_seconds must be positive")
-        if not self.raw_prefix.strip("/") or not self.documents_prefix.strip("/"):
-            raise ValueError("S3 prefixes must be non-empty")
         if self.addressing_style not in {None, "auto", "path", "virtual"}:
             raise ValueError("addressing_style must be auto, path, or virtual")
         if bool(self.access_key_id) != bool(self.secret_access_key):
             raise ValueError("explicit S3 access key and secret key must be provided together")
-        if bool(self.public_access_key_id) != bool(self.public_secret_access_key):
-            raise ValueError(
-                "explicit public S3 access key and secret key must be provided together"
-            )
         if self.session_token and not self.access_key_id:
             raise ValueError("explicit S3 session token requires explicit access credentials")
         if self.endpoint_url:
             validate_http_url(self.endpoint_url, label="S3 endpoint URL")
-        if self.public_endpoint_url:
-            validate_http_url(self.public_endpoint_url, label="public S3 endpoint URL")
 
 
 def create_s3_client(settings: S3Settings, *, session: Any | None = None) -> Any:

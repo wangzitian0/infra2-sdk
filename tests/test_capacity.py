@@ -5,8 +5,8 @@ import pytest
 
 from infra2_sdk.capacity import (
     CLOUDFLARE_FREE_TIER,
-    CapacityLimit,
     CapacityReading,
+    _CapacityLimit,
     cloudflare_readings,
     evaluate,
 )
@@ -14,7 +14,7 @@ from infra2_sdk.transport import HttpResponse
 
 
 def test_evaluate_levels_and_unknowns() -> None:
-    limits = (CapacityLimit("a", 1000), CapacityLimit("b", 100, "hour"), CapacityLimit("c", 10))
+    limits = (_CapacityLimit("a", 1000), _CapacityLimit("b", 100, "hour"), _CapacityLimit("c", 10))
     report = evaluate(limits, (CapacityReading("a", 1204), CapacityReading("b", 80)))
     by_name = {item.name: item for item in report.items}
     assert by_name["a"].level == "exceeded" and by_name["a"].ratio == pytest.approx(1.204)
@@ -23,14 +23,14 @@ def test_evaluate_levels_and_unknowns() -> None:
     assert not report.ok
     assert [i.name for i in report.at_level("warn", "exceeded")] == ["a", "b"]
     assert report.to_dict()["items"][0]["ratio"] == 1.204
-    assert evaluate((CapacityLimit("a", 10),), (CapacityReading("a", 1),)).ok
+    assert evaluate((_CapacityLimit("a", 10),), (CapacityReading("a", 1),)).ok
 
 
 def test_limit_and_reading_validation() -> None:
     with pytest.raises(ValueError, match="positive limit"):
-        CapacityLimit("a", 0)
+        _CapacityLimit("a", 0)
     with pytest.raises(ValueError, match="window must be one of"):
-        CapacityLimit("a", 1, "week")
+        _CapacityLimit("a", 1, "week")
     with pytest.raises(ValueError, match="used cannot be negative"):
         CapacityReading("a", -1)
 

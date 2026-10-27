@@ -2,11 +2,12 @@ import pytest
 
 from infra2_sdk.delivery import (
     BudgetStatus,
-    DisagreementKind,
     FailureDomain,
     PipelineStage,
     StageResult,
     StageStatus,
+    _DisagreementKind,
+    _stage_deadlines_ms,
     _validate_stage_result,
     classify_budget,
     make_stage_result,
@@ -97,7 +98,7 @@ def test_make_stage_result_with_disagreement_kind() -> None:
         status="pass",
         disagreement_kind="internal-health-public-route",
     )
-    assert res_str.disagreement_kind is DisagreementKind.INTERNAL_HEALTH_PUBLIC_ROUTE
+    assert res_str.disagreement_kind is _DisagreementKind.INTERNAL_HEALTH_PUBLIC_ROUTE
     assert res_str.to_dict()["disagreement_kind"] == "internal-health-public-route"
 
     res_enum = make_stage_result(
@@ -106,9 +107,9 @@ def test_make_stage_result_with_disagreement_kind() -> None:
         stage="deploy-status",
         target="app",
         status="pass",
-        disagreement_kind=DisagreementKind.INTERNAL_HEALTH_PUBLIC_ROUTE,
+        disagreement_kind=_DisagreementKind.INTERNAL_HEALTH_PUBLIC_ROUTE,
     )
-    assert res_enum.disagreement_kind is DisagreementKind.INTERNAL_HEALTH_PUBLIC_ROUTE
+    assert res_enum.disagreement_kind is _DisagreementKind.INTERNAL_HEALTH_PUBLIC_ROUTE
     assert res_enum.to_dict()["disagreement_kind"] == "internal-health-public-route"
 
 
@@ -163,11 +164,21 @@ def test_validate_stage_result_rejects_non_environment_tier() -> None:
         skipped_reason="",
         current_stage_age_ms=0,
         budget_status=BudgetStatus.WITHIN_BUDGET,
-        disagreement_kind=DisagreementKind.NONE,
+        disagreement_kind=_DisagreementKind.NONE,
         evidence_url="",
     )
     with pytest.raises(TypeError, match="EnvironmentTier"):
         _validate_stage_result(result)
+
+
+def test_stages_yaml_defines_deadlines_for_every_pipeline_stage() -> None:
+    from infra2_sdk.ci import _load_pipeline_stage_deadlines
+
+    deadlines = _load_pipeline_stage_deadlines()
+    assert set(deadlines) == {stage.value for stage in PipelineStage}
+    resolved = _stage_deadlines_ms()
+    for stage in PipelineStage:
+        assert resolved[stage] == deadlines[stage.value] > 0
 
 
 def test_delivery_module_has_zero_runtime_io_dependencies() -> None:

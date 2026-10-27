@@ -7,6 +7,29 @@ import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+GITHUB_API_BASE = "https://api.github.com"
+GITHUB_API_VERSION = "2022-11-28"
+GITHUB_ACCEPT = "application/vnd.github+json"
+
+
+def _github_headers(*, token: str = "", user_agent: str, content_type: str = "") -> dict[str, str]:
+    """Build standard GitHub REST API headers with optional Bearer token and Content-Type."""
+    headers = {
+        "Accept": GITHUB_ACCEPT,
+        "User-Agent": user_agent,
+        "X-GitHub-Api-Version": GITHUB_API_VERSION,
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    if content_type:
+        headers["Content-Type"] = content_type
+    return headers
+
+
+def _github_api_url(path: str) -> str:
+    """Resolve a GitHub API path or full HTTPS URL against ``GITHUB_API_BASE``."""
+    return path if path.startswith("https://") else f"{GITHUB_API_BASE}{path}"
+
 
 @dataclass(frozen=True)
 class HttpResponse:

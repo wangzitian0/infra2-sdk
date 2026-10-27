@@ -12,13 +12,8 @@ from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
 
-
-def _yaml() -> Any:
-    """Lazy-import PyYAML only when a YAML-parsing helper is invoked."""
-    import yaml
-
-    return yaml
-
+from infra2_sdk._wire import _yaml
+from infra2_sdk.rules.compose import inspect_compose
 
 _GATE_ID_RE = re.compile(r"\A[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+\Z")
 _REQUIRED_GATE_FIELDS = ("id", "stage", "task_category", "workflow", "job")
@@ -95,15 +90,7 @@ def workflow_read_error(path: str | Path) -> str | None:
 
 def load_workflow(path: str | Path) -> dict:
     """Return a workflow's parsed YAML, or {} when absent or unreadable."""
-    p = Path(path)
-    if not p.is_file():
-        return {}
-    yaml = _yaml()
-    try:
-        parsed = yaml.safe_load(p.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, yaml.YAMLError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
+    return read_workflow(path)[0]
 
 
 def _exempt_lines(source: str) -> set[tuple[str, str]]:
@@ -302,15 +289,25 @@ def write_github_output(
             print(delimiter, file=handle)
 
 
-def load_delivery_stages(path: str | Path | None = None) -> dict[str, dict]:
-    """Load the SDK-owned stage vocabulary as ``stage_id -> metadata``."""
+def _load_stages_section(section: str, path: str | Path | None = None) -> dict[str, Any]:
     source = Path(path) if path is not None else files("infra2_sdk").joinpath("data/stages.yaml")
     with source.open(encoding="utf-8") as handle:
         data = _yaml().safe_load(handle) or {}
-    stages = data.get("stages")
-    if not isinstance(stages, dict):
-        raise ValueError("stages.yaml: 'stages' must be a mapping")
-    return stages
+    mapping = data.get(section)
+    if not isinstance(mapping, dict):
+        raise ValueError(f"stages.yaml: {section!r} must be a mapping")
+    return mapping
+
+
+def load_delivery_stages(path: str | Path | None = None) -> dict[str, dict]:
+    """Load the SDK-owned stage vocabulary as ``stage_id -> metadata``."""
+    return _load_stages_section("stages", path)
+
+
+def _load_pipeline_stage_deadlines(path: str | Path | None = None) -> dict[str, int]:
+    """Load default pipeline stage deadlines in milliseconds from ``stages.yaml``."""
+    raw = _load_stages_section("pipeline_stage_deadlines_ms", path)
+    return {str(stage): int(ms) for stage, ms in raw.items()}
 
 
 def validate_gate(
@@ -357,35 +354,8 @@ def validate_inventory(
 
 
 def validate_manifest_offline(manifest: Any) -> list[str]:
-    """Gate an environment manifest without any infrastructure.
-
-    Runs in an application's own CI. Errors are contract violations a deployment would
-    otherwise discover late: a secret with a code default, a release value the store
-    would be expected to hold, an optional field that would silently render empty. A
-    store-backed field may keep a local-development default only when it is ``required``,
-    ``injected`` (the deployment must supply it) or ``empty_ok``.
-    """
-
-    from infra2_sdk.runtime.config_schema import _COMPOSE_SOURCES, _FieldSource
-
-    errors: list[str] = []
-    declared = {field.env for field in manifest.fields}
-    for field in manifest.fields:
-        name = field.env
-        settled = field.empty_ok or field.required or field.injected
-        if field.store_backed and field.has_default and not settled:
-            errors.append(f"{name}: {field.source} value must be required, injected or empty_ok")
-        if field.source in _COMPOSE_SOURCES and not field.injected:
-            errors.append(f"{name}: {field.source} value must be injected by the deployment")
-        if field.sensitive and field.source == _FieldSource.CODE and not field.provided_by:
-            errors.append(f"{name}: a sensitive value cannot be a code default")
-        if field.source == _FieldSource.BOOTSTRAP:
-            errors.append(f"{name}: bootstrap values never enter an application manifest")
-        for key in field.composed_keys:
-            provider_key = field.provided_by.split(":", 1)[1] if field.provided_by else ""
-            if key not in declared and key != provider_key:
-                errors.append(f"{name}: composed_from references undeclared {key}")
-    return errors
+    """Gate an environment manifest without any infrastructure."""
+    return list(manifest.validate_offline())
 
 
 __all__ = [
@@ -404,6 +374,7 @@ __all__ = [
     "TARGET_PER_SHARD_S",
     "check_no_regression",
     "defanged_steps",
+    "inspect_compose",
     "load_baseline",
     "load_delivery_stages",
     "load_workflow",

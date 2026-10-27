@@ -13,9 +13,9 @@ from infra2_sdk.runtime.health import (
     DependencyKind,
     DependencyManifest,
     DependencyStatus,
-    HealthStatus,
     ProbeResult,
     _health_response,
+    _HealthStatus,
     _run_sync_probe,
     check_health,
     run_probes,
@@ -82,7 +82,7 @@ async def test_a_required_dependency_down_is_503_with_the_reason() -> None:
         [Check("database", present=False, detail="connection refused"), Check("cache")],
     )
     assert code == 503
-    assert body["status"] == HealthStatus.UNHEALTHY == "unhealthy"
+    assert body["status"] == _HealthStatus.UNHEALTHY == "unhealthy"
     assert body["checks"]["database"]["status"] == "absent"
     assert body["checks"]["database"]["required"] is True
     assert body["reasons"] == ["database: connection refused"]

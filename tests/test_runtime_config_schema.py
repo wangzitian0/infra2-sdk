@@ -5,12 +5,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from infra2_sdk.runtime.config_schema import (
     EnvironmentField,
     EnvironmentManifest,
-    _reconcile,
     environment_manifest_from_model,
     manifest_config_fingerprint,
     validate_environment,
 )
 from infra2_sdk.runtime.environment import EnvironmentConflictError
+from infra2_sdk.secrets import _reconcile
 
 
 class Settings(BaseSettings):

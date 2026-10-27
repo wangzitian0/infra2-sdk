@@ -152,32 +152,21 @@ def test_a_string_lookup_of_a_current_variable_still_works(lookup: str) -> None:
 # defined in their module. Names deleted outright are in REMOVED_NAMES or REMOVED_IN_3_5_1.
 LEFT_THE_PACKAGES = {
     "infra2_sdk": {
-        "capacity": ["CapacityLimit"],
         "ci": ["validate_gate"],
-        "delivery": ["BudgetStatus", "DisagreementKind", "PipelineStage"],
+        "delivery": ["BudgetStatus", "PipelineStage"],
         "deploy": [
             "CONTRACT_VERSION",
             "DeployEvidence",
-            "HealthCheckResult",
             "ProductionEvidencePolicy",
-            "fetch_production_evidence_policy",
         ],
-        "routing": ["DEFAULT_BASE_DOMAIN"],
-        "secrets": ["SecretsBackend", "TokenStatus"],
     },
     "infra2_sdk.runtime": {
-        "config_schema": ["EnvironmentValidation", "validate_environment"],
+        "config_schema": ["validate_environment"],
         "environment": [
             "EnvironmentConflictError",
-            "PLATFORM_OWNED_TIERS",
-            "ResolvedEnvValue",
             "RuntimeEnvSpec",
-            "UnknownEnvironmentPolicy",
-            "normalize_deployment_environment",
-            "resolve_env",
             "strict_environment_from_env",
         ],
-        "health": ["HealthStatus"],
     },
 }
 _LEFT = [
@@ -224,7 +213,7 @@ def test_the_readme_lists_the_names_that_left_the_packages_by_module() -> None:
     count, grouped = _readme_left_the_packages()
 
     assert grouped == LEFT_THE_PACKAGES
-    assert count == len(_LEFT) == 24
+    assert count == len(_LEFT) == 10
 
 
 @pytest.mark.parametrize(
