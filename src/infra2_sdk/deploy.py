@@ -28,7 +28,6 @@ from infra2_sdk._wire import (
     require_exact_fields,
 )
 from infra2_sdk.refs import _TAG_RE as _RELEASE_REF_RE
-from infra2_sdk.refs import identifier_kind
 from infra2_sdk.transport import (
     GITHUB_API_BASE,
     _decode_github_contents,
@@ -1324,7 +1323,6 @@ __all__ = [
     "default_http_get",
     "dispatch_and_wait",
     "github_api_client",
-    "identifier_kind",
     "identity_from_body",
     "parse_sender_deadline",
     "poll_until_healthy",
