@@ -53,6 +53,17 @@ def classify_ref(ref: str) -> str:
     raise ValueError(f"unrecognized deploy ref {ref!r}: expected 'main', 'vX.Y.Z', or a commit sha")
 
 
+def identifier_kind(value: str) -> str:
+    """Name the kind of release identifier, for a message a human can act on."""
+    if not value or value == "unknown":
+        return "unset"
+    if _SHA_RE.match(value) and value == value.lower():
+        return "commit sha"
+    if _TAG_RE.match(value):
+        return "release tag"
+    return "unrecognised"
+
+
 def resolve_to_sha(
     ref: str,
     *,
@@ -357,6 +368,7 @@ __all__ = [
     "SHORT_SHA_LENGTH",
     "assert_after_on_main",
     "classify_ref",
+    "identifier_kind",
     "redact_repo",
     "resolve_branch_to_sha",
     "resolve_image_digest",

@@ -8,10 +8,13 @@ templates, policies, reconciliation) keys off ``EnvironmentField.source``.
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 import re
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, replace
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, get_args
 
 from infra2_sdk._wire import (
@@ -368,6 +371,48 @@ def validate_environment(
     return _EnvironmentValidation(tuple(sorted(missing)), resolved)
 
 
+def _load_manifest(path: str | Path, *, root: Path | None = None) -> EnvironmentManifest:
+    target = Path(path) if root is None else root / path
+    return EnvironmentManifest.from_dict(json.loads(target.read_text(encoding="utf-8")))
+
+
+def _validate_env(
+    manifest: EnvironmentManifest | str | Path,
+    environ: Mapping[str, str] | None = None,
+    *,
+    root: Path | None = None,
+    require_injected: bool = True,
+) -> list[str]:
+    """Names the environment lacks (never values); empty when the process may boot."""
+    loaded = (
+        manifest
+        if isinstance(manifest, EnvironmentManifest)
+        else _load_manifest(manifest, root=root)
+    )
+    env = os.environ if environ is None else environ
+    return list(validate_environment(loaded, env, require_injected=require_injected).missing)
+
+
+def assert_environment(
+    manifest_path: str | Path,
+    *,
+    environ: Mapping[str, str] | None = None,
+    require_injected: bool,
+) -> None:
+    """Raise RuntimeError naming every variable ``manifest_path`` declares and ``environ`` lacks."""
+    path = Path(manifest_path)
+    if not path.is_file():
+        raise RuntimeError(
+            f"environment manifest {path} is not in the image; boot validation cannot run (#759)"
+        )
+    missing = _validate_env(path, environ, require_injected=require_injected)
+    if missing:
+        raise RuntimeError(
+            f"environment lacks {len(missing)} value(s) {path} declares: {', '.join(missing)} "
+            f"-- names only; the deployment must inject them (#759)"
+        )
+
+
 def manifest_config_fingerprint(manifest: EnvironmentManifest, values: Mapping[str, str]) -> str:
     """Stable sha256 over the manifest's fields present in ``values``.
 
@@ -412,6 +457,7 @@ def _boolean(raw: Mapping[str, Any], key: str, *, default: bool = False) -> bool
 __all__ = [
     "EnvironmentField",
     "EnvironmentManifest",
+    "assert_environment",
     "environment_manifest_from_model",
     "manifest_config_fingerprint",
 ]

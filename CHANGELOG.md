@@ -4,6 +4,12 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 3.16.0 - 2026-10-27
+
+### Changed
+
+- Move `assert_environment` and `_validate_env` into `infra2_sdk.runtime.config_schema` (re-exported from `infra2_sdk.manifests`); move `identifier_kind` into `infra2_sdk.refs` (re-exported from `infra2_sdk.deploy`); move `ScheduleError`, `crons_in`, and `largest_gap` into `infra2_sdk.ci` (re-exported from `infra2_sdk.observability`); unify ISO-8601 UTC parsing in `infra2_sdk._wire.parse_iso_utc`, loopback host matching in `infra2_sdk._wire._is_loopback_host`, and GitHub JSON/contents/workflow-runs transport helpers in `infra2_sdk.transport` ([#154](https://github.com/wangzitian0/infra2-sdk/issues/154)).
+
 ## 3.15.0 - 2026-10-27
 
 ### Added
