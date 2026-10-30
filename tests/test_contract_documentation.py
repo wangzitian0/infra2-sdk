@@ -16,6 +16,8 @@ from infra2_sdk.runtime.environment import runtime_env_contract
 
 ROOT = Path(__file__).resolve().parent.parent
 README = ROOT / "README.md"
+INIT_MD = ROOT / "init.md"
+SRC = ROOT / "src" / "infra2_sdk"
 RENDERER = ROOT / "scripts" / "render_env_contract.py"
 
 BEGIN_MARKER = (
@@ -209,3 +211,84 @@ def test_readme_documents_valid_core_runtime_entrypoints() -> None:
             assert hasattr(mod, symbol), f"Module {module_name!r} does not have symbol {symbol!r}"
             checked += 1
     assert checked, "the Core runtime entrypoints table names no symbol: this test checks nothing"
+
+
+def _public_modules() -> list[str]:
+    modules = []
+    for path in sorted(SRC.rglob("*.py")):
+        parts = path.relative_to(SRC.parent).with_suffix("").parts
+        if any(part.startswith("_") for part in parts):
+            continue
+        modules.append(".".join(parts))
+    return modules
+
+
+_INIT_MD_NON_SYMBOL_TOKENS = frozenset(
+    {
+        "httpx",
+        "psycopg",
+        "boto3",
+        "large",
+        "small",
+        "multimodal",
+        "standalone",
+        "infra2",
+    }
+)
+
+
+def _check_init_md_module_tables(content: str, public_modules: list[str]) -> list[str]:
+    """Return errors if init.md §2 module tables drift from public modules or exported symbols."""
+    errors: list[str] = []
+    rows = re.findall(r"^\| `(infra2_sdk[\w.]*)` \| (.+) \|$", content, re.M)
+    if not rows:
+        return ["init.md has no module table rows"]
+    documented_modules = [mod for mod, _ in rows]
+    if len(documented_modules) != len(set(documented_modules)):
+        errors.append("init.md module tables contain duplicate module rows")
+    missing = [m for m in public_modules if m not in documented_modules]
+    if missing:
+        errors.append(f"init.md module tables are missing public modules: {missing}")
+    phantom = [m for m in documented_modules if m not in public_modules]
+    if phantom:
+        errors.append(f"init.md module tables list non-existent modules: {phantom}")
+
+    checked_symbols = 0
+    for mod_name, responsibility in rows:
+        if mod_name not in public_modules:
+            continue
+        mod = importlib.import_module(mod_name)
+        for token in re.findall(r"`([^`]+)`", responsibility):
+            clean = token.removesuffix("()")
+            if (
+                clean.startswith(("--", "/", ":", "python "))
+                or clean in _INIT_MD_NON_SYMBOL_TOKENS
+                or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", clean)
+            ):
+                continue
+            checked_symbols += 1
+            if not hasattr(mod, clean):
+                errors.append(f"Module {mod_name!r} in init.md does not export symbol {clean!r}")
+    if checked_symbols < 20:
+        errors.append(f"init.md symbol check inspected only {checked_symbols} symbols")
+    return errors
+
+
+def test_init_md_module_tables_match_public_modules_and_symbols() -> None:
+    content = INIT_MD.read_text(encoding="utf-8")
+    public_modules = _public_modules()
+    assert _check_init_md_module_tables(content, public_modules) == []
+
+
+def test_init_md_module_table_guard_rejects_missing_module_and_stale_symbol() -> None:
+    content = INIT_MD.read_text(encoding="utf-8")
+    public_modules = _public_modules()
+    stale_symbol = content.replace("`ManifestSpec`", "`assert_environment`")
+    assert any(
+        "assert_environment" in err
+        for err in _check_init_md_module_tables(stale_symbol, public_modules)
+    )
+    missing_mod = content.replace("| `infra2_sdk.refs` |", "| `infra2_sdk.phantom_mod` |")
+    errs = _check_init_md_module_tables(missing_mod, public_modules)
+    assert any("missing public modules" in err for err in errs)
+    assert any("non-existent modules" in err for err in errs)

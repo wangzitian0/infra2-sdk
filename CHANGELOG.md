@@ -4,6 +4,12 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## Unreleased
+
+### Removed
+
+- Remove retired `LlmSettings` task-slot fields (`primary_model`, `ocr_model`, `vision_model`, `fallback_models`, `vision_fallback_models`, `layout_parsing_path`) and `_RoleDefault` in favor of `large`, `small`, and `multimodal` role fields and `role_model` / `role_reasoning_effort` ([#158](https://github.com/wangzitian0/infra2-sdk/issues/158)).
+
 ## 3.17.0 - 2026-10-27
 
 ### Removed

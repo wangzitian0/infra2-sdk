@@ -33,16 +33,16 @@ python -m pip install \
 | Module | Ownership |
 |---|---|
 | `infra2_sdk.capacity` | Capacity limits and readings, `evaluate` (a level per item: ok, warn, exceeded or unknown), and the collector for Cloudflare analytics |
-| `infra2_sdk.ci` | Delivery-stage vocabulary, CI gate inventory validation, workflow step inspection, coverage ratchets, and GitHub Actions helpers |
+| `infra2_sdk.ci` | Delivery-stage vocabulary, CI gate inventory validation, workflow step inspection, cron schedule gap analysis, coverage ratchets, and GitHub Actions helpers |
 | `infra2_sdk.delivery` | Environment/stage evidence and failure taxonomy |
 | `infra2_sdk.deploy` | Deploy lifecycle wire contracts, dispatch client, health poller, deployed release identity reader, and production evidence policies |
 | `infra2_sdk.fastapi` | `init_service`: /livez, /readyz and /health routes for a FastAPI app, plus OTLP telemetry bootstrap |
-| `infra2_sdk.manifests` | Settings manifest driver (`--write`, `--check`, `--validate-env`) and boot environment assertions wrapping application configuration models |
+| `infra2_sdk.manifests` | Settings manifest CLI driver (`--write`, `--check`, `--validate-env`), `ManifestSpec`, `all_manifests`, `check`, and `load` |
 | `infra2_sdk.observability` | Flap hysteresis trackers, scheduled peer workflow liveness evaluation, self-healing GitHub issue trails, and OpenPanel export query & funnel summary primitives |
 | `infra2_sdk.refs` | Git ref resolution, PR heads, registry image digests, remote ref queries, commit ancestry checks, and credential redaction |
 | `infra2_sdk.routing` | Canonical domain and routing SSOT: `CANARY_SLOT`, hostname resolution, and service URL resolution |
 | `infra2_sdk.rules.compose` | Pure compose-file rules (memory ceilings, bare `:latest` image refs); CLI at `python -m infra2_sdk.rules` |
-| `infra2_sdk.runtime.config_schema` | Environment field contracts, injection manifests, and configuration fingerprints |
+| `infra2_sdk.runtime.config_schema` | Environment field contracts, injection manifests, startup environment assertions (`assert_environment`), and configuration fingerprints |
 | `infra2_sdk.runtime.environment` | Canonical six-tier environment vocabulary, variable resolution, and contract definitions |
 | `infra2_sdk.runtime.health` | Framework-agnostic readiness checks (`check_health`), probe runners, and dependency declarations |
 | `infra2_sdk.runtime.http` | Standard httpx clients and the HTTP reachability probe |
@@ -554,6 +554,19 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   `measure_freshness`, `format_freshness_failure`, `check_deploy_freshness`), plus 16 zero-caller
   methods on `S3Settings`, `PostgresSettings`, `LlmSettings`, `EnvironmentManifest`,
   `DependencyManifest`, `ProbeResult`, and `VaultKvBackend`.
+- In v3.15.0, the SDK added `EnvironmentManifest.validate_offline()`, removed 7 unused
+  application-owned fields from `S3Settings` (`public_endpoint_url`, `public_bucket`,
+  `public_access_key_id`, `public_secret_access_key`, `presign_expiry_seconds`, `raw_prefix`,
+  `documents_prefix`), and prefixed 14 internal-only symbols with leading underscores.
+- In v3.16.0 and v3.17.0, the SDK moved `assert_environment` to `infra2_sdk.runtime.config_schema`,
+  `identifier_kind` to `infra2_sdk.refs`, and `ScheduleError`, `crons_in`, and `largest_gap` to
+  `infra2_sdk.ci`, and removed all 6 cross-module re-export shims (`ci.inspect_compose`,
+  `deploy.identifier_kind`, `manifests.assert_environment`, and
+  `observability.{ScheduleError,crons_in,largest_gap}`).
+- After v3.17.0 (`#158`), `LlmSettings` removed retired task-slot fields (`primary_model`,
+  `ocr_model`, `vision_model`, `fallback_models`, `vision_fallback_models`, `layout_parsing_path`)
+  and `_RoleDefault` in favor of `large`, `small`, and `multimodal` role fields and `role_model` /
+  `role_reasoning_effort`.
 - `tests/surface.json` records the reason for each name in `__all__`: a consumer imports it, the
   README documents it, or a recorded decision holds it.
 - `to_environment_tier` maps `DeployType` values to `EnvironmentTier`.
@@ -566,8 +579,8 @@ Named manifest override tables must resolve to mappings; missing or invalid tabl
 before generating a file, so source classifications cannot silently disappear.
 
 ```bash
-python -m pip install -e '.[dev]'
-ruff check .
-pytest --cov
-python -m build
+uv sync --extra dev
+uv run ruff check .
+uv run pytest --cov
+uv run python -m build
 ```
