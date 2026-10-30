@@ -15,7 +15,7 @@ The SDK enforces a dual-mode execution invariant across all runtime environments
 
 ## 1. Five Core Decision Principles (Why the SDK Has This Shape)
 
-Across 158+ issues and 42 releases (`v0.1.0` through `v3.17.0`), consumer requirements and defect analyses shaped `infra2-sdk` around five core architectural decision principles.
+Across 158+ issues and 43 releases (`v0.1.0` through `v3.18.0`), consumer requirements and defect analyses shaped `infra2-sdk` around five core architectural decision principles.
 
 ### P1 — Contract vs. Orchestration, Zero-I/O on Import, and Thin Open-Protocol Adapters (`#19`, `#33`, `#102`)
 
