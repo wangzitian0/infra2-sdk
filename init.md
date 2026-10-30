@@ -15,7 +15,7 @@ The SDK enforces a dual-mode execution invariant across all runtime environments
 
 ## 1. Five Core Decision Principles (Why the SDK Has This Shape)
 
-Across 142+ issues and 33 releases (`v0.1.0` through `v3.11.1`), consumer requirements and defect analyses shaped `infra2-sdk` around five core architectural decision principles.
+Across 158+ issues and 42 releases (`v0.1.0` through `v3.17.0`), consumer requirements and defect analyses shaped `infra2-sdk` around five core architectural decision principles.
 
 ### P1 — Contract vs. Orchestration, Zero-I/O on Import, and Thin Open-Protocol Adapters (`#19`, `#33`, `#102`)
 
@@ -40,7 +40,7 @@ Across 142+ issues and 33 releases (`v0.1.0` through `v3.11.1`), consumer requir
 
 - `tests/test_source_environment_reads.py` parses the AST of every file under `src/infra2_sdk/` without importing the modules. It restricts environment variable reads to `RuntimeEnvKey` (9 keys) plus `FIXED_READS` (10 keys). Direct reads of legacy aliases (`ENV`, `APP_ENV`, `IMAGE_TAG`, `SERVICE_NAME`) are forbidden outside `resolve_runtime_env` (`#102`).
 - `tests/test_release_hygiene.py` verifies release identity: the newest `CHANGELOG.md` entry and the `README.md` install pins equal the version in `pyproject.toml` (`#18`, `#70`). `release.yml` publishes only a tag on `main` that equals that version. A change under `src/infra2_sdk/` does not need a release.
-- `tests/test_readme_claims.py` and `tests/test_release_hygiene.py` execute code blocks in `README.md` and verify that the `README.md` module table matches the public modules on disk 1:1.
+- `tests/test_readme_claims.py`, `tests/test_contract_documentation.py`, and `tests/test_release_hygiene.py` execute code blocks in `README.md` and verify that the `README.md` and `init.md` module tables match the public modules and exported symbols on disk 1:1.
 
 ### P5 — Pragmatic Compatibility and Zero Dead-Weight Shims (`#102`, `#117`, `#139`)
 
@@ -58,7 +58,7 @@ Application processes import these modules directly at runtime:
 | Module | Responsibility |
 |---|---|
 | `infra2_sdk.runtime.environment` | Six-tier environment vocabulary (`EnvironmentTier`), `RuntimeEnvKey` resolution, and `runtime_env_contract()` |
-| `infra2_sdk.runtime.config_schema` | `EnvironmentField`, `EnvironmentManifest`, and manifest config fingerprints |
+| `infra2_sdk.runtime.config_schema` | `EnvironmentField`, `EnvironmentManifest`, `assert_environment`, and manifest config fingerprints |
 | `infra2_sdk.runtime.health` | Framework-agnostic readiness probes (`check_health`, `run_probes`) and dependency status contracts |
 | `infra2_sdk.runtime.http` | `HttpClientSettings`, standard `httpx` client builders (`create_http_client`), and `probe_http` |
 | `infra2_sdk.runtime.llm` | `LlmSettings` contract, capability roles (`large`, `small`, `multimodal`), and role-based model defaults |
@@ -75,12 +75,12 @@ Application processes import these modules directly at runtime:
 | Module | Responsibility |
 |---|---|
 | `infra2_sdk.capacity` | Capacity limits, `CapacityReading`, `evaluate` thresholds, and Cloudflare analytics collection |
-| `infra2_sdk.ci` | Delivery-stage vocabulary, CI gate inventory validation, workflow step inspection, and coverage ratchets |
+| `infra2_sdk.ci` | Delivery-stage vocabulary, CI gate inventory validation, workflow step inspection, cron schedule gap analysis (`ScheduleError`, `crons_in`, `largest_gap`), and coverage ratchets |
 | `infra2_sdk.delivery` | Stage evidence (`StageResult`, `make_stage_result`) and failure taxonomy (`FailureDomain`, `StageStatus`) |
 | `infra2_sdk.deploy` | `DeployRequest` wire contracts, dispatch client, health poller, deployed release reader, and production evidence verification |
-| `infra2_sdk.manifests` | Settings manifest CLI driver (`--write`, `--check`, `--validate-env`) and startup environment assertions (`assert_environment`) |
+| `infra2_sdk.manifests` | Settings manifest CLI driver (`--write`, `--check`, `--validate-env`), `ManifestSpec`, `all_manifests`, `check`, and `load` |
 | `infra2_sdk.observability` | Flap hysteresis trackers, scheduled peer workflow liveness evaluation, self-healing GitHub issue trails, and OpenPanel query primitives |
-| `infra2_sdk.refs` | Git ref resolution (`resolve_to_sha`, `resolve_branch_to_sha`, `resolve_pr`), OCI image digest resolution, and repo URL redaction |
+| `infra2_sdk.refs` | Git ref resolution (`resolve_to_sha`, `resolve_branch_to_sha`, `resolve_pr`, `identifier_kind`), OCI image digest resolution, and repo URL redaction |
 | `infra2_sdk.routing` | Canonical domain and routing SSOT (`CANARY_SLOT`, `PreviewStackCoordinates`, hostname and service URL resolution) |
 | `infra2_sdk.rules.compose` | Pure Docker Compose file rules enforcing memory ceilings and rejecting bare `:latest` image references |
 | `infra2_sdk.scaffold` | Microservice scaffolding engine (`python -m infra2_sdk.scaffold`) for `standalone` and `infra2` profiles |

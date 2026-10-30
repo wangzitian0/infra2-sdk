@@ -39,7 +39,7 @@ The release workflow publishes each release. Do not publish manually. A change u
    Run `python -m tools.sdk_usage_census --json --check` in `infra2` across `infra2`,
    `finance_report`, and `truealpha`. The census checks `M1` symbol reachability,
    `M2` `runtime_env_contract()` reachability, `M3` pin lag, `M4` `LEFT_THE_PACKAGES`
-   references, and `M5` hardcoded `SERVICE_NAME` lists.
+   references, `M5` hardcoded `SERVICE_NAME` lists, and `M6` `tools/*.py` cross-imports.
    Do not remove a name that a consumer uses in a minor release.
 1. Between releases, write [CHANGELOG](CHANGELOG.md) lines under `## Unreleased`. In the
    release PR, bump `version` in `pyproject.toml` and run `uv lock`. Give the CHANGELOG entry
