@@ -25,7 +25,7 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.17.0"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.18.0"
 ```
 
 ## Modules
@@ -73,10 +73,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.17.0'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.18.0'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.17.0'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.18.0'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -200,7 +200,7 @@ Install the published wheel in a fresh Python 3.11+ environment:
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install \
-  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.17.0/infra2_sdk-3.17.0-py3-none-any.whl'
+  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.18.0/infra2_sdk-3.18.0-py3-none-any.whl'
 ```
 
 For a local connectivity exercise, start this server in another terminal:
@@ -563,7 +563,7 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   `infra2_sdk.ci`, and removed all 6 cross-module re-export shims (`ci.inspect_compose`,
   `deploy.identifier_kind`, `manifests.assert_environment`, and
   `observability.{ScheduleError,crons_in,largest_gap}`).
-- After v3.17.0 (`#158`), `LlmSettings` removed retired task-slot fields (`primary_model`,
+- In v3.18.0 (`#158`), `LlmSettings` removed retired task-slot fields (`primary_model`,
   `ocr_model`, `vision_model`, `fallback_models`, `vision_fallback_models`, `layout_parsing_path`)
   and `_RoleDefault` in favor of `large`, `small`, and `multimodal` role fields and `role_model` /
   `role_reasoning_effort`.
