@@ -254,9 +254,7 @@ def test_run_hook_slot_timeout_records_timeout_step() -> None:
     assert "hung on request" in res.stderr_tail
 
 
-def test_cli_check_hooks_and_run_hook(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cli_check_hooks_and_run_hook(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     manifest_path = tmp_path / "runtime-hooks.manifest.json"
     raw = _sample_manifest_dict(service="truealpha/app")
     raw["slots"]["smoke"] = {  # type: ignore[index]
@@ -332,8 +330,7 @@ def test_next_patch_tag_computes_highest_semver_and_handles_empty() -> None:
     assert next_patch_tag(["main", "sha-1234567", "v1.2.3-rc1"]) == "v0.1.0"
     assert next_patch_tag([], initial="v1.0.0") == "v1.0.0"
     assert (
-        next_patch_tag(["v0.1.0", "refs/tags/v0.1.9", "v0.2.0", "v0.1.12", "not-a-tag"])
-        == "v0.2.1"
+        next_patch_tag(["v0.1.0", "refs/tags/v0.1.9", "v0.2.0", "v0.1.12", "not-a-tag"]) == "v0.2.1"
     )
     assert next_patch_tag(["v1.4.9", "v1.4.10", "v0.99.99"]) == "v1.4.11"
     with pytest.raises(ValueError, match="initial must match"):
