@@ -101,13 +101,9 @@ def _validate_hook_env_names(names: tuple[str, ...], *, field_name: str) -> None
         raise ValueError(f"duplicate variable in {field_name}: {names!r}")
     for name in names:
         if not isinstance(name, str) or not _HOOK_ENV_NAME_RE.match(name):
-            raise ValueError(
-                f"{field_name} entry {name!r} must match ^[A-Z][A-Z0-9_]*$"
-            )
+            raise ValueError(f"{field_name} entry {name!r} must match ^[A-Z][A-Z0-9_]*$")
         if name in FORBIDDEN_HOOK_ENV_NAMES or name.startswith(FORBIDDEN_HOOK_ENV_PREFIXES):
-            raise ValueError(
-                f"{field_name} entry {name!r} is a forbidden platform secret"
-            )
+            raise ValueError(f"{field_name} entry {name!r} is a forbidden platform secret")
 
 
 @dataclass(frozen=True)
