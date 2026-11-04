@@ -52,13 +52,20 @@ from infra2_sdk.deploy import (
     verify_production_evidence,
 )
 from infra2_sdk.manifests import (
+    HOOK_SLOTS,
+    HookRunResult,
+    HookSlotSpec,
     ManifestSpec,
+    RuntimeHooksManifest,
+    load_hooks_manifest,
+    run_hook_slot,
 )
 from infra2_sdk.refs import (
     CommandRunner,
     ReleaseError,
     ResolvedRef,
     classify_ref,
+    next_patch_tag,
     redact_repo,
     resolve_branch_to_sha,
     resolve_image_ref,
@@ -124,11 +131,18 @@ __all__ = [
     "dispatch_and_wait",
     "run_deploy_transport_cli",
     # Manifests
+    "HOOK_SLOTS",
+    "HookRunResult",
+    "HookSlotSpec",
     "ManifestSpec",
+    "RuntimeHooksManifest",
+    "load_hooks_manifest",
+    "run_hook_slot",
     # Refs
     "CommandRunner",
     "ResolvedRef",
     "classify_ref",
+    "next_patch_tag",
     "redact_repo",
     "resolve_branch_to_sha",
     "resolve_image_ref",

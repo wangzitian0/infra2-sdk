@@ -6,6 +6,12 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+## 3.19.0 - 2026-11-04
+
+### Added
+
+- Add declarative 4-slot runtime verification hook contracts (`HOOK_SLOTS`, `HookSlotSpec`, `RuntimeHooksManifest`, `HookRunResult`, `load_hooks_manifest`, `build_hook_env`, `run_hook_slot`) and CLI modes (`--check-hooks`, `--run-hook`) in `infra2_sdk.manifests`, plus `next_patch_tag` in `infra2_sdk.refs` ([#170](https://github.com/wangzitian0/infra2-sdk/issues/170)).
+
 ## 3.18.0 - 2026-10-30
 
 ### Removed

@@ -25,7 +25,7 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.18.0"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.19.0"
 ```
 
 ## Modules
@@ -37,9 +37,9 @@ python -m pip install \
 | `infra2_sdk.delivery` | Environment/stage evidence and failure taxonomy |
 | `infra2_sdk.deploy` | Deploy lifecycle wire contracts, dispatch client, health poller, deployed release identity reader, and production evidence policies |
 | `infra2_sdk.fastapi` | `init_service`: /livez, /readyz and /health routes for a FastAPI app, plus OTLP telemetry bootstrap |
-| `infra2_sdk.manifests` | Settings manifest CLI driver (`--write`, `--check`, `--validate-env`), `ManifestSpec`, `all_manifests`, `check`, and `load` |
+| `infra2_sdk.manifests` | Settings and runtime verification hooks manifest CLI driver (`--write`, `--check`, `--validate-env`, `--check-hooks`, `--run-hook`), `ManifestSpec`, `RuntimeHooksManifest`, `HookSlotSpec`, `HookRunResult`, `load_hooks_manifest`, `run_hook_slot`, `all_manifests`, `check`, and `load` |
 | `infra2_sdk.observability` | Flap hysteresis trackers, scheduled peer workflow liveness evaluation, self-healing GitHub issue trails, and OpenPanel export query & funnel summary primitives |
-| `infra2_sdk.refs` | Git ref resolution, PR heads, registry image digests, remote ref queries, commit ancestry checks, and credential redaction |
+| `infra2_sdk.refs` | Git ref resolution, PR heads, patch tag calculation (`next_patch_tag`), registry image digests, remote ref queries, commit ancestry checks, and credential redaction |
 | `infra2_sdk.routing` | Canonical domain and routing SSOT: `CANARY_SLOT`, hostname resolution, and service URL resolution |
 | `infra2_sdk.rules.compose` | Pure compose-file rules (memory ceilings, bare `:latest` image refs); CLI at `python -m infra2_sdk.rules` |
 | `infra2_sdk.runtime.config_schema` | Environment field contracts, injection manifests, startup environment assertions (`assert_environment`), and configuration fingerprints |
@@ -73,10 +73,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.18.0'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.19.0'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.18.0'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.19.0'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -200,7 +200,7 @@ Install the published wheel in a fresh Python 3.11+ environment:
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install \
-  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.18.0/infra2_sdk-3.18.0-py3-none-any.whl'
+  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.19.0/infra2_sdk-3.19.0-py3-none-any.whl'
 ```
 
 For a local connectivity exercise, start this server in another terminal:
