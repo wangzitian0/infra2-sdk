@@ -15,7 +15,7 @@ The SDK enforces a dual-mode execution invariant across all runtime environments
 
 ## 1. Five Core Decision Principles (Why the SDK Has This Shape)
 
-Across 158+ issues and 43 releases (`v0.1.0` through `v3.18.0`), consumer requirements and defect analyses shaped `infra2-sdk` around five core architectural decision principles.
+Across 170+ issues and 44 releases (`v0.1.0` through `v3.19.0`), consumer requirements and defect analyses shaped `infra2-sdk` around five core architectural decision principles.
 
 ### P1 — Contract vs. Orchestration, Zero-I/O on Import, and Thin Open-Protocol Adapters (`#19`, `#33`, `#102`)
 
@@ -78,9 +78,9 @@ Application processes import these modules directly at runtime:
 | `infra2_sdk.ci` | Delivery-stage vocabulary, CI gate inventory validation, workflow step inspection, cron schedule gap analysis (`ScheduleError`, `crons_in`, `largest_gap`), and coverage ratchets |
 | `infra2_sdk.delivery` | Stage evidence (`StageResult`, `make_stage_result`) and failure taxonomy (`FailureDomain`, `StageStatus`) |
 | `infra2_sdk.deploy` | `DeployRequest` wire contracts, dispatch client, health poller, deployed release reader, and production evidence verification |
-| `infra2_sdk.manifests` | Settings manifest CLI driver (`--write`, `--check`, `--validate-env`), `ManifestSpec`, `all_manifests`, `check`, and `load` |
+| `infra2_sdk.manifests` | Settings and runtime hooks manifest CLI driver (`--write`, `--check`, `--validate-env`, `--check-hooks`, `--run-hook`), `ManifestSpec`, `RuntimeHooksManifest`, `HookSlotSpec`, `HookRunResult`, `load_hooks_manifest`, `run_hook_slot`, `all_manifests`, `check`, and `load` |
 | `infra2_sdk.observability` | Flap hysteresis trackers, scheduled peer workflow liveness evaluation, self-healing GitHub issue trails, and OpenPanel query primitives |
-| `infra2_sdk.refs` | Git ref resolution (`resolve_to_sha`, `resolve_branch_to_sha`, `resolve_pr`, `identifier_kind`), OCI image digest resolution, and repo URL redaction |
+| `infra2_sdk.refs` | Git ref resolution (`resolve_to_sha`, `resolve_branch_to_sha`, `resolve_pr`, `identifier_kind`, `next_patch_tag`), OCI image digest resolution, and repo URL redaction |
 | `infra2_sdk.routing` | Canonical domain and routing SSOT (`CANARY_SLOT`, `PreviewStackCoordinates`, hostname and service URL resolution) |
 | `infra2_sdk.rules.compose` | Pure Docker Compose file rules enforcing memory ceilings and rejecting bare `:latest` image references |
 | `infra2_sdk.scaffold` | Microservice scaffolding engine (`python -m infra2_sdk.scaffold`) for `standalone` and `infra2` profiles |

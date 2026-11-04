@@ -319,6 +319,24 @@ def short_sha(sha: str) -> str:
     return sha[:SHORT_SHA_LENGTH]
 
 
+def next_patch_tag(tags: Any, *, initial: str = "v0.1.0") -> str:
+    """Return the next ``vX.Y.(Z+1)`` tag from existing tags, or ``initial`` when none match."""
+    if not _TAG_RE.match(initial):
+        raise ValueError(f"initial must match vX.Y.Z, got {initial!r}")
+    versions: list[tuple[int, int, int]] = []
+    for raw in tags:
+        if not isinstance(raw, str):
+            continue
+        cleaned = raw.strip().removeprefix("refs/tags/")
+        if _TAG_RE.match(cleaned):
+            major, minor, patch = (int(part) for part in cleaned[1:].split("."))
+            versions.append((major, minor, patch))
+    if not versions:
+        return initial
+    major, minor, patch = max(versions)
+    return f"v{major}.{minor}.{patch + 1}"
+
+
 def assert_after_on_main(
     after: str,
     repo_root: Any,
@@ -369,6 +387,7 @@ __all__ = [
     "assert_after_on_main",
     "classify_ref",
     "identifier_kind",
+    "next_patch_tag",
     "redact_repo",
     "resolve_branch_to_sha",
     "resolve_image_digest",
