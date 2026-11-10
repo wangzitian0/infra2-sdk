@@ -843,8 +843,8 @@ def test_observability_github_and_trail_branches(
         largest_gap([])
     with pytest.raises(ScheduleError, match="not 5"):
         largest_gap(["* * * *"])
-    with pytest.raises(ScheduleError, match="not daily-periodic"):
-        largest_gap(["0 0 1 * *"])
+    assert largest_gap(["0 1 * * 1"]) == timedelta(days=7)
+    assert largest_gap(["0 0 1 * *"]).days in (31, 32)
     with pytest.raises(ScheduleError, match="not a number"):
         largest_gap(["bad * * * *"])
     with pytest.raises(ScheduleError, match="at least 1"):

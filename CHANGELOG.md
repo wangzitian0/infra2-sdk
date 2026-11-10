@@ -6,6 +6,16 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+## 3.21.0 - 2026-11-10
+
+### Changed
+
+- Generalize `infra2_sdk.ci.largest_gap` to evaluate 5-field crons across leap years, step ranges, month names, and day-of-week constraints.
+
+### Removed
+
+- Remove obsolete `infra2_sdk.delivery` module and its symbols (`StageResult`, `StageStatus`, `FailureDomain`, `make_stage_result`) retired in downstream deployments.
+
 ## 3.20.1 - 2026-11-10
 
 ### Added

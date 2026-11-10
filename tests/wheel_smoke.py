@@ -24,6 +24,7 @@ REMOVED_MODULES = (
     "infra2_sdk.runtime.identity",
     "infra2_sdk.runtime.probes",
     "infra2_sdk.snapshot",  # 3.4.0: no user was left after infra2 #1206
+    "infra2_sdk.delivery",  # 3.21.0: no user was left after deploy_v2 canary retired
 )
 
 # Names removed in 3.4.0, 3.5.2 (#102), and 3.8.2 (#126), as (module, dotted name).
@@ -177,8 +178,8 @@ def smoke_package_data() -> None:
         pass
     else:
         raise AssertionError("infra2_sdk.images was removed in 3.0.0 and must not be importable")
-    assert len(REMOVED_MODULES) == 9, (
-        f"REMOVED_MODULES has {len(REMOVED_MODULES)} entries, expected 9"
+    assert len(REMOVED_MODULES) == 10, (
+        f"REMOVED_MODULES has {len(REMOVED_MODULES)} entries, expected 10"
     )
     for module in REMOVED_MODULES:
         try:

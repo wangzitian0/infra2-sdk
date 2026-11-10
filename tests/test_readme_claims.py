@@ -153,7 +153,6 @@ def test_a_string_lookup_of_a_current_variable_still_works(lookup: str) -> None:
 LEFT_THE_PACKAGES = {
     "infra2_sdk": {
         "ci": ["validate_gate"],
-        "delivery": ["BudgetStatus", "PipelineStage"],
         "deploy": [
             "CONTRACT_VERSION",
             "DeployEvidence",
@@ -213,7 +212,7 @@ def test_the_readme_lists_the_names_that_left_the_packages_by_module() -> None:
     count, grouped = _readme_left_the_packages()
 
     assert grouped == LEFT_THE_PACKAGES
-    assert count == len(_LEFT) == 10
+    assert count == len(_LEFT) == 8
 
 
 @pytest.mark.parametrize(

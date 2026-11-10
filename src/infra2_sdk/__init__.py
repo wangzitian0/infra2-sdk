@@ -11,7 +11,6 @@ except _PackageNotFoundError:  # pragma: no cover - source tree without installa
 from infra2_sdk import (
     capacity,
     ci,
-    delivery,
     deploy,
     fastapi,
     manifests,
@@ -32,12 +31,6 @@ from infra2_sdk.ci import (
     load_delivery_stages,
     validate_inventory,
     validate_manifest_offline,
-)
-from infra2_sdk.delivery import (
-    FailureDomain,
-    StageResult,
-    StageStatus,
-    make_stage_result,
 )
 from infra2_sdk.deploy import (
     PRODUCTION_REQUEST_MAX_AGE_SECONDS,
@@ -90,7 +83,6 @@ __all__ = [
     # Submodules
     "capacity",
     "ci",
-    "delivery",
     "deploy",
     "manifests",
     "observability",
@@ -107,11 +99,6 @@ __all__ = [
     "load_delivery_stages",
     "validate_inventory",
     "validate_manifest_offline",
-    # Delivery
-    "FailureDomain",
-    "StageResult",
-    "StageStatus",
-    "make_stage_result",
     # Deploy
     "DeployOperation",
     "DeployRequest",

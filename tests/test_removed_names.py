@@ -329,7 +329,7 @@ def test_removed_environment_name_is_not_in_the_contract(name: str) -> None:
 @pytest.mark.parametrize(
     ("smoke", "attribute", "expected"),
     [
-        ("smoke_package_data", "REMOVED_MODULES", 9),
+        ("smoke_package_data", "REMOVED_MODULES", 10),
         ("smoke_removed_names", "REMOVED_NAMES", 43),
         ("smoke_removed_names", "REMOVED_ENV_MEMBERS", 21),
         ("smoke_removed_names", "REMOVED_ENV_NAMES", 29),
@@ -398,7 +398,10 @@ REMOVED_IN_3_14_0: tuple[tuple[str, str], ...] = (
 def test_symbols_removed_in_3_14_0_are_absent_from_modules_and_packages(
     module: str, dotted: str
 ) -> None:
-    owner = importlib.import_module(module)
+    try:
+        owner = importlib.import_module(module)
+    except ModuleNotFoundError:
+        return
     *parents, leaf = dotted.split(".")
     for part in parents:
         owner = getattr(owner, part)

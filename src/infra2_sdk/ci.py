@@ -6,7 +6,7 @@ import json
 import os
 import re
 from collections.abc import Iterable, Mapping
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
@@ -102,51 +102,102 @@ def crons_in(workflow_text: str) -> list[str]:
     return [match.group("expr").strip() for match in _CRON_LINE.finditer(workflow_text)]
 
 
-def _field(text: str, name: str, low: int, high: int) -> set[int]:
+_GAP_WINDOW_DAYS = 1461
+_WINDOW_START = datetime(2024, 1, 1, tzinfo=UTC)
+_NAMES = {
+    "month": {
+        n: i
+        for i, n in enumerate(
+            ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"], 1
+        )
+    },
+    "dow": {n: i for i, n in enumerate(["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"])},
+}
+_RANGES = {
+    "minute": (0, 59),
+    "hour": (0, 23),
+    "dom": (1, 31),
+    "month": (1, 12),
+    "dow": (0, 7),
+}
+
+
+def _value(token: str, field: str) -> int:
+    low, high = _RANGES[field]
+    if token.isdigit():
+        number = int(token)
+        if not low <= number <= high:
+            raise ScheduleError(f"{field}: {token!r} is outside {low}-{high}")
+        return number
+    number = _NAMES.get(field, {}).get(token.upper())
+    if number is None:
+        raise ScheduleError(f"{field}: {token!r} is not a number")
+    return number
+
+
+def _field_values(text: str, field: str) -> set[int]:
+    low, high = _RANGES[field]
     values: set[int] = set()
     for element in text.split(","):
-        match = _ELEMENT.match(element)
-        if not match:
-            raise ScheduleError(f"{name} {element!r} is not a number, range or step")
-        span, step_text = match.group("span"), match.group("step")
-        step = int(step_text) if step_text is not None else 1
+        span, _, step_text = element.partition("/")
+        if step_text and not step_text.isdigit():
+            raise ScheduleError(f"{field}: step {step_text!r} is not a number")
+        step = int(step_text) if step_text else 1
         if step < 1:
-            raise ScheduleError(f"{name} step in {element!r} must be at least 1")
+            raise ScheduleError(f"{field}: step must be at least 1")
         if span == "*":
-            first, last = low, high
+            first, last = low, (6 if field == "dow" else high)
         elif "-" in span:
-            first, last = (int(part) for part in span.split("-", 1))
+            first, _, end = span.partition("-")
+            first, last = _value(first, field), _value(end, field)
         else:
-            first = int(span)
-            last = high if step_text is not None else first
-        if not low <= first <= last <= high:
-            raise ScheduleError(f"{name} {element!r} is outside {low}-{high}")
+            first = _value(span, field)
+            last = high if step_text else first
+        if first > last:
+            raise ScheduleError(f"{field}: range {span!r} runs backwards")
         values.update(range(first, last + 1, step))
     return values
 
 
 def largest_gap(crons: Iterable[str]) -> timedelta:
-    """Return the largest gap between consecutive fire times of daily-periodic crons."""
-    fires: set[int] = set()
+    """Return the largest gap between consecutive fire times of all *crons*."""
     listed = list(crons)
     if not listed:
         raise ScheduleError("the workflow has no cron")
+    day_times: dict[int, set[int]] = {}
     for expression in listed:
         parts = expression.split()
         if len(parts) != 5:
             raise ScheduleError(f"cron {expression!r} has {len(parts)} fields, not 5")
-        minute, hour, day, month, weekday = parts
-        if (day, month, weekday) != ("*", "*", "*"):
-            raise ScheduleError(
-                f"cron {expression!r} is not daily-periodic; teach "
-                "infra2_sdk.ci.largest_gap to measure it"
+        minutes, hours, doms, months, dows = (
+            _field_values(part, field)
+            for part, field in zip(parts, ("minute", "hour", "dom", "month", "dow"), strict=True)
+        )
+        if 7 in dows:
+            dows = (dows - {7}) | {0}
+        cursor = _WINDOW_START
+        day_index = 0
+        while day_index < _GAP_WINDOW_DAYS:
+            dom_restricted = parts[2] != "*"
+            dow_restricted = parts[4] != "*"
+            day_matches = (
+                (cursor.day in doms or cursor.isoweekday() % 7 in dows)
+                if (dom_restricted and dow_restricted)
+                else (cursor.day in doms and cursor.isoweekday() % 7 in dows)
             )
-        minutes = _field(minute, "minute", 0, 59)
-        hours = _field(hour, "hour", 0, 23)
-        fires.update(h * 60 + m for h in hours for m in minutes)
-    ordered = sorted(fires)
+            if cursor.month in months and day_matches:
+                day_times.setdefault(day_index, set()).update(
+                    h * 60 + m for h in hours for m in minutes
+                )
+            cursor += timedelta(days=1)
+            day_index += 1
+
+    ordered = [
+        day * _MINUTES_PER_DAY + m for day in sorted(day_times) for m in sorted(day_times[day])
+    ]
+    if len(ordered) < 2:
+        raise ScheduleError("the schedule fires fewer than twice in the sample window")
     gaps = [later - earlier for earlier, later in zip(ordered, ordered[1:], strict=False)]
-    gaps.append(ordered[0] + _MINUTES_PER_DAY - ordered[-1])
     return timedelta(minutes=max(gaps))
 
 

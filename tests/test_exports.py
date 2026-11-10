@@ -27,7 +27,6 @@ def test_infra2_sdk_submodules_accessible_from_root() -> None:
     expected_submodules = [
         "capacity",
         "ci",
-        "delivery",
         "deploy",
         "fastapi",
         "manifests",

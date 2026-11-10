@@ -27,7 +27,7 @@ Across 170+ issues and 44 releases (`v0.1.0` through `v3.19.0`), consumer requir
 ### P2 — One Source per Fact and the Manifest v2 Supply Chain (`#16`, `#38`, `#115`, `#137`)
 
 - Every environment variable in an application manifest (`EnvironmentManifest`) declares one `source` class (`bootstrap`, `human`, `runtime`, `release`, `decision`, `code`). The source class defines who produces the value, where truth lives, and how the value reaches the container (`#16`, `#38`).
-- Shared cross-repository mechanisms (`capacity`, `ci`, `delivery`, `deploy`, `fastapi`, `manifests`, `observability`, `refs`, `routing`, `rules`, `runtime`, `scaffold`, `secrets`, `transport`) live in `infra2-sdk` (`v3.7.0`, `#115`). Extracting these modules from `infra2` and consumer applications ensures that all repositories share one tested implementation.
+- Shared cross-repository mechanisms (`capacity`, `ci`, `deploy`, `fastapi`, `manifests`, `observability`, `refs`, `routing`, `rules`, `runtime`, `scaffold`, `secrets`, `transport`) live in `infra2-sdk` (`v3.7.0`, `#115`). Extracting these modules from `infra2` and consumer applications ensures that all repositories share one tested implementation.
 - `LlmSettings` (`src/infra2_sdk/runtime/llm.py`, `#137`) owns default models and reasoning efforts across three capability roles (`large`, `small`, `multimodal`). Consumer applications map per-role environment overrides (`LLM_LARGE_MODELS`, `LLM_SMALL_MODELS`, `LLM_MULTIMODAL_MODELS`) onto this single contract.
 
 ### P3 — 100% Consumer-Reachable Public Surface (`#102`, `#108`, `#121`, `#126`)
@@ -76,7 +76,6 @@ Application processes import these modules directly at runtime:
 |---|---|
 | `infra2_sdk.capacity` | Capacity limits, `CapacityReading`, `evaluate` thresholds, and Cloudflare analytics collection |
 | `infra2_sdk.ci` | Delivery-stage vocabulary, CI gate inventory validation, workflow step inspection, cron schedule gap analysis (`ScheduleError`, `crons_in`, `largest_gap`), and coverage ratchets |
-| `infra2_sdk.delivery` | Stage evidence (`StageResult`, `make_stage_result`) and failure taxonomy (`FailureDomain`, `StageStatus`) |
 | `infra2_sdk.deploy` | `DeployRequest` wire contracts, dispatch client, health poller, deployed release reader, and production evidence verification |
 | `infra2_sdk.manifests` | Settings and runtime hooks manifest CLI driver (`--write`, `--check`, `--validate-env`, `--check-hooks`, `--run-hook`), `ManifestSpec`, `RuntimeHooksManifest`, `HookSlotSpec`, `HookRunResult`, `load_hooks_manifest`, `run_hook_slot`, `all_manifests`, `check`, and `load` |
 | `infra2_sdk.observability` | Flap hysteresis trackers, scheduled peer workflow liveness evaluation, self-healing GitHub issue trails, and OpenPanel query primitives |
