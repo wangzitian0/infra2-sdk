@@ -407,3 +407,39 @@ def test_symbols_removed_in_3_14_0_are_absent_from_modules_and_packages(
         for package in (infra2_sdk, infra2_sdk.runtime):
             assert leaf not in package.__all__, f"{package.__name__}.__all__ lists {leaf}"
             assert not hasattr(package, leaf), f"{package.__name__} still exposes {leaf}"
+
+
+REMOVED_IN_3_20_0: tuple[tuple[str, str], ...] = (
+    ("infra2_sdk.deploy", "canonical_json"),
+    ("infra2_sdk.deploy", "announce_approval_wait"),
+    ("infra2_sdk.deploy", "render_sender_request"),
+    ("infra2_sdk.deploy", "run_deploy_transport_cli"),
+    ("infra2_sdk.observability", "evaluate_peer_liveness"),
+    ("infra2_sdk.refs", "CommandRunner"),
+    ("infra2_sdk.refs", "redact_repo"),
+    ("infra2_sdk.refs", "MANIFEST_ACCEPT"),
+    ("infra2_sdk.deploy", "ReceiverRun"),
+    ("infra2_sdk.deploy", "github_api_client"),
+    ("infra2_sdk.deploy", "print_approval_notice"),
+    ("infra2_sdk.deploy", "validate_sender_request"),
+    ("infra2_sdk.deploy", "PRODUCTION_APPROVAL_MARGIN_SECONDS"),
+)
+
+
+@pytest.mark.parametrize(
+    ("module", "dotted"),
+    REMOVED_IN_3_20_0,
+    ids=[f"{m}.{n}" for m, n in REMOVED_IN_3_20_0],
+)
+def test_symbols_removed_in_3_20_0_are_absent_from_modules_and_packages(
+    module: str, dotted: str
+) -> None:
+    owner = importlib.import_module(module)
+    *parents, leaf = dotted.split(".")
+    for part in parents:
+        owner = getattr(owner, part)
+    assert not hasattr(owner, leaf), f"{module}.{dotted} was removed in 3.20.0"
+    if not parents:
+        for package in (infra2_sdk, infra2_sdk.runtime):
+            assert leaf not in package.__all__, f"{package.__name__}.__all__ lists {leaf}"
+            assert not hasattr(package, leaf), f"{package.__name__} still exposes {leaf}"

@@ -17,7 +17,6 @@ from urllib.parse import quote, urlparse
 from urllib.request import urlopen
 
 from infra2_sdk._wire import _is_loopback_host, parse_iso_utc
-from infra2_sdk.ci import ScheduleError, crons_in, largest_gap
 from infra2_sdk.transport import (
     _decode_github_contents,
     _extract_workflow_runs,
@@ -233,68 +232,6 @@ def _last_changed(get: _Get, path: str, branch: str) -> datetime:
 
 def _hours(span: timedelta) -> str:
     return f"{span.total_seconds() / 3600:.1f}h"
-
-
-def evaluate_peer_liveness(
-    get: _Get, *, now: datetime, bound_cap: timedelta | None = None
-) -> PeerVerdict:
-    """Evaluate the peer liveness verdict on truealpha's ``scheduler-liveness`` workflow."""
-    workflow_path = f"/repos/{_PEER_REPOSITORY}/actions/workflows/{_PEER_WORKFLOW}"
-    try:
-        workflow = _object(get, workflow_path)
-        state = workflow.get("state")
-        if state != "active":
-            return PeerVerdict(
-                _DISABLED,
-                f"{_PEER_REPOSITORY} {_PEER_WORKFLOW} state={state!r}, not 'active': "
-                "its scheduler does not run",
-            )
-        path = workflow.get("path")
-        if not isinstance(path, str) or not path:
-            raise PeerReadError(f"GET {workflow_path} has no path")
-        branch = _object(get, f"/repos/{_PEER_REPOSITORY}").get("default_branch")
-        if not isinstance(branch, str) or not branch:
-            raise PeerReadError(f"{_PEER_REPOSITORY} has no default_branch")
-        try:
-            bound = bound_for(largest_gap(crons_in(_file_text(get, path, branch))))
-        except ScheduleError as exc:
-            return PeerVerdict(_INVALID, f"{_PEER_REPOSITORY} {path}: {exc}")
-        if bound_cap is not None:
-            bound = min(bound, bound_cap)
-
-        newest = newest_tick(
-            _runs(get, f"{workflow_path}/runs?event=schedule&per_page={_SCHEDULED_PAGE}")
-        )
-        if newest is None or now - newest > bound:
-            witness = newest_tick(_runs(get, f"{workflow_path}/runs?per_page={_UNFILTERED_PAGE}"))
-            if witness is not None and (newest is None or witness > newest):
-                newest = witness
-        if newest is not None:
-            age = now - newest
-            where = (
-                f"{_PEER_REPOSITORY} {_PEER_WORKFLOW}: newest scheduled run {newest.isoformat()}"
-            )
-            if age > bound:
-                return PeerVerdict(
-                    _STALE,
-                    f"{where} is {_hours(age)} old, beyond the {_hours(bound)} bound: "
-                    "its scheduler stopped ticking",
-                )
-            return PeerVerdict(_OK, f"{where} is {_hours(age)} old (bound {_hours(bound)})")
-
-        changed = _last_changed(get, path, branch)
-        since = now - changed
-        where = (
-            f"{_PEER_REPOSITORY} {_PEER_WORKFLOW} never ran on schedule; "
-            f"{path} changed {_hours(since)} ago"
-        )
-        if since > bound:
-            return PeerVerdict(_NEVER, f"{where}, beyond the {_hours(bound)} bound")
-        return PeerVerdict(_OK, f"{where}, waiting for its first tick (bound {_hours(bound)})")
-    except PeerReadError as exc:
-        return PeerVerdict(
-            _UNVERIFIABLE, f"cannot verify {_PEER_REPOSITORY} {_PEER_WORKFLOW}: {exc}"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -887,7 +824,6 @@ __all__ = [
     "build_openpanel_payload",
     "check_name",
     "evaluate_consecutive_hysteresis",
-    "evaluate_peer_liveness",
     "format_openpanel_markdown",
     "github_getter",
     "is_recently_flapping",

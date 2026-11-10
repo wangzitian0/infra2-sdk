@@ -37,6 +37,7 @@ from infra2_sdk.runtime.health import (
     DependencyStatus,
     ProbeResult,
     check_health,
+    probe_orchestrator,
     run_probes,
 )
 from infra2_sdk.runtime.http import (
@@ -104,6 +105,7 @@ __all__ = [
     "DependencyCheck",
     "DependencyStatus",
     "ProbeResult",
+    "probe_orchestrator",
     "run_probes",
     # Health
     "check_health",

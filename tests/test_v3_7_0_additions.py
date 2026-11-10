@@ -40,16 +40,12 @@ from infra2_sdk.ci import (
     write_github_output,
 )
 from infra2_sdk.deploy import (
-    PRODUCTION_APPROVAL_MARGIN_SECONDS,
     VERSION_KEYS,
     DeployType,
     ReleaseIdentityError,
-    announce_approval_wait,
+    _validate_sender_request,
     identity_from_body,
-    print_approval_notice,
     read_deployed_release,
-    render_sender_request,
-    validate_sender_request,
 )
 from infra2_sdk.manifests import _render
 from infra2_sdk.observability import (
@@ -60,13 +56,11 @@ from infra2_sdk.observability import (
     GitHubIssues,
     ListingFailed,
     PeerReadError,
-    PeerVerdict,
     Trail,
     WriteFailed,
     bound_for,
     check_name,
     evaluate_consecutive_hysteresis,
-    evaluate_peer_liveness,
     github_getter,
     is_recently_flapping,
     issue_trail_mode,
@@ -79,7 +73,7 @@ from infra2_sdk.observability import (
     title_for,
 )
 from infra2_sdk.refs import (
-    MANIFEST_ACCEPT,
+    _MANIFEST_ACCEPT,
     SHORT_SHA_LENGTH,
     assert_after_on_main,
     identifier_kind,
@@ -97,7 +91,7 @@ def test_short_sha_and_manifest_accept() -> None:
     sha = "a" * 40
     assert SHORT_SHA_LENGTH == 7
     assert short_sha(sha) == "aaaaaaa"
-    assert "application/vnd.oci.image.manifest.v1+json" in MANIFEST_ACCEPT
+    assert "application/vnd.oci.image.manifest.v1+json" in _MANIFEST_ACCEPT
     with pytest.raises(ValueError, match="full 40-hex commit sha"):
         short_sha("not-a-sha")
 
@@ -170,45 +164,8 @@ def test_assert_environment_passes_and_fails(tmp_path: Path) -> None:
         assert_environment(tmp_path / "missing.yaml", environ={}, require_injected=False)
 
 
-def test_approval_notice_and_sender_request(capsys: pytest.CaptureFixture[str]) -> None:
-    assert PRODUCTION_APPROVAL_MARGIN_SECONDS == 120
-    print_approval_notice("waiting for prod approval")
-    assert "waiting for prod approval" in capsys.readouterr().err
-
-    notices: list[str] = []
-
-    def fake_api(method: str, path: str, body: object = None) -> object:
-        return {
-            "workflow_runs": [
-                {
-                    "display_title": "request-0001",
-                    "status": "waiting",
-                    "created_at": "2026-10-19T00:00:00Z",
-                    "html_url": "https://github.com/org/repo/actions/runs/5",
-                }
-            ]
-        }
-
-    wrapped = announce_approval_wait(fake_api, "request-0001", "v1.2.3", announce=notices.append)
-    wrapped("GET", "/runs")
-    wrapped("GET", "/runs")
-    assert len(notices) == 1
-    assert "v1.2.3" in notices[0]
-
-    req = render_sender_request(
-        service="finance_report/app",
-        source_repository="org/repo",
-        repo_label="org/repo",
-        request_id="request-0123",
-        version_ref="v1.2.3",
-        source_sha="a" * 40,
-        source_run_url="https://github.com/org/repo/actions/runs/10",
-        source_run_id="10",
-        deploy_type="staging",
-    )
-    assert req.service == "finance_report/app"
-
-    prod_req = validate_sender_request(
+def test_approval_notice_and_sender_request() -> None:
+    prod_req = _validate_sender_request(
         {
             "contract_version": 1,
             "request_id": "request-0124",
@@ -401,7 +358,6 @@ def test_observability_peer_liveness() -> None:
     assert bound == timedelta(hours=2)
     assert parse_bound_cap_hours("2") == timedelta(hours=2)
 
-    now = datetime(2026, 10, 19, 12, 0, 0, tzinfo=UTC)
     runs = [
         {
             "id": 1,
@@ -427,10 +383,6 @@ def test_observability_peer_liveness() -> None:
         if "/runs" in path:
             return {"workflow_runs": runs}
         raise PeerReadError(f"unexpected {path}")
-
-    verdict = evaluate_peer_liveness(fake_get, now=now)
-    assert isinstance(verdict, PeerVerdict)
-    assert verdict.ok
 
     getter = github_getter("fake-token")
     assert callable(getter)
@@ -560,76 +512,6 @@ def test_v3_8_0_resolve_branch_to_sha() -> None:
         )
 
 
-def test_v3_8_0_run_deploy_transport_cli(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    import io
-
-    from infra2_sdk.deploy import ReceiverRun, run_deploy_transport_cli
-
-    monkeypatch.delenv("INFRA2_PAT", raising=False)
-    assert (
-        run_deploy_transport_cli(
-            [],
-            dispatch=lambda *a, **kw: ReceiverRun(
-                run_id=1, url="https://github.com/x/y/actions/runs/1"
-            ),
-            user_agent="test-agent",
-        )
-        == 1
-    )
-    assert "INFRA2_PAT is required" in capsys.readouterr().err
-
-    monkeypatch.setenv("INFRA2_PAT", "tok")
-    assert (
-        run_deploy_transport_cli(
-            ["--timeout", "0"],
-            dispatch=lambda *a, **kw: ReceiverRun(
-                run_id=1, url="https://github.com/x/y/actions/runs/1"
-            ),
-            user_agent="test-agent",
-        )
-        == 1
-    )
-    assert "must be positive" in capsys.readouterr().err
-
-    assert (
-        run_deploy_transport_cli(
-            ["--timeout", "5", "--poll-interval", "5"],
-            dispatch=lambda *a, **kw: ReceiverRun(
-                run_id=1, url="https://github.com/x/y/actions/runs/1"
-            ),
-            user_agent="test-agent",
-            stdin=io.StringIO("[]"),
-        )
-        == 1
-    )
-    assert "must be a JSON object" in capsys.readouterr().err
-
-    outputs: dict[str, str] = {}
-    assert (
-        run_deploy_transport_cli(
-            ["--timeout", "6", "--poll-interval", "5"],
-            dispatch=lambda raw, **kw: ReceiverRun(
-                run_id=101, url="https://github.com/wangzitian0/infra2/actions/runs/101"
-            ),
-            user_agent="test-agent",
-            api_client_factory=lambda **kw: (lambda *a, **k: None, lambda run_id: b""),
-            github_output=outputs.update,
-            stdin=io.StringIO('{"request_id": "abc"}'),
-        )
-        == 0
-    )
-    assert json.loads(capsys.readouterr().out) == {
-        "receiver_run_id": 101,
-        "receiver_run_url": "https://github.com/wangzitian0/infra2/actions/runs/101",
-    }
-    assert outputs == {
-        "receiver_run_id": "101",
-        "receiver_run_url": "https://github.com/wangzitian0/infra2/actions/runs/101",
-    }
-
-
 def test_v3_8_0_bare_interpreter_import_without_yaml() -> None:
     import sys
 
@@ -638,7 +520,7 @@ def test_v3_8_0_bare_interpreter_import_without_yaml() -> None:
         "import infra2_sdk; "
         "from infra2_sdk import ci, deploy, observability, refs, secrets; "
         "assert callable(refs.resolve_branch_to_sha); "
-        "assert callable(deploy.run_deploy_transport_cli)"
+        "assert callable(deploy.dispatch_and_wait)"
     )
     proc = subprocess.run(
         [sys.executable, "-c", code],
@@ -886,7 +768,6 @@ def test_ci_edge_cases_and_inspect_compose_reexport(
 def test_observability_github_and_trail_branches(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    import base64
     from urllib.error import HTTPError, URLError
 
     from infra2_sdk.ci import ScheduleError, largest_gap
@@ -899,7 +780,6 @@ def test_observability_github_and_trail_branches(
         Trail,
         WriteFailed,
         evaluate_consecutive_hysteresis,
-        evaluate_peer_liveness,
         github_getter,
         issue_trail_mode,
         load_trail,
@@ -976,30 +856,6 @@ def test_observability_github_and_trail_branches(
     assert parse_bound_cap_hours("") is None
     with pytest.raises(ValueError, match="bound cap"):
         parse_bound_cap_hours("-1")
-
-    now = datetime(2026, 10, 27, 12, 0, tzinfo=UTC)
-    wf_path = "/repos/wangzitian0/truealpha/actions/workflows/scheduler-liveness.yml"
-    disabled = evaluate_peer_liveness(lambda p: {"state": "disabled"}, now=now)
-    assert disabled.status == "DISABLED" and not disabled.ok
-
-    unverifiable = evaluate_peer_liveness(lambda p: "not-a-dict", now=now)
-    assert unverifiable.status == "UNVERIFIABLE"
-
-    def never_ran_getter(path: str) -> object:
-        if path == wf_path:
-            return {"state": "active", "path": ".github/workflows/s.yml"}
-        if path == "/repos/wangzitian0/truealpha":
-            return {"default_branch": "main"}
-        if "contents/" in path:
-            content = base64.b64encode(b"on:\n  schedule:\n    - cron: '0 * * * *'\n").decode()
-            return {"encoding": "base64", "content": content}
-        if "/runs" in path:
-            return {"workflow_runs": []}
-        if "/commits?" in path:
-            return [{"commit": {"committer": {"date": "2026-10-20T00:00:00Z"}}}]
-        return {}
-
-    assert evaluate_peer_liveness(never_ran_getter, now=now).status == "NEVER"
 
     trail_file = tmp_path / "trail.jsonl"
     trail_file.write_text(

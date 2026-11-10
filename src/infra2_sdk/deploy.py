@@ -6,7 +6,6 @@ import binascii
 import json
 import os
 import re
-import sys
 import time
 import zipfile
 from collections.abc import Callable, Mapping, Sequence
@@ -20,7 +19,6 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from infra2_sdk._wire import (
-    canonical_json_bytes,
     parse_contract_version,
     parse_iso_utc,
     parse_string,
@@ -369,11 +367,6 @@ class ProductionEvidencePolicy:
         )
 
 
-def canonical_json(request: DeployRequest) -> str:
-    """Return stable wire JSON for a deployment request."""
-    return canonical_json_bytes(request.to_dict()).decode("utf-8") + "\n"
-
-
 def _default_github_json_fetcher(
     *,
     token: str = "",
@@ -669,7 +662,7 @@ LogFetcher = Callable[[int], bytes]
 
 
 @dataclass(frozen=True)
-class ReceiverRun:
+class _ReceiverRun:
     run_id: int
     url: str
 
@@ -687,7 +680,7 @@ def dispatch_and_wait(
     poll_interval: float = 5.0,
     max_attempts: int = 300,
     clock: Callable[[], datetime] = _utc_now,
-) -> ReceiverRun:
+) -> _ReceiverRun:
     """Dispatch ``request`` to infra2 and return the correlated, verified receiver run.
 
     The wait ends ``max_attempts * poll_interval`` seconds after the dispatch, by the
@@ -750,7 +743,7 @@ def dispatch_and_wait(
             f"https://github.com/{INFRA_REPOSITORY}/actions/runs/"
         ):
             raise RuntimeError(f"infra2 receiver run {run_id} has no canonical URL")
-        return ReceiverRun(run_id=run_id, url=url)
+        return _ReceiverRun(run_id=run_id, url=url)
 
     raise RuntimeError(
         f"timed out waiting for an infra2 receiver run naming request_id "
@@ -758,7 +751,7 @@ def dispatch_and_wait(
     )
 
 
-def github_api_client(
+def _github_api_client(
     *,
     token: str,
     user_agent: str,
@@ -946,95 +939,8 @@ def _version_prefix_matches(actual: str, expected: str) -> bool:
     return actual.startswith(expected) or expected.startswith(actual)
 
 
-PRODUCTION_APPROVAL_MARGIN_SECONDS = 120
 _SAFE_REF_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._/-]{0,199}$")
 VERSION_KEYS = ("git_sha", "version")
-
-
-def print_approval_notice(message: str) -> None:
-    """Show the notice in the run log, and as an annotation in GitHub Actions."""
-    if os.environ.get("GITHUB_ACTIONS") == "true":
-        print(f"::notice title=Production approval needed::{message}", file=sys.stderr)
-    print(message, file=sys.stderr, flush=True)
-
-
-def _approval_times(
-    value: object, sender_deadline: datetime | None
-) -> tuple[datetime, datetime] | None:
-    try:
-        created = parse_iso_utc(value)
-        deadline = production_request_accept_until(created, sender_deadline) - timedelta(
-            seconds=PRODUCTION_APPROVAL_MARGIN_SECONDS
-        )
-    except (ValueError, OverflowError):
-        return None
-    return created, deadline
-
-
-def _approval_notice(
-    run: Mapping[str, Any], version_ref: str, sender_deadline: datetime | None = None
-) -> str:
-    times = _approval_times(run.get("created_at"), sender_deadline)
-    if times is None:
-        when = (
-            "The approval deadline is unknown: the run has no usable creation time. "
-            "Approve at once."
-        )
-    else:
-        created, deadline = times
-        if sender_deadline is None:
-            limit = f"that is older than {PRODUCTION_REQUEST_MAX_AGE_SECONDS} s"
-        else:
-            limit = (
-                f"with less than {PRODUCTION_DEPLOY_BUDGET_SECONDS} s left before the "
-                f"sender stops waiting at {sender_deadline:%Y-%m-%d %H:%M:%S}Z"
-            )
-        when = (
-            f"Approve before {deadline:%Y-%m-%d %H:%M:%S}Z. "
-            f"The receiver refuses a request {limit} when its check runs, within one "
-            f"minute after the approval. The run was created at {created:%Y-%m-%d %H:%M:%S}Z."
-        )
-    return (
-        f"Approval needed: {run.get('html_url')} waits for the owner to approve "
-        f"the 'production' environment. {when} "
-        f"Dispatch the release again for {version_ref} if the receiver refuses the request."
-    )
-
-
-def announce_approval_wait(
-    api: Api,
-    request_id: str,
-    version_ref: str,
-    announce: Callable[[str], None] = print_approval_notice,
-) -> Api:
-    """Wrap ``api`` to announce once when the receiver run for ``request_id`` awaits approval.
-
-    The notice uses the ``sender_deadline`` of the dispatch that passes through ``api``.
-    """
-    announced = False
-    sender_deadline: datetime | None = None
-
-    def watching_api(method: str, path: str, body: object = None) -> object:
-        nonlocal announced, sender_deadline
-        if method == "POST" and isinstance(body, Mapping):
-            client_payload = body.get("client_payload")
-            if isinstance(client_payload, Mapping):
-                sender_deadline = parse_sender_deadline(client_payload)
-        payload = api(method, path, body)
-        if method == "GET" and not announced:
-            runs = payload.get("workflow_runs") if isinstance(payload, Mapping) else None
-            for run in runs if isinstance(runs, list) else []:
-                if (
-                    isinstance(run, Mapping)
-                    and request_id in str(run.get("display_title", ""))
-                    and run.get("status") == "waiting"
-                ):
-                    announce(_approval_notice(run, version_ref, sender_deadline))
-                    announced = True
-                    break
-        return payload
-
-    return watching_api
 
 
 def _github_path_match(url: str, pattern: re.Pattern[str], message: str) -> re.Match[str]:
@@ -1052,7 +958,7 @@ def _github_path_match(url: str, pattern: re.Pattern[str], message: str) -> re.M
     return path_match
 
 
-def validate_sender_request(
+def _validate_sender_request(
     raw: Mapping[str, Any],
     *,
     service: str,
@@ -1163,46 +1069,6 @@ def validate_sender_request(
     return request
 
 
-def render_sender_request(
-    *,
-    service: str,
-    source_repository: str,
-    repo_label: str,
-    request_id: str,
-    version_ref: str,
-    source_sha: str,
-    source_run_url: str,
-    source_run_id: str,
-    deploy_type: str = DeployType.STAGING.value,
-    staging_run_url: str = "",
-    reviewed_change_url: str = "",
-    **validator_kwargs: Any,
-) -> DeployRequest:
-    """Build and validate a sender-side DeployRequest."""
-    return validate_sender_request(
-        {
-            "contract_version": CONTRACT_VERSION,
-            "request_id": request_id,
-            "operation": DeployOperation.DEPLOY.value,
-            "service": service,
-            "deploy_type": deploy_type,
-            "version_ref": version_ref,
-            "source_repository": source_repository,
-            "source_sha": source_sha,
-            "evidence": {
-                "source_run_url": source_run_url,
-                "source_run_id": source_run_id,
-                "staging_run_url": staging_run_url,
-                "reviewed_change_url": reviewed_change_url,
-            },
-        },
-        service=service,
-        source_repository=source_repository,
-        repo_label=repo_label,
-        **validator_kwargs,
-    )
-
-
 class ReleaseIdentityError(RuntimeError):
     """The environment's release identity could not be established."""
 
@@ -1244,94 +1110,21 @@ def read_deployed_release(url: str, http_get: HttpGet) -> str:
     return identity_from_body(body, url=url)
 
 
-_DEFAULT_TOKEN_ENV = "_".join(("INFRA2", "PAT"))
-
-
-def run_deploy_transport_cli(
-    argv: Sequence[str] | None = None,
-    *,
-    dispatch: Callable[..., ReceiverRun],
-    user_agent: str,
-    api_client_factory: Callable[..., tuple[Api, LogFetcher]] = github_api_client,
-    github_output: Callable[[Mapping[str, str]], None] | None = None,
-    stdin: Any = None,
-) -> int:
-    """Shared CLI runner for ``app_deploy_transport.py`` across application repositories."""
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description=(
-            "Dispatch one validated release request and prove the matching infra2 run succeeded."
-        )
-    )
-    parser.add_argument("--token-env", default=_DEFAULT_TOKEN_ENV)
-    parser.add_argument("--timeout", type=int, default=1800)
-    parser.add_argument("--poll-interval", type=int, default=5)
-    args = parser.parse_args(argv)
-
-    token = os.getenv(args.token_env, "")
-    if not token:
-        print(f"app deploy transport failed: {args.token_env} is required", file=sys.stderr)
-        return 1
-    if args.timeout <= 0 or args.poll_interval <= 0:
-        print(
-            "app deploy transport failed: timeout and poll interval must be positive",
-            file=sys.stderr,
-        )
-        return 1
-    stream = stdin if stdin is not None else sys.stdin
-    try:
-        raw = json.load(stream)
-        if not isinstance(raw, Mapping):
-            raise ValueError("deploy request must be a JSON object")
-        api, fetch_logs = api_client_factory(
-            token=token,
-            user_agent=user_agent,
-            timeout=30.0,
-        )
-        result = dispatch(
-            raw,
-            api=api,
-            fetch_logs=fetch_logs,
-            poll_interval=float(args.poll_interval),
-            max_attempts=max(
-                1,
-                (args.timeout + args.poll_interval - 1) // args.poll_interval,
-            ),
-        )
-    except Exception as exc:  # noqa: BLE001
-        print(f"app deploy transport failed: {exc}", file=sys.stderr)
-        return 1
-    if github_output is not None:
-        github_output({"receiver_run_id": str(result.run_id), "receiver_run_url": result.url})
-    print(json.dumps({"receiver_run_id": result.run_id, "receiver_run_url": result.url}))
-    return 0
-
-
 __all__ = [
     "DeployOperation",
     "DeployRequest",
     "DeployType",
-    "PRODUCTION_APPROVAL_MARGIN_SECONDS",
     "PRODUCTION_DEPLOY_BUDGET_SECONDS",
     "PRODUCTION_REQUEST_MAX_AGE_SECONDS",
-    "ReceiverRun",
     "ReleaseIdentityError",
     "VERSION_KEYS",
-    "announce_approval_wait",
-    "canonical_json",
     "default_http_get",
     "dispatch_and_wait",
-    "github_api_client",
     "identity_from_body",
     "parse_sender_deadline",
     "poll_until_healthy",
-    "print_approval_notice",
     "production_request_accept_until",
     "read_deployed_release",
-    "render_sender_request",
-    "run_deploy_transport_cli",
     "validate_evidence_urls",
-    "validate_sender_request",
     "verify_production_evidence",
 ]

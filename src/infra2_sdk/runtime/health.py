@@ -46,6 +46,7 @@ _HTTP_SERVICE_UNAVAILABLE = 503
 class DependencyKind(StrEnum):
     CODE_DOMINANT = "code_dominant"
     MODEL_DOMINANT = "model_dominant"
+    ORCHESTRATOR = "orchestrator"
 
 
 @dataclass(frozen=True)
@@ -417,10 +418,24 @@ async def check_health(
     return _health_response(results, required=required_names)
 
 
+async def probe_orchestrator(
+    url: str,
+    *,
+    name: str = "orchestrator",
+    client: Any | None = None,
+    settings: Any | None = None,
+) -> ProbeResult:
+    """Probe an orchestrator endpoint (Prefect, Dagster) for reachability."""
+    from infra2_sdk.runtime.http import probe_http
+
+    return await probe_http(url, name=name, client=client, settings=settings)
+
+
 __all__ = [
     "Dependency",
     "DependencyKind",
     "DependencyManifest",
     "DependencyStatus",
     "ProbeResult",
+    "probe_orchestrator",
 ]

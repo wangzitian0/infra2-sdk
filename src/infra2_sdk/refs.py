@@ -18,7 +18,7 @@ _LS_REMOTE_TIMEOUT_SECONDS = 30
 
 
 @runtime_checkable
-class CommandRunner(Protocol):
+class _CommandRunner(Protocol):
     """Callable protocol for command execution (compatible with subprocess.run)."""
 
     def __call__(
@@ -68,7 +68,7 @@ def resolve_to_sha(
     ref: str,
     *,
     repo: str,
-    runner: CommandRunner = subprocess.run,
+    runner: _CommandRunner = subprocess.run,
 ) -> str:
     form = classify_ref(ref)
     cleaned = ref.strip()
@@ -78,7 +78,7 @@ def resolve_to_sha(
     if not sha:
         raise ValueError(
             f"deploy ref {ref!r} ({_remote_ref_for(form, cleaned)}) not found in "
-            f"{redact_repo(repo)}"
+            f"{_redact_repo(repo)}"
         )
     return sha
 
@@ -87,14 +87,14 @@ def resolve_image_ref(
     ref: str,
     *,
     repo: str,
-    runner: CommandRunner = subprocess.run,
+    runner: _CommandRunner = subprocess.run,
 ) -> ResolvedRef:
     form = classify_ref(ref)
     cleaned = ref.strip()
     if form == "tag":
         sha = _resolve_remote_sha(repo, form, cleaned, runner=runner)
         if not sha:
-            raise ValueError(f"tag {cleaned!r} not found in {redact_repo(repo)}")
+            raise ValueError(f"tag {cleaned!r} not found in {_redact_repo(repo)}")
         return ResolvedRef(sha=sha, image_ref=cleaned, form=form)
     sha = resolve_to_sha(ref, repo=repo, runner=runner)
     return ResolvedRef(sha=sha, image_ref=sha[:7], form=form)
@@ -104,7 +104,7 @@ def resolve_pr(
     pr_number: int | str,
     *,
     repo: str,
-    runner: CommandRunner = subprocess.run,
+    runner: _CommandRunner = subprocess.run,
 ) -> ResolvedRef:
     number = str(pr_number).strip()
     if not (number.isdigit() and int(number) > 0):
@@ -113,14 +113,14 @@ def resolve_pr(
     for sha, name in _ls_remote_rows(repo, remote_ref, runner=runner):
         if name == remote_ref:
             return ResolvedRef(sha=sha, image_ref=sha[:7], form="pr")
-    raise ValueError(f"PR #{number} head not found in {redact_repo(repo)}")
+    raise ValueError(f"PR #{number} head not found in {_redact_repo(repo)}")
 
 
 def resolve_branch_to_sha(
     branch: str,
     *,
     repo: str,
-    runner: CommandRunner = subprocess.run,
+    runner: _CommandRunner = subprocess.run,
 ) -> str:
     """Resolve a clone-only branch without broadening the deploy authority grammar."""
     cleaned = branch.strip()
@@ -140,7 +140,7 @@ def resolve_branch_to_sha(
     for sha, name in _ls_remote_rows(repo, remote_ref, runner=runner):
         if name == remote_ref:
             return sha
-    raise ValueError(f"clone branch {branch!r} ({remote_ref}) not found in {redact_repo(repo)}")
+    raise ValueError(f"clone branch {branch!r} ({remote_ref}) not found in {_redact_repo(repo)}")
 
 
 def _remote_ref_for(form: str, cleaned: str) -> str:
@@ -152,7 +152,7 @@ def _resolve_remote_sha(
     form: str,
     cleaned: str,
     *,
-    runner: CommandRunner,
+    runner: _CommandRunner,
 ) -> str | None:
     remote_ref = _remote_ref_for(form, cleaned)
     peeled = remote_ref + "^{}" if form == "tag" else None
@@ -171,7 +171,7 @@ def _resolve_remote_sha(
 def _ls_remote_rows(
     repo: str,
     *remote_refs: str,
-    runner: CommandRunner = subprocess.run,
+    runner: _CommandRunner = subprocess.run,
 ) -> list[tuple[str, str]]:
     """Run ``git ls-remote repo *remote_refs`` and return ``(sha, ref name)`` rows.
 
@@ -190,8 +190,8 @@ def _ls_remote_rows(
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise ValueError(
-            f"git ls-remote failed for {list(remote_refs)!r} in {redact_repo(repo)}: "
-            f"{redact_repo(str(exc))}"
+            f"git ls-remote failed for {list(remote_refs)!r} in {_redact_repo(repo)}: "
+            f"{_redact_repo(str(exc))}"
         ) from None
     rows: list[tuple[str, str]] = []
     for line in (result.stdout or "").strip().splitlines():
@@ -201,7 +201,7 @@ def _ls_remote_rows(
     return rows
 
 
-def redact_repo(repo: str) -> str:
+def _redact_repo(repo: str) -> str:
     """Replace credentials embedded in a URL (``scheme://user:token@host``) with ``<redacted>``."""
 
     return re.sub(r"(://)[^/@\s]+@", r"\1<redacted>@", repo)
@@ -210,7 +210,7 @@ def redact_repo(repo: str) -> str:
 _OCI_DIGEST_RE = re.compile(r"\Asha256:[0-9a-f]{64}\Z")
 _REFERENCE_RE = re.compile(r"\A[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\Z")
 _IMAGE_RE = re.compile(r"\A[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+\Z")
-MANIFEST_ACCEPT = ", ".join(
+_MANIFEST_ACCEPT = ", ".join(
     (
         "application/vnd.oci.image.index.v1+json",
         "application/vnd.docker.distribution.manifest.list.v2+json",
@@ -251,7 +251,7 @@ def resolve_image_digest(
     url = f"https://{registry}/v2/{image}/manifests/{reference}"
 
     def head(bearer: str | None) -> HttpResponse:
-        headers = {"Accept": MANIFEST_ACCEPT}
+        headers = {"Accept": _MANIFEST_ACCEPT}
         if bearer:
             headers["Authorization"] = f"Bearer {bearer}"
         return send("HEAD", url, headers, None)
@@ -379,8 +379,6 @@ def assert_after_on_main(
 
 
 __all__ = [
-    "CommandRunner",
-    "MANIFEST_ACCEPT",
     "ReleaseError",
     "ResolvedRef",
     "SHORT_SHA_LENGTH",
@@ -388,7 +386,6 @@ __all__ = [
     "classify_ref",
     "identifier_kind",
     "next_patch_tag",
-    "redact_repo",
     "resolve_branch_to_sha",
     "resolve_image_digest",
     "resolve_image_ref",
