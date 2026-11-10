@@ -651,12 +651,14 @@ def test_parse_sender_deadline_accepts_iso_utc_and_rejects_malformed_values() ->
     assert parse_sender_deadline({"sender_deadline": "2026-10-23T11:01:31Z"}) == datetime(
         2026, 10, 23, 11, 1, 31, tzinfo=UTC
     )
+    assert parse_sender_deadline({"sender_deadline": "2026-10-23T19:01:31+08:00"}) == datetime(
+        2026, 10, 23, 11, 1, 31, tzinfo=UTC
+    )
     assert parse_sender_deadline({}) is None
     for bad in (
         {"sender_deadline": 123},
         {"sender_deadline": ""},
         {"sender_deadline": "2026-10-23 11:01:31"},
-        {"sender_deadline": "2026-10-23T11:01:31+08:00"},
         {"sender_deadline": "invalid"},
     ):
         with pytest.raises(ValueError, match="sender_deadline"):
