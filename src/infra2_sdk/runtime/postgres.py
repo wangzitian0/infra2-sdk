@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 from infra2_sdk.runtime._optional import require
 from infra2_sdk.runtime.health import DependencyStatus, ProbeResult, _elapsed
@@ -21,12 +21,12 @@ class PostgresSettings:
     dsn: str = field(repr=False)
     connect_timeout_seconds: int = 5
     statement_timeout_seconds: int = 5
-    migrations_dsn: str | None = field(default=None, repr=False)
-    pool_size: int = 5
-    pool_max_overflow: int = 10
-    migration_lock_budget_seconds: float = 15.0
-    migration_lock_timeout_seconds: float = 5.0
-    migration_statement_timeout_seconds: float = 30.0
+    migrations_dsn: str | None = field(default=None, repr=False, kw_only=True)
+    pool_size: int = field(default=5, kw_only=True)
+    pool_max_overflow: int = field(default=10, kw_only=True)
+    migration_lock_budget_seconds: float = field(default=15.0, kw_only=True)
+    migration_lock_timeout_seconds: float = field(default=5.0, kw_only=True)
+    migration_statement_timeout_seconds: float = field(default=30.0, kw_only=True)
 
     def __post_init__(self) -> None:
         normalized = normalize_postgres_dsn(self.dsn)
@@ -124,14 +124,35 @@ def redact_postgres_error(detail: str, settings: PostgresSettings) -> str:
     for dsn in sorted(targets, key=len, reverse=True):
         if dsn:
             redacted = redacted.replace(dsn, "<redacted-postgres-dsn>")
-    for dsn_to_check in (settings.psycopg_dsn, effective_migrations):
+    secrets_to_redact: set[str] = set()
+    for dsn_to_check in (
+        settings.dsn,
+        settings.psycopg_dsn,
+        effective_migrations,
+        *([settings.migrations_dsn] if settings.migrations_dsn else []),
+    ):
         try:
-            password = urlsplit(dsn_to_check).password
+            parsed = urlsplit(dsn_to_check)
+            password = parsed.password
+            query = parsed.query
         except ValueError:
             password = None
+            query = ""
         if password:
-            redacted = redacted.replace(password, "<redacted>")
-            redacted = redacted.replace(unquote(password), "<redacted>")
+            secrets_to_redact.add(password)
+            secrets_to_redact.add(unquote(password))
+        if query:
+            for k, v in parse_qsl(query, keep_blank_values=True):
+                if k.lower() == "password" and v:
+                    secrets_to_redact.add(v)
+                    secrets_to_redact.add(unquote(v))
+            for part in query.split("&"):
+                raw_k, sep, raw_v = part.partition("=")
+                if sep and unquote(raw_k).lower() == "password" and raw_v:
+                    secrets_to_redact.add(raw_v)
+                    secrets_to_redact.add(unquote(raw_v))
+    for secret in sorted(secrets_to_redact, key=len, reverse=True):
+        redacted = redacted.replace(secret, "<redacted>")
     return redacted
 
 

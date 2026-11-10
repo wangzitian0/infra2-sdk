@@ -6,6 +6,19 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+## 3.23.0 - 2026-11-10
+
+### Changed
+
+- Pass `OnePasswordBackend.write` item creation and field edit payloads via JSON over `stdin` instead of `op` command-line arguments, and fail loudly if a custom `runner` rejects `timeout` ([#167](https://github.com/wangzitian0/infra2-sdk/issues/167)).
+- Mark the 6 extended `PostgresSettings` fields (`migrations_dsn`, `pool_size`, `pool_max_overflow`, `migration_lock_budget_seconds`, `migration_lock_timeout_seconds`, `migration_statement_timeout_seconds`) as `kw_only=True`, redact query-string `password=` values in `redact_postgres_error`, and enforce `_LS_REMOTE_TIMEOUT_SECONDS` (30 s) and `ReleaseError` wrapping in `refs.assert_after_on_main` ([#168](https://github.com/wangzitian0/infra2-sdk/issues/168)).
+- Scope `init.md` P4 to distinguish constant-key environment variable reads from parameterized/join-built reads, and lock all 9 dynamic read sites in `tests/test_source_environment_reads.py` (`DYNAMIC_READS`) ([#169](https://github.com/wangzitian0/infra2-sdk/issues/169)).
+
+### Removed
+
+- Retire 5 non-production public exports (`ci.crons_in`, `refs.resolve_branch_to_sha`, `refs.redact_repo`, `refs.SHORT_SHA_LENGTH`, and top-level `infra2_sdk.is_preview_alias`) plus dead internal helpers (`deploy._validate_wire_shape` and `_wire.require_exact_fields`) ([#187](https://github.com/wangzitian0/infra2-sdk/pull/187)).
+- Remove the transitional `legacy_vault_metadata` parameter and `vault` metadata alias from `runtime.config_schema.environment_manifest_from_model`.
+
 ## 3.22.0 - 2026-11-10
 
 ### Removed

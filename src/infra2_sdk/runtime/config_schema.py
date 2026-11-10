@@ -253,10 +253,9 @@ def environment_manifest_from_model(
     model: type,
     *,
     source: str | None = None,
-    legacy_vault_metadata: bool = True,
     overrides: Mapping[str, Mapping[str, object]] | None = None,
 ) -> EnvironmentManifest:
-    """Extract a manifest; ``vault`` metadata is a temporary v0.2 compatibility alias.
+    """Extract an ``EnvironmentManifest`` from a Pydantic v2 settings model.
 
     Source classes and the other supply-chain attributes are read from each field's
     ``json_schema_extra`` (``source``, ``empty_ok``, ``scope``, ``provided_by``,
@@ -296,15 +295,10 @@ def environment_manifest_from_model(
             if isinstance(extra_key, str) and extra_key not in aliases:
                 aliases.append(extra_key)
         field_source = str(extra.get("source") or _FieldSource.CODE)
-        injected = bool(
-            extra.get("injected")
-            or (legacy_vault_metadata and extra.get("vault"))
-            or field_source in _COMPOSE_SOURCES
-        )
-        # v1 treated every injected value as sensitive because "injected" meant "from
-        # Vault". Under v2 the source class says where a value comes from and the legacy
-        # ``vault`` alias means only "the deployment injects this"; sensitivity is its own
-        # declaration or a Secret type.
+        injected = bool(extra.get("injected") or field_source in _COMPOSE_SOURCES)
+        # Under v2 the source class says where a value comes from and ``injected`` means
+        # only "the deployment injects this"; sensitivity is its own declaration or a
+        # Secret type.
         sensitive = bool(extra.get("sensitive")) or _is_secret(annotation)
         is_required = getattr(info, "is_required", None)
         required = bool(is_required()) if callable(is_required) else False

@@ -318,24 +318,32 @@ def assert_after_on_main(
     runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
 ) -> str:
     """Fail-closed provenance guard: the promoted tag or ref must be reachable from main."""
-    resolved = runner(
-        ["git", "rev-parse", "--verify", f"{after}^{{commit}}"],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        resolved = runner(
+            ["git", "rev-parse", "--verify", f"{after}^{{commit}}"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=_LS_REMOTE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ReleaseError(f"git rev-parse failed for {after!r}: {exc}") from exc
     if resolved.returncode != 0:
         raise SystemExit(
             f"::error::cannot resolve {after!r} to a commit "
             f"({resolved.stderr.strip() or 'unknown revision'})."
         )
     sha = resolved.stdout.strip()
-    ancestor = runner(
-        ["git", "merge-base", "--is-ancestor", sha, base],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        ancestor = runner(
+            ["git", "merge-base", "--is-ancestor", sha, base],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=_LS_REMOTE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ReleaseError(f"git merge-base failed for {after!r}: {exc}") from exc
     if ancestor.returncode == 0:
         return sha
     if ancestor.returncode == 1:

@@ -78,6 +78,10 @@ EXPECTED_REMOVED_NAMES = frozenset(
         "infra2_sdk.runtime.health:DependencyUnavailableError",
         "infra2_sdk.secrets:ReadOnlyBackendError",
         "infra2_sdk.deploy:dispatch_and_wait",
+        "infra2_sdk.ci:crons_in",
+        "infra2_sdk.refs:resolve_branch_to_sha",
+        "infra2_sdk.refs:redact_repo",
+        "infra2_sdk.refs:SHORT_SHA_LENGTH",
     ]
 )
 EXPECTED_REMOVED_ENV_MEMBERS = frozenset(
@@ -154,7 +158,7 @@ _LIVE_OWNER = [pair for pair in REMOVED_NAMES if pair[0] not in REMOVED_MODULES]
 
 
 def test_removed_name_lists_have_unique_entries() -> None:
-    assert len(REMOVED_NAMES) == len(set(REMOVED_NAMES)) == 44
+    assert len(REMOVED_NAMES) == len(set(REMOVED_NAMES)) == 48
     assert len(REMOVED_ENV_MEMBERS) == len(set(REMOVED_ENV_MEMBERS)) == 21
     assert len(REMOVED_ENV_NAMES) == len(set(REMOVED_ENV_NAMES)) == 29
 
@@ -293,7 +297,7 @@ def test_the_stale_reuse_check_reports_each_kind_of_problem() -> None:
 def test_the_removed_simple_names_are_the_undotted_entries() -> None:
     assert _REMOVED_SIMPLE_NAMES, "no removed simple name: the module check would check nothing"
     assert all("." not in name for name in _REMOVED_SIMPLE_NAMES)
-    assert len(_REMOVED_SIMPLE_NAMES) == 41
+    assert len(_REMOVED_SIMPLE_NAMES) == 45
 
 
 def _strings(value: object):
@@ -331,7 +335,7 @@ def test_removed_environment_name_is_not_in_the_contract(name: str) -> None:
     ("smoke", "attribute", "expected"),
     [
         ("smoke_package_data", "REMOVED_MODULES", 10),
-        ("smoke_removed_names", "REMOVED_NAMES", 44),
+        ("smoke_removed_names", "REMOVED_NAMES", 48),
         ("smoke_removed_names", "REMOVED_ENV_MEMBERS", 21),
         ("smoke_removed_names", "REMOVED_ENV_NAMES", 29),
     ],

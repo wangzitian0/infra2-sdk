@@ -72,6 +72,7 @@ from infra2_sdk.observability import (
 from infra2_sdk.refs import (
     _MANIFEST_ACCEPT,
     _SHORT_SHA_LENGTH,
+    ReleaseError,
     assert_after_on_main,
     identifier_kind,
     short_sha,
@@ -95,11 +96,28 @@ def test_short_sha_and_manifest_accept() -> None:
 
 def test_assert_after_on_main_success_and_failures(tmp_path: Path) -> None:
     sha = "b" * 40
+    timeouts: list[float | None] = []
 
     def ok_runner(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        timeouts.append(kwargs.get("timeout"))
         return subprocess.CompletedProcess(cmd, 0, stdout=sha + "\n", stderr="")
 
     assert assert_after_on_main(sha, tmp_path, runner=ok_runner) == sha
+    assert timeouts == [30, 30]
+
+    def timeout_rev_parse(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+    with pytest.raises(ReleaseError, match="git rev-parse failed"):
+        assert_after_on_main(sha, tmp_path, runner=timeout_rev_parse)
+
+    def oserror_merge_base(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if "--is-ancestor" in cmd:
+            raise OSError("git vanished")
+        return subprocess.CompletedProcess(cmd, 0, stdout=sha + "\n", stderr="")
+
+    with pytest.raises(ReleaseError, match="git merge-base failed"):
+        assert_after_on_main(sha, tmp_path, runner=oserror_merge_base)
 
     def missing_commit_runner(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         if "rev-parse" in cmd:

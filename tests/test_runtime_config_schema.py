@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     api_key: SecretStr = Field(
         default=SecretStr(""),
         validation_alias=AliasChoices("API_KEY", "LEGACY_KEY"),
-        json_schema_extra={"vault": True},
+        json_schema_extra={"injected": True},
     )
 
 
@@ -49,10 +49,6 @@ def test_pydantic_model_renders_a_manifest() -> None:
     prefixed = environment_manifest_from_model(PrefixedSettings)
     assert prefixed.fields[0].env == "APP_DATABASE_URL"
     assert prefixed.fields[1].env == "TOKEN"
-
-    neutral = environment_manifest_from_model(Settings, legacy_vault_metadata=False)
-    assert neutral.fields[1].injected is False
-    assert neutral.fields[1].sensitive is True
 
 
 def test_environment_validation_resolves_aliases_without_values() -> None:
@@ -164,7 +160,7 @@ def test_manifest_from_model_reads_source_classes() -> None:
     assert by_env["BUDGET"].source == "code"
     assert by_env["APP_ENV"].injected and not by_env["APP_ENV"].sensitive
     legacy = by_env["OTEL_SERVICE_NAME"]
-    assert legacy.injected and not legacy.sensitive and legacy.source == "code"
+    assert not legacy.injected and not legacy.sensitive and legacy.source == "code"
     assert [f.env for f in manifest.store_backed] == ["TWELVE_DATA_API_KEY", "SECRET_KEY"]
     assert [f.env for f in manifest.by_source("release", "decision")] == [
         "IMAGE_DIGEST",

@@ -68,20 +68,6 @@ def parse_string(
     return value
 
 
-def require_exact_fields(
-    raw: Mapping[str, Any],
-    expected: set[str],
-    *,
-    description: str,
-    contract_message: str | None = None,
-) -> None:
-    if not isinstance(raw, Mapping):
-        raise ValueError(f"{description} must be an object")
-    if set(raw) != expected:
-        message = contract_message or f"{description} fields must exactly match v1"
-        raise ValueError(message)
-
-
 def validate_http_url(
     value: str,
     *,
@@ -142,6 +128,5 @@ __all__ = [
     "parse_iso_utc",
     "parse_string",
     "require_contract_version",
-    "require_exact_fields",
     "validate_http_url",
 ]

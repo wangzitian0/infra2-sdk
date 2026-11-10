@@ -289,9 +289,11 @@ class FakeOp:
     def __init__(self, items: dict[str, dict] | None = None) -> None:
         self.items = items or {}
         self.commands: list[list[str]] = []
+        self.inputs: list[str | None] = []
 
-    def __call__(self, args, capture_output, text):
+    def __call__(self, args, capture_output=True, text=True, timeout=None, input=None):
         self.commands.append(list(args))
+        self.inputs.append(input)
         verb, noun = args[1], args[2]
         if (verb, noun) == ("item", "get"):
             item = self.items.get(args[3])
@@ -301,15 +303,18 @@ class FakeOp:
                 )
             return subprocess.CompletedProcess(args, 0, json.dumps(item), "")
         if (verb, noun) == ("item", "create"):
-            title = next(a for a in args if a.startswith("--title=")).split("=", 1)[1]
-            fields = [
-                {"label": a.split("[", 1)[0], "value": a.split("=", 1)[1]}
-                for a in args
-                if "[password]=" in a
-            ]
-            self.items[title] = {"id": "id-" + title, "fields": fields}
+            assert input is not None
+            payload = json.loads(input)
+            title = payload["title"]
+            self.items[title] = {"id": "id-" + title, **payload}
             return subprocess.CompletedProcess(args, 0, "", "")
         if (verb, noun) == ("item", "edit"):
+            assert input is not None
+            updated = json.loads(input)
+            for title, existing in list(self.items.items()):
+                if existing.get("id") == args[3]:
+                    self.items[title] = updated
+                    break
             return subprocess.CompletedProcess(args, 0, "", "")
         return subprocess.CompletedProcess(args, 1, "", "unexpected")
 
@@ -334,18 +339,55 @@ def test_onepassword_backend_reads_labels_creates_and_edits_by_id_with_sections(
     result = backend.write("truealpha/staging/app", {"SECRET_KEY": "new", "OTHER": "v"})
     assert result.changed == ("OTHER", "SECRET_KEY")
     edit = fake.commands[-1]
-    assert edit[:4] == ["op", "item", "edit", "abc"]
-    assert "app.SECRET_KEY[password]=new" in edit and "OTHER[password]=v" in edit
-    assert backend.write("truealpha/staging/app", {"SECRET_KEY": "old"}) == WriteResult()
+    assert edit == ["op", "item", "edit", "abc", "--vault=Infra2"]
+    assert fake.inputs[-1] is not None
+    edited_payload = json.loads(fake.inputs[-1])
+    assert edited_payload["fields"] == [
+        {"label": "username", "purpose": "USERNAME", "value": ""},
+        {"label": "notesPlain", "purpose": "NOTES", "value": "n"},
+        {"label": "SECRET_KEY", "value": "new", "section": {"label": "app"}},
+        {"id": "OTHER", "label": "OTHER", "type": "CONCEALED", "value": "v"},
+    ]
+    assert backend.read("truealpha/staging/app") == {
+        "username": "",
+        "SECRET_KEY": "new",
+        "OTHER": "v",
+    }
+    assert (
+        backend.write("truealpha/staging/app", {"SECRET_KEY": "new", "OTHER": "v"}) == WriteResult()
+    )
 
     created = backend.write("truealpha/shared/app", {"ZAI_API_KEY": "k"})
     assert created.changed == ("ZAI_API_KEY",)
-    assert fake.commands[-1][:3] == ["op", "item", "create"]
-    assert "--title=truealpha/shared/app" in fake.commands[-1]
+    assert fake.commands[-1] == [
+        "op",
+        "item",
+        "create",
+        "-",
+        "--vault=Infra2",
+        "--category=Login",
+        "--title=truealpha/shared/app",
+    ]
+    assert fake.inputs[-1] is not None
+    created_payload = json.loads(fake.inputs[-1])
+    assert created_payload == {
+        "title": "truealpha/shared/app",
+        "category": "Login",
+        "fields": [
+            {"id": "ZAI_API_KEY", "label": "ZAI_API_KEY", "type": "CONCEALED", "value": "k"}
+        ],
+    }
+    assert backend.read("truealpha/shared/app") == {"ZAI_API_KEY": "k"}
+
+    for cmd in fake.commands:
+        for arg in cmd:
+            assert "new" not in arg
+            assert arg not in {"new", "v", "k"}
+            assert not arg.endswith(("=new", "=v", "=k"))
 
 
 def test_onepassword_errors_carry_only_the_last_stderr_line() -> None:
-    def failing(args, capture_output, text):
+    def failing(args, **kwargs):
         return subprocess.CompletedProcess(
             args, 1, "", "line1\n[ERROR] 2026 (403) Service Account Deleted"
         )
@@ -362,6 +404,15 @@ def test_onepassword_timeout_raises_secrets_error() -> None:
 
     backend = OnePasswordBackend(runner=timing_out, timeout=7.5)
     with pytest.raises(SecretsError, match="timed out after 7.5s"):
+        backend.read("x")
+
+
+def test_onepassword_runner_rejecting_timeout_raises_type_error() -> None:
+    def no_timeout(args, capture_output=True, text=True):
+        return subprocess.CompletedProcess(args, 0, "{}", "")
+
+    backend = OnePasswordBackend(runner=no_timeout, timeout=5.0)
+    with pytest.raises(TypeError, match="timeout"):
         backend.read("x")
 
 

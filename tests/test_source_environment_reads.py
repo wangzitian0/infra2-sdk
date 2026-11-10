@@ -1,13 +1,15 @@
-"""Guards for the environment variable names in the source of the SDK (issue #102).
+"""Guards for the environment variable names in the source of the SDK (issues #102, #169).
 
 The tests read the syntax trees of src/infra2_sdk. They do not import the modules.
 
 - No string constant equals the name of a variable that 3.4.0 removed. ALLOWED_LITERALS names the
   few places where such a constant is text and not a read: the file, the value and the place.
-- The names at the read sites of the source are exactly the values of RuntimeEnvKey plus the list
-  FIXED_READS below. A new fixed-name read fails until a person adds it there with a reason.
-  A member of RuntimeEnvKey that no read site names also fails: the contract lists a variable
-  that no code reads.
+- The constant names at the read sites of the source are exactly the values of RuntimeEnvKey plus
+  the list FIXED_READS below. A new fixed-name read fails until a person adds it there with a
+  reason. A member of RuntimeEnvKey that no read site names also fails: the contract lists a
+  variable that no code reads.
+- Parameterized defaults and module-level join-built environment variable reads are locked in
+  DYNAMIC_READS by (relative_path, function_name) -> frozenset of resolved names.
 - No read site names an alias of the contract (ENV, APP_ENV, IMAGE_TAG). An alias is read through
   resolve_runtime_env only.
 
@@ -24,10 +26,8 @@ A name is a str or bytes constant, or a RuntimeEnvKey.MEMBER, that matches `[A-Z
 
 These tests do not check:
 
-- a name built at run time, for example a prefix plus a suffix;
-- a name passed in a variable, for example environ.get(NAME). The first test still finds the
-  constant that holds NAME when its value is a removed name. A refactor that passes a
-  RuntimeEnvKey member in a variable makes the second test report the member as unread;
+- a caller-supplied manifest variable iterated at runtime (`validate_environment`,
+  `build_hook_env`, `compose_env`);
 - a read that uses the whole mapping: a loop over `os.environ` keys with `startswith`, a copy
   of `os.environ`, a lookup through a lazy `__getattr__`;
 - the tests directory and the README.
@@ -72,6 +72,24 @@ FIXED_READS = {
     "VAULT_TOKEN": "VaultKvBackend.from_environ: the mapping that the caller passes",
     "VAULT_ROLE_ID": "VaultKvBackend.from_environ: the mapping that the caller passes",
     "VAULT_SECRET_ID": "VaultKvBackend.from_environ: the mapping that the caller passes",
+}
+
+# Parameterized or join-built environment variable reads (#169):
+# (path below src/infra2_sdk, enclosing function) -> resolved variable names.
+DYNAMIC_READS: dict[tuple[str, str], frozenset[str]] = {
+    ("ci.py", "write_github_output"): frozenset({"GITHUB_OUTPUT"}),
+    ("deploy.py", "_default_github_json_fetcher"): frozenset({"GITHUB_TOKEN"}),
+    ("observability.py", "issue_trail_mode"): frozenset(
+        {
+            "GITHUB_EVENT_NAME",
+            "GITHUB_REF",
+            "INFRA2_PEER_LIVENESS_BOUND_CAP_HOURS",
+            "INFRA2_WATCHDOG_SSH_TARGETS_OVERRIDDEN",
+            "WATCHDOG_DRY_RUN",
+        }
+    ),
+    ("observability.py", "resolve_openpanel_api_url"): frozenset({"OPENPANEL_API_URL"}),
+    ("observability.py", "resolve_openpanel_api_key"): frozenset({"OPENPANEL_API_KEY"}),
 }
 
 _VARIABLE_NAME = re.compile(r"[A-Z][A-Z0-9_]{2,}")
@@ -387,3 +405,93 @@ def test_the_literal_scan_finds_a_removed_name_in_every_kind_of_position(name: s
         f'f"{name}"',
     ):
         assert name in {value for _, value, _ in _string_constants(ast.parse(code))}, code
+
+
+def _eval_str_expr(node: ast.AST | None, bindings: dict[str, str]) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name) and node.id in bindings:
+        return bindings[node.id]
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "join"
+        and isinstance(node.func.value, ast.Constant)
+        and isinstance(node.func.value.value, str)
+        and len(node.args) == 1
+        and isinstance(node.args[0], ast.Tuple | ast.List)
+    ):
+        parts = [_eval_str_expr(elt, bindings) for elt in node.args[0].elts]
+        if all(isinstance(p, str) for p in parts):
+            return node.func.value.value.join(parts)  # type: ignore[arg-type]
+    return None
+
+
+def _dynamic_read_sites(tree: ast.Module) -> dict[str, frozenset[str]]:
+    """Map function_name -> resolved non-constant environment variable names in one AST module."""
+    mod_bindings: dict[str, str] = {}
+    for stmt in tree.body:
+        if (
+            isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name)
+        ):
+            val = _eval_str_expr(stmt.value, mod_bindings)
+            if val is not None:
+                mod_bindings[stmt.targets[0].id] = val
+    found: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        local_bindings = dict(mod_bindings)
+        pos_args = node.args.posonlyargs + node.args.args
+        defaults = node.args.defaults
+        paired = zip(pos_args[-len(defaults) :], defaults, strict=False) if defaults else ()
+        for arg, default in paired:
+            val = _eval_str_expr(default, local_bindings)
+            if val is not None:
+                local_bindings[arg.arg] = val
+        for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults, strict=False):
+            if default is not None:
+                val = _eval_str_expr(default, local_bindings)
+                if val is not None:
+                    local_bindings[arg.arg] = val
+        for child in ast.walk(node):
+            if not isinstance(child, ast.Call):
+                continue
+            callee = _callee(child)
+            if callee not in _FIRST_ARGUMENT:
+                continue
+            if not child.args:
+                continue
+            arg0 = child.args[0]
+            if isinstance(arg0, ast.Constant):
+                continue
+            resolved = _eval_str_expr(arg0, local_bindings)
+            if resolved is not None and _VARIABLE_NAME.fullmatch(resolved):
+                found.setdefault(node.name, set()).add(resolved)
+    return {fn: frozenset(names) for fn, names in found.items()}
+
+
+def test_dynamic_environment_read_sites_are_locked_in_dynamic_reads() -> None:
+    actual: dict[tuple[str, str], frozenset[str]] = {}
+    for path in _source_files():
+        relative = path.relative_to(SRC).as_posix()
+        tree = _parse(path)
+        assert isinstance(tree, ast.Module)
+        for fn, names in _dynamic_read_sites(tree).items():
+            actual[(relative, fn)] = names
+    assert actual == DYNAMIC_READS
+    all_dynamic_names = {name for names in actual.values() for name in names}
+    assert len(all_dynamic_names) == 9
+    assert not (all_dynamic_names & set(REMOVED_ENV_NAMES))
+
+
+def test_dynamic_read_site_scan_catches_both_directions() -> None:
+    sample = ast.parse(
+        '_KEY = "_".join(("MY", "SECRET", "KEY"))\n'
+        'def reader(env, token_env: str = "MY_TOKEN"):\n'
+        "    return env.get(_KEY), os.getenv(token_env)\n"
+    )
+    assert isinstance(sample, ast.Module)
+    assert _dynamic_read_sites(sample) == {"reader": frozenset({"MY_SECRET_KEY", "MY_TOKEN"})}
