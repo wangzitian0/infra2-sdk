@@ -3,18 +3,18 @@
   "dirty_inputs": [],
   "inputs": {
     "repo": "63db0096896aa16ed096a61158b7d026c9f8087f2008cf64128dcf12e5cac0a7",
-    "root": "f7b4ca9a3fdd47c9230670fe9bd94f430aba7da9fdf857972f9f82136114be15"
+    "root": "de92f5fa0c16e7895d7cafeec11f1810c92b3d2dbbe3f890b355922ed66d6983"
   },
   "language": "en",
   "outputs": {
-    "AGENTS.md": "8d7c32a4646772f584883a23a813c65f42d0ec2bae76dd1c59abacfee66d8bb0"
+    "AGENTS.md": "bdff8394cfa6823ab5883bcf3b3b8e71bad690694b72014cd868cb3fe7f0d968"
   },
   "profiles": [
     "code",
     "delivery"
   ],
   "schema": 2,
-  "source_revision": "83e5a48e128d4e4ee6bb6b07e628455f9bd60fac",
+  "source_revision": "187b118919f05f00ed76382f59d823601e9c735f",
   "target": {
     "remote": "github.com/wangzitian0/infra2-sdk",
     "repo": "infra2-sdk",
