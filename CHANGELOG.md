@@ -6,6 +6,13 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+## 3.24.0 - 2026-11-10
+
+### Changed
+
+- Preserve both `stdout` and `stderr` tails in `HookRunResult.stderr_tail` when a hook step fails or times out ([#190](https://github.com/wangzitian0/infra2-sdk/issues/190)).
+- Default `PYTHONPATH=.` in `build_hook_env` unless `required_env` or `optional_env` overrides it ([#190](https://github.com/wangzitian0/infra2-sdk/issues/190)).
+
 ## 3.23.0 - 2026-11-10
 
 ### Changed

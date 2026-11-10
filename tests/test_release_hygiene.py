@@ -38,6 +38,13 @@ def test_changelog_has_an_entry_for_the_package_version() -> None:
     assert len(headings) == len(set(headings))
 
 
+def test_uv_lock_version_matches_pyproject_version() -> None:
+    lock_data = tomllib.loads((ROOT / "uv.lock").read_text("utf-8"))
+    packages = [pkg for pkg in lock_data.get("package", []) if pkg.get("name") == "infra2-sdk"]
+    assert len(packages) == 1, f"expected one infra2-sdk entry in uv.lock, got {len(packages)}"
+    assert packages[0].get("version") == VERSION
+
+
 def _public_modules() -> list[str]:
     modules = []
     for path in sorted(SRC.rglob("*.py")):
