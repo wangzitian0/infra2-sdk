@@ -2,7 +2,6 @@
   "infra2_sdk": {
     "capacity": "consumer: infra2",
     "ci": "consumer: finance_report, infra2",
-    "delivery": "consumer: infra2",
     "deploy": "consumer: finance_report, infra2, truealpha",
     "manifests": "consumer: truealpha",
     "observability": "consumer: finance_report, infra2, truealpha",
@@ -17,10 +16,6 @@
     "load_delivery_stages": "consumer: infra2",
     "validate_inventory": "consumer: infra2",
     "validate_manifest_offline": "consumer: finance_report, infra2",
-    "FailureDomain": "consumer: infra2",
-    "StageResult": "consumer: infra2",
-    "StageStatus": "consumer: infra2",
-    "make_stage_result": "consumer: infra2",
     "DeployOperation": "consumer: finance_report, infra2, truealpha",
     "DeployRequest": "consumer: finance_report, infra2, truealpha",
     "DeployType": "consumer: finance_report, infra2, truealpha",
