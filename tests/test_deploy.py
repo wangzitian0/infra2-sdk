@@ -1,7 +1,5 @@
 import base64
-import io
 import json
-import zipfile
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from urllib.error import HTTPError, URLError
@@ -10,7 +8,6 @@ import httpx
 import pytest
 
 from infra2_sdk.deploy import (
-    INFRA_REPOSITORY,
     PRODUCTION_DEPLOY_BUDGET_SECONDS,
     PRODUCTION_REQUEST_MAX_AGE_SECONDS,
     DeployEvidence,
@@ -19,16 +16,12 @@ from infra2_sdk.deploy import (
     DeployType,
     ProductionEvidencePolicy,
     _default_github_json_fetcher,
-    _github_api_client,
     _HealthCheckResult,
-    _run_id,
     _RunEvidenceExpectation,
     _validate_wire_shape,
     _verify_reviewed_pull,
     _verify_run,
-    _workflow_runs,
     default_http_get,
-    dispatch_and_wait,
     parse_sender_deadline,
     poll_until_healthy,
     production_request_accept_until,
@@ -654,461 +647,37 @@ def test_version_mismatch_streak_resets_when_the_reported_version_changes() -> N
     assert result.attempts == 3
 
 
-# --- dispatch_and_wait tests ---
-
-DISPATCH_TITLE = "Deploy finance_report/app staging v2.3.4 abc123 [finance-report-run-12345678]"
-
-
-def _dispatch_request() -> DeployRequest:
-    return DeployRequest(
-        request_id="finance-report-run-12345678",
-        operation=DeployOperation.DEPLOY,
-        service="finance_report/app",
-        deploy_type=DeployType.STAGING,
-        version_ref="v2.3.4",
-        source_repository="wangzitian0/finance_report",
-        source_sha=SHA,
-        evidence=DeployEvidence(
-            source_run_url="https://github.com/wangzitian0/finance_report/actions/runs/12345678",
-            source_run_id="12345678",
-        ),
+def test_parse_sender_deadline_accepts_iso_utc_and_rejects_malformed_values() -> None:
+    assert parse_sender_deadline({"sender_deadline": "2026-10-23T11:01:31Z"}) == datetime(
+        2026, 10, 23, 11, 1, 31, tzinfo=UTC
     )
-
-
-def test_dispatch_and_wait_correlates_the_watermarked_run_and_verifies_logs() -> None:
-    req = _dispatch_request()
-    calls: list[tuple[str, str, object]] = []
-    run_lists = iter(
-        [
-            {"workflow_runs": [{"id": 100}]},
-            {
-                "workflow_runs": [
-                    {
-                        "id": 101,
-                        "status": "in_progress",
-                        "conclusion": None,
-                        "display_title": DISPATCH_TITLE,
-                        "html_url": f"https://github.com/{INFRA_REPOSITORY}/actions/runs/101",
-                    },
-                    {"id": 100},
-                ]
-            },
-            {
-                "workflow_runs": [
-                    {
-                        "id": 101,
-                        "status": "completed",
-                        "conclusion": "success",
-                        "display_title": DISPATCH_TITLE,
-                        "html_url": f"https://github.com/{INFRA_REPOSITORY}/actions/runs/101",
-                    },
-                    {"id": 100},
-                ]
-            },
-        ]
+    assert parse_sender_deadline({"sender_deadline": "2026-10-23T19:01:31+08:00"}) == datetime(
+        2026, 10, 23, 11, 1, 31, tzinfo=UTC
     )
-
-    def api(method: str, path: str, body: object = None) -> object:
-        calls.append((method, path, body))
-        if method == "GET":
-            return next(run_lists)
-        return None
-
-    result = dispatch_and_wait(
-        req,
-        api=api,
-        fetch_logs=lambda run_id: b'plan {"request_id": "finance-report-run-12345678"}',
-        sleep=lambda _: None,
-        max_attempts=3,
-        clock=lambda: DISPATCHED_AT,
-    )
-
-    assert result.run_id == 101
-    assert result.url.endswith("/101")
-    dispatch = next(call for call in calls if call[0] == "POST")
-    # 3 attempts of 5 s: the sender stops waiting 15 s after the dispatch (infra2#1363).
-    assert dispatch[2] == {
-        "event_type": "app-deploy-request",
-        "client_payload": {**req.to_dict(), "sender_deadline": "2026-10-23T11:01:46Z"},
-    }
-
-
-DISPATCHED_AT = datetime(2026, 10, 23, 11, 1, 31, tzinfo=UTC)
-
-
-def test_dispatch_states_the_sender_deadline_from_its_wait_budget() -> None:
-    req = _dispatch_request()
-    posted: list[object] = []
-    done = {
-        "id": 101,
-        "status": "completed",
-        "conclusion": "success",
-        "display_title": DISPATCH_TITLE,
-        "html_url": f"https://github.com/{INFRA_REPOSITORY}/actions/runs/101",
-    }
-    responses = iter([{"workflow_runs": [{"id": 100}]}, {"workflow_runs": [done]}])
-
-    def api(method: str, path: str, body: object = None) -> object:
-        if method == "POST":
-            posted.append(body)
-            return None
-        return next(responses)
-
-    dispatch_and_wait(
-        req,
-        api=api,
-        fetch_logs=lambda run_id: req.request_id.encode(),
-        sleep=lambda _: None,
-        poll_interval=5,
-        max_attempts=720,
-        clock=lambda: DISPATCHED_AT,
-    )
-    payload = posted[0]["client_payload"]  # type: ignore[index]
-    assert parse_sender_deadline(payload) == DISPATCHED_AT + timedelta(seconds=3600)
-    assert {k: v for k, v in payload.items() if k != "sender_deadline"} == req.to_dict()
-
-
-def test_dispatch_stops_polling_at_the_sender_deadline_by_the_clock() -> None:
-    """Slow API calls must not stretch the wait past the stated deadline (run 38344114882)."""
-    req = _dispatch_request()
-    waiting = {
-        "id": 101,
-        "status": "waiting",
-        "display_title": DISPATCH_TITLE,
-        "html_url": f"https://github.com/{INFRA_REPOSITORY}/actions/runs/101",
-    }
-    now = [DISPATCHED_AT]
-    gets: list[str] = []
-
-    def clock() -> datetime:
-        return now[0]
-
-    def api(method: str, path: str, body: object = None) -> object:
-        if method == "POST":
-            return None
-        gets.append(path)
-        # Each poll takes 10 s of API time on top of the 5 s sleep.
-        now[0] += timedelta(seconds=10)
-        return {"workflow_runs": [waiting] if len(gets) > 1 else [{"id": 100}]}
-
-    def sleep(seconds: float) -> None:
-        now[0] += timedelta(seconds=seconds)
-
-    with pytest.raises(RuntimeError, match="timed out waiting"):
-        dispatch_and_wait(
-            req,
-            api=api,
-            fetch_logs=lambda run_id: b"",
-            sleep=sleep,
-            poll_interval=5,
-            max_attempts=360,
-            clock=clock,
-        )
-    # 1800 s budget at 15 s per poll: about 120 polls, not 360.
-    assert len(gets) <= 1 + 121
-    assert now[0] - DISPATCHED_AT <= timedelta(seconds=1800 + 15 + 10)
-
-
-def test_parse_sender_deadline() -> None:
     assert parse_sender_deadline({}) is None
-    assert parse_sender_deadline({"sender_deadline": "2026-10-23T12:01:31Z"}) == datetime(
-        2026, 10, 23, 12, 1, 31, tzinfo=UTC
-    )
-    assert parse_sender_deadline({"sender_deadline": "2026-10-23T20:01:31+08:00"}) == datetime(
-        2026, 10, 23, 12, 1, 31, tzinfo=UTC
-    )
-    for bad in ("2026-10-23T12:01:31", "tomorrow", "", 1700000000):
+    for bad in (
+        {"sender_deadline": 123},
+        {"sender_deadline": ""},
+        {"sender_deadline": "2026-10-23 11:01:31"},
+        {"sender_deadline": "invalid"},
+    ):
         with pytest.raises(ValueError, match="sender_deadline"):
-            parse_sender_deadline({"sender_deadline": bad})
+            parse_sender_deadline(bad)  # type: ignore[arg-type]
 
 
-RECEIVER_CREATED = datetime(2026, 10, 23, 11, 2, 13, tzinfo=UTC)
-APPROVAL_CHECK = datetime(2026, 10, 23, 11, 32, 10, tzinfo=UTC)
-
-
-def test_accept_until_keeps_the_fixed_limit_for_a_request_with_no_deadline() -> None:
-    assert production_request_accept_until(RECEIVER_CREATED, None) == RECEIVER_CREATED + timedelta(
+def test_production_request_accept_until_matches_the_deadline_and_budget() -> None:
+    now = datetime(2026, 10, 23, 11, 1, 31, tzinfo=UTC)
+    one_hour = now + timedelta(seconds=3600)
+    assert production_request_accept_until(now, one_hour) == one_hour - timedelta(
+        seconds=PRODUCTION_DEPLOY_BUDGET_SECONDS
+    )
+    assert production_request_accept_until(now, None) == now + timedelta(
         seconds=PRODUCTION_REQUEST_MAX_AGE_SECONDS
     )
-    # The v0.2.55 incident: an old sender, so the check at 11:32:10 is 1797 s late.
-    assert production_request_accept_until(RECEIVER_CREATED, None) < APPROVAL_CHECK
-
-
-def test_accept_until_follows_the_sender_deadline_minus_the_deploy_budget() -> None:
-    assert PRODUCTION_DEPLOY_BUDGET_SECONDS == 300
-    one_hour = DISPATCHED_AT + timedelta(seconds=3600)
-    assert production_request_accept_until(RECEIVER_CREATED, one_hour) == one_hour - timedelta(
-        seconds=300
-    )
-    # With a 3600 s sender wait, the v0.2.55 approval at 11:32:10 is accepted.
-    assert production_request_accept_until(RECEIVER_CREATED, one_hour) >= APPROVAL_CHECK
-    # With an 1800 s sender wait, it is refused: the sender would stop during the deploy.
-    half_hour = DISPATCHED_AT + timedelta(seconds=1800)
-    assert production_request_accept_until(RECEIVER_CREATED, half_hour) < APPROVAL_CHECK
-    # A short sender wait gives a stricter limit than the fixed one.
-    short = DISPATCHED_AT + timedelta(seconds=600)
-    fixed = production_request_accept_until(RECEIVER_CREATED, None)
-    assert production_request_accept_until(RECEIVER_CREATED, short) < fixed
-
-
-def test_accept_until_cuts_a_deadline_that_no_job_can_wait_for() -> None:
-    far = RECEIVER_CREATED + timedelta(days=2)
-    assert production_request_accept_until(RECEIVER_CREATED, far) == RECEIVER_CREATED + timedelta(
-        hours=6, seconds=-300
-    )
-
-
-def test_accept_until_needs_time_zones() -> None:
-    naive = datetime(2026, 10, 23, 11, 2, 13)
-    with pytest.raises(ValueError, match="time zone"):
-        production_request_accept_until(naive, None)
-    with pytest.raises(ValueError, match="time zone"):
-        production_request_accept_until(RECEIVER_CREATED, naive)
-
-
-def test_a_concurrent_dispatch_from_another_project_no_longer_blocks_correlation() -> None:
-    req = _dispatch_request()
-    mine = {
-        "id": 32135890813,
-        "status": "completed",
-        "conclusion": "success",
-        "display_title": DISPATCH_TITLE,
-        "html_url": f"https://github.com/{INFRA_REPOSITORY}/actions/runs/32135890813",
-    }
-    theirs = {
-        "id": 32135934389,
-        "status": "in_progress",
-        "conclusion": None,
-        "display_title": (
-            "Deploy finance_report/app staging v0.1.46 89a64d1a [finance-report-run-999]"
-        ),
-        "html_url": f"https://github.com/{INFRA_REPOSITORY}/actions/runs/32135934389",
-    }
-    responses = iter([{"workflow_runs": [{"id": 32135043378}]}, {"workflow_runs": [theirs, mine]}])
-    run = dispatch_and_wait(
-        req,
-        api=lambda method, path, body=None: next(responses) if method == "GET" else None,
-        fetch_logs=lambda run_id: req.request_id.encode(),
-        sleep=lambda _: None,
-    )
-    assert run.run_id == 32135890813
-
-
-def test_two_runs_naming_the_same_request_id_are_still_ambiguous() -> None:
-    req = _dispatch_request()
-    twin = {
-        "id": 102,
-        "status": "completed",
-        "conclusion": "success",
-        "display_title": DISPATCH_TITLE,
-        "html_url": f"https://github.com/{INFRA_REPOSITORY}/actions/runs/102",
-    }
-    other = dict(twin, id=103)
-    responses = iter([{"workflow_runs": [{"id": 100}]}, {"workflow_runs": [twin, other]}])
-    with pytest.raises(RuntimeError, match="ambiguous for request_id"):
-        dispatch_and_wait(
-            req,
-            api=lambda method, path, body=None: next(responses) if method == "GET" else None,
-            fetch_logs=lambda run_id: b"",
-            sleep=lambda _: None,
-        )
-
-
-def test_the_timeout_names_the_runs_it_saw() -> None:
-    theirs = {
-        "id": 200,
-        "status": "completed",
-        "display_title": "Deploy finance_report/app staging",
-    }
-    untitled = {"id": 201, "status": "queued"}
-    responses = iter(
-        [
-            {"workflow_runs": [{"id": 100}]},
-            {"workflow_runs": [theirs, untitled, {"id": 100}]},
-            {"workflow_runs": [theirs, untitled, {"id": 100}]},
-        ]
-    )
-    with pytest.raises(RuntimeError) as caught:
-        dispatch_and_wait(
-            _dispatch_request(),
-            api=lambda method, path, body=None: next(responses) if method == "GET" else None,
-            fetch_logs=lambda run_id: b"",
-            sleep=lambda _: None,
-            max_attempts=2,
-        )
-    message = str(caught.value)
-    assert "finance_report" in message
-    assert "200 " in message
-    assert "201 (untitled)" in message
-
-
-def test_dispatch_and_wait_raises_when_logs_do_not_contain_the_request_id() -> None:
-    responses = iter(
-        [
-            {"workflow_runs": [{"id": 100}]},
-            {
-                "workflow_runs": [
-                    {
-                        "id": 101,
-                        "status": "completed",
-                        "conclusion": "success",
-                        "display_title": DISPATCH_TITLE,
-                        "html_url": f"https://github.com/{INFRA_REPOSITORY}/actions/runs/101",
-                    }
-                ]
-            },
-        ]
-    )
-    with pytest.raises(RuntimeError, match="request_id"):
-        dispatch_and_wait(
-            _dispatch_request(),
-            api=lambda method, path, body=None: next(responses) if method == "GET" else None,
-            fetch_logs=lambda run_id: b"another request",
-            sleep=lambda _: None,
-            max_attempts=1,
-        )
-
-
-def test_dispatch_and_wait_times_out_when_no_run_ever_appears() -> None:
-    responses = iter(
-        [
-            {"workflow_runs": [{"id": 100}]},
-            {"workflow_runs": [{"id": 100}]},
-            {"workflow_runs": [{"id": 100}]},
-        ]
-    )
-    sleeps: list[float] = []
-    with pytest.raises(RuntimeError, match="timed out"):
-        dispatch_and_wait(
-            _dispatch_request(),
-            api=lambda method, path, body=None: next(responses) if method == "GET" else None,
-            fetch_logs=lambda run_id: b"",
-            sleep=sleeps.append,
-            poll_interval=0.25,
-            max_attempts=2,
-        )
-    assert sleeps == [0.25]
-
-
-def _run_with_outcome(conclusion: str, url: object):
-    responses = iter(
-        [
-            {"workflow_runs": [{"id": 100}]},
-            {
-                "workflow_runs": [
-                    {
-                        "id": 101,
-                        "status": "completed",
-                        "conclusion": conclusion,
-                        "display_title": DISPATCH_TITLE,
-                        "html_url": url,
-                    }
-                ]
-            },
-        ]
-    )
-    req = _dispatch_request()
-    return dispatch_and_wait(
-        req,
-        api=lambda method, path, body=None: next(responses) if method == "GET" else None,
-        fetch_logs=lambda run_id: req.request_id.encode(),
-        sleep=lambda _: None,
-        max_attempts=1,
-    )
-
-
-def test_dispatch_and_wait_raises_on_a_non_success_conclusion() -> None:
-    with pytest.raises(RuntimeError, match="concluded 'failure'"):
-        _run_with_outcome("failure", f"https://github.com/{INFRA_REPOSITORY}/actions/runs/101")
-
-
-def test_dispatch_and_wait_raises_on_a_non_canonical_url() -> None:
-    with pytest.raises(RuntimeError, match="has no canonical URL"):
-        _run_with_outcome("success", "https://example.com/actions/runs/101")
-
-
-def test_workflow_runs_rejects_malformed_payloads() -> None:
-    for payload in ([], {}, {"workflow_runs": ["not-a-run"]}):
-        with pytest.raises(RuntimeError, match="workflow-runs response"):
-            _workflow_runs(payload)
-
-
-def test_run_id_rejects_non_positive_integers() -> None:
-    for run_id in (True, 0, "101"):
-        with pytest.raises(RuntimeError, match="positive integer"):
-            _run_id({"id": run_id})
-
-
-def _client_for(response: httpx.Response):
-    api, fetch_logs = _github_api_client(
-        token="test-token",
-        user_agent="test-agent",
-        transport=httpx.MockTransport(lambda _request: response),
-    )
-    return api, fetch_logs
-
-
-def test_github_api_client_get_returns_parsed_json() -> None:
-    api, _ = _client_for(httpx.Response(200, json={"workflow_runs": []}))
-    assert api("GET", "/runs", None) == {"workflow_runs": []}
-
-
-def test_github_api_client_post_returns_none_on_204() -> None:
-    api, _ = _client_for(httpx.Response(204))
-    assert api("POST", "/dispatches", {}) is None
-
-
-def test_github_api_client_redacts_the_response_body_and_query_string_on_error() -> None:
-    api, _ = _client_for(httpx.Response(403, text="secret response body"))
-    with pytest.raises(RuntimeError, match="HTTP 403") as exc_info:
-        api("GET", "/runs?token=hidden", None)
-    assert "secret response body" not in str(exc_info.value)
-    assert "token=hidden" not in str(exc_info.value)
-
-
-def test_github_api_client_post_rejects_a_non_204_success() -> None:
-    api, _ = _client_for(httpx.Response(200))
-    with pytest.raises(RuntimeError, match="expected HTTP 204"):
-        api("POST", "/dispatches", {})
-
-
-def test_github_api_client_get_rejects_a_non_json_body() -> None:
-    api, _ = _client_for(httpx.Response(200, text="{"))
-    with pytest.raises(RuntimeError, match="not valid JSON"):
-        api("GET", "/runs", None)
-
-
-def test_github_api_client_fetch_logs_joins_every_archive_member() -> None:
-    archive_bytes = io.BytesIO()
-    with zipfile.ZipFile(archive_bytes, "w") as archive:
-        archive.writestr("receiver/1.txt", b"first")
-        archive.writestr("receiver/2.txt", b"second")
-    _, fetch_logs = _client_for(httpx.Response(200, content=archive_bytes.getvalue()))
-    assert fetch_logs(101) == b"first\nsecond"
-
-
-def test_github_api_client_fetch_logs_redacts_the_response_body_on_error() -> None:
-    _, fetch_logs = _client_for(httpx.Response(404, text="private logs"))
-    with pytest.raises(RuntimeError, match="HTTP 404") as exc_info:
-        fetch_logs(101)
-    assert "private logs" not in str(exc_info.value)
-
-
-def test_github_api_client_fetch_logs_rejects_a_non_zip_body() -> None:
-    _, fetch_logs = _client_for(httpx.Response(200, content=b"not-a-zip"))
-    with pytest.raises(RuntimeError, match="not a zip archive"):
-        fetch_logs(101)
-
-
-def test_github_api_client_close_releases_underlying_client() -> None:
-    api, fetch_logs = _client_for(httpx.Response(200, json={}))
-    assert hasattr(api, "close")
-    assert hasattr(api, "client")
-    assert hasattr(fetch_logs, "close")
-    assert hasattr(fetch_logs, "client")
-    assert not api.client.is_closed
-    api.close()
-    assert api.client.is_closed
+    with pytest.raises(ValueError, match="creation time must have a time zone"):
+        production_request_accept_until(now.replace(tzinfo=None), one_hour)
+    with pytest.raises(ValueError, match="sender deadline must have a time zone"):
+        production_request_accept_until(now, one_hour.replace(tzinfo=None))
 
 
 def test_fetch_production_evidence_policy_raises_on_malformed_policy_file() -> None:
@@ -1396,37 +965,3 @@ def test_validate_evidence_urls_rejects_a_foreign_repository_and_a_wrong_resourc
 
 
 SENDER_DEADLINE = "2026-10-23T12:01:31Z"
-
-
-def test_dispatch_states_the_sender_deadline_in_utc_for_any_clock_zone() -> None:
-    from datetime import timezone
-
-    req = _dispatch_request()
-    posted: list[object] = []
-
-    def api(method: str, path: str, body: object = None) -> object:
-        if method == "POST":
-            posted.append(body)
-            return None
-        return {"workflow_runs": []}
-
-    utc8 = DISPATCHED_AT.astimezone(timezone(timedelta(hours=8)))
-    with pytest.raises(RuntimeError, match="timed out"):
-        dispatch_and_wait(
-            req,
-            api=api,
-            fetch_logs=lambda _: b"",
-            sleep=lambda _: None,
-            max_attempts=1,
-            poll_interval=60,
-            clock=lambda: utc8,
-        )
-    assert posted[0]["client_payload"]["sender_deadline"] == "2026-10-23T11:02:31Z"  # type: ignore[index]
-    with pytest.raises(ValueError, match="time zone"):
-        dispatch_and_wait(
-            req,
-            api=api,
-            fetch_logs=lambda _: b"",
-            sleep=lambda _: None,
-            clock=lambda: DISPATCHED_AT.replace(tzinfo=None),
-        )

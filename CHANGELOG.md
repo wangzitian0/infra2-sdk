@@ -6,6 +6,12 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+## 3.22.0 - 2026-11-10
+
+### Removed
+
+- Remove legacy client-side deployment transport `dispatch_and_wait` in `infra2_sdk.deploy`. All deployment dispatching is owned by server-side GitHub Actions workflows.
+
 ## 3.21.0 - 2026-11-10
 
 ### Changed

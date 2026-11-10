@@ -7,12 +7,10 @@ import json
 import os
 import re
 import time
-import zipfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, fields
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from io import BytesIO
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -28,9 +26,7 @@ from infra2_sdk._wire import (
 )
 from infra2_sdk.refs import _TAG_RE as _RELEASE_REF_RE
 from infra2_sdk.transport import (
-    GITHUB_API_BASE,
     _decode_github_contents,
-    _extract_workflow_runs,
     _github_api_url,
     _github_headers,
     _urlopen_json,
@@ -648,179 +644,10 @@ def verify_production_evidence(
     )
 
 
-# --- Deploy Dispatch ---------------------------------------------------------
-
-INFRA_REPOSITORY = "wangzitian0/infra2"
-_RECEIVER_WORKFLOW_FILE = "app-deploy-request.yml"
-_RECEIVER_EVENT_TYPE = "app-deploy-request"
-_RUNS_PATH = (
-    f"/repos/{INFRA_REPOSITORY}/actions/workflows/{_RECEIVER_WORKFLOW_FILE}/runs"
-    "?event=repository_dispatch&per_page=30"
-)
-
-Api = Callable[[str, str, object], object]
-LogFetcher = Callable[[int], bytes]
-
-
-@dataclass(frozen=True)
-class _ReceiverRun:
-    run_id: int
-    url: str
-
-
-def _utc_now() -> datetime:
-    return datetime.now(UTC)
-
-
-def dispatch_and_wait(
-    request: DeployRequest,
-    *,
-    api: Api,
-    fetch_logs: LogFetcher,
-    sleep: Callable[[float], None] = time.sleep,
-    poll_interval: float = 5.0,
-    max_attempts: int = 300,
-    clock: Callable[[], datetime] = _utc_now,
-) -> _ReceiverRun:
-    """Dispatch ``request`` to infra2 and return the correlated, verified receiver run.
-
-    The wait ends ``max_attempts * poll_interval`` seconds after the dispatch, by the
-    clock, or after ``max_attempts`` polls. The payload states that time as
-    ``sender_deadline``, so the receiver refuses an approval too late for this sender
-    to verify the deploy (infra2#1363).
-    """
-    canonical = request.to_dict()
-    baseline = _workflow_runs(api("GET", _RUNS_PATH, None))
-    watermark = max((_run_id(run) for run in baseline), default=0)
-
-    now = clock()
-    if now.tzinfo is None:
-        raise ValueError("the dispatch clock must return a time with a time zone")
-    deadline = now.astimezone(UTC) + timedelta(seconds=max_attempts * poll_interval)
-    payload = {**canonical, SENDER_DEADLINE_KEY: f"{deadline:%Y-%m-%dT%H:%M:%SZ}"}
-    api(
-        "POST",
-        f"/repos/{INFRA_REPOSITORY}/dispatches",
-        {"event_type": _RECEIVER_EVENT_TYPE, "client_payload": payload},
-    )
-
-    seen: list[str] = []
-    for attempt in range(max_attempts):
-        if attempt and clock() >= deadline:
-            break
-        runs = _workflow_runs(api("GET", _RUNS_PATH, None))
-        fresh = [run for run in runs if _run_id(run) > watermark]
-        seen = [f"{_run_id(run)} {run.get('display_title') or '(untitled)'}" for run in fresh]
-        candidates = [
-            run for run in fresh if request.request_id in str(run.get("display_title", ""))
-        ]
-        if len(candidates) > 1:
-            ids = sorted(_run_id(run) for run in candidates)
-            raise RuntimeError(
-                f"receiver run correlation is ambiguous for request_id "
-                f"{request.request_id!r} after watermark {watermark}: {ids}"
-            )
-        if not candidates:
-            if attempt + 1 < max_attempts:
-                sleep(poll_interval)
-            continue
-
-        run = candidates[0]
-        if run.get("status") != "completed":
-            if attempt + 1 < max_attempts:
-                sleep(poll_interval)
-            continue
-        run_id = _run_id(run)
-        if run.get("conclusion") != "success":
-            raise RuntimeError(f"infra2 receiver run {run_id} concluded {run.get('conclusion')!r}")
-        request_id = request.request_id.encode("utf-8")
-        if request_id not in fetch_logs(run_id):
-            raise RuntimeError(
-                f"infra2 receiver run {run_id} logs do not contain request_id "
-                f"{request.request_id!r}"
-            )
-        url = run.get("html_url")
-        if not isinstance(url, str) or not url.startswith(
-            f"https://github.com/{INFRA_REPOSITORY}/actions/runs/"
-        ):
-            raise RuntimeError(f"infra2 receiver run {run_id} has no canonical URL")
-        return _ReceiverRun(run_id=run_id, url=url)
-
-    raise RuntimeError(
-        f"timed out waiting for an infra2 receiver run naming request_id "
-        f"{request.request_id!r} after watermark {watermark}; runs seen: {seen or 'none'}"
-    )
-
-
-def _github_api_client(
-    *,
-    token: str,
-    user_agent: str,
-    timeout: float = 30.0,
-    transport: Any = None,
-) -> tuple[Api, LogFetcher]:
-    """Build the default httpx-backed (``api``, ``fetch_logs``) pair for ``dispatch_and_wait``."""
-    httpx = _require_httpx()
-    client = httpx.Client(
-        base_url=GITHUB_API_BASE,
-        headers=_github_headers(token=token, user_agent=user_agent),
-        follow_redirects=True,
-        timeout=timeout,
-        transport=transport,
-    )
-
-    def api(method: str, path: str, body: object) -> object:
-        response = client.request(method, path, json=body if method == "POST" else None)
-        if response.status_code >= 400:
-            endpoint = path.split("?", 1)[0]
-            code = response.status_code
-            raise RuntimeError(f"GitHub API {method} {endpoint} failed with HTTP {code}")
-        if method == "POST":
-            if response.status_code != 204:
-                raise RuntimeError(f"GitHub dispatch expected HTTP 204, got {response.status_code}")
-            return None
-        try:
-            return response.json()
-        except ValueError:
-            raise RuntimeError("GitHub API response was not valid JSON") from None
-
-    def fetch_logs(run_id: int) -> bytes:
-        response = client.get(f"/repos/{INFRA_REPOSITORY}/actions/runs/{run_id}/logs")
-        if response.status_code >= 400:
-            raise RuntimeError(
-                f"GitHub receiver logs request failed with HTTP {response.status_code}"
-            )
-        try:
-            with zipfile.ZipFile(BytesIO(response.content)) as archive:
-                return b"\n".join(archive.read(name) for name in archive.namelist())
-        except zipfile.BadZipFile:
-            raise RuntimeError("GitHub receiver logs response was not a zip archive") from None
-
-    api.close = client.close  # type: ignore[attr-defined]
-    api.client = client  # type: ignore[attr-defined]
-    fetch_logs.close = client.close  # type: ignore[attr-defined]
-    fetch_logs.client = client  # type: ignore[attr-defined]
-    return api, fetch_logs
-
-
 def _require_httpx() -> Any:
     from infra2_sdk.runtime._optional import require_httpx
 
     return require_httpx()
-
-
-def _workflow_runs(payload: object) -> list[Mapping[str, object]]:
-    try:
-        return _extract_workflow_runs(payload)
-    except (TypeError, ValueError) as exc:
-        raise RuntimeError(str(exc)) from exc
-
-
-def _run_id(run: Mapping[str, object]) -> int:
-    run_id = run.get("id")
-    if isinstance(run_id, bool) or not isinstance(run_id, int) or run_id <= 0:
-        raise RuntimeError("GitHub workflow run id must be a positive integer")
-    return run_id
 
 
 # --- Deploy Health Polling ---------------------------------------------------
@@ -1121,7 +948,6 @@ __all__ = [
     "ReleaseIdentityError",
     "VERSION_KEYS",
     "default_http_get",
-    "dispatch_and_wait",
     "identity_from_body",
     "parse_sender_deadline",
     "poll_until_healthy",

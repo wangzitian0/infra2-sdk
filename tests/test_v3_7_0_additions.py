@@ -520,7 +520,7 @@ def test_v3_8_0_bare_interpreter_import_without_yaml() -> None:
         "import infra2_sdk; "
         "from infra2_sdk import ci, deploy, observability, refs, secrets; "
         "assert callable(refs.resolve_branch_to_sha); "
-        "assert callable(deploy.dispatch_and_wait)"
+        "assert callable(deploy.poll_until_healthy)"
     )
     proc = subprocess.run(
         [sys.executable, "-c", code],

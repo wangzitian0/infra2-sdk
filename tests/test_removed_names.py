@@ -77,6 +77,7 @@ EXPECTED_REMOVED_NAMES = frozenset(
         "infra2_sdk.runtime.environment:env_float",
         "infra2_sdk.runtime.health:DependencyUnavailableError",
         "infra2_sdk.secrets:ReadOnlyBackendError",
+        "infra2_sdk.deploy:dispatch_and_wait",
     ]
 )
 EXPECTED_REMOVED_ENV_MEMBERS = frozenset(
@@ -153,7 +154,7 @@ _LIVE_OWNER = [pair for pair in REMOVED_NAMES if pair[0] not in REMOVED_MODULES]
 
 
 def test_removed_name_lists_have_unique_entries() -> None:
-    assert len(REMOVED_NAMES) == len(set(REMOVED_NAMES)) == 43
+    assert len(REMOVED_NAMES) == len(set(REMOVED_NAMES)) == 44
     assert len(REMOVED_ENV_MEMBERS) == len(set(REMOVED_ENV_MEMBERS)) == 21
     assert len(REMOVED_ENV_NAMES) == len(set(REMOVED_ENV_NAMES)) == 29
 
@@ -292,7 +293,7 @@ def test_the_stale_reuse_check_reports_each_kind_of_problem() -> None:
 def test_the_removed_simple_names_are_the_undotted_entries() -> None:
     assert _REMOVED_SIMPLE_NAMES, "no removed simple name: the module check would check nothing"
     assert all("." not in name for name in _REMOVED_SIMPLE_NAMES)
-    assert len(_REMOVED_SIMPLE_NAMES) == 40
+    assert len(_REMOVED_SIMPLE_NAMES) == 41
 
 
 def _strings(value: object):
@@ -330,7 +331,7 @@ def test_removed_environment_name_is_not_in_the_contract(name: str) -> None:
     ("smoke", "attribute", "expected"),
     [
         ("smoke_package_data", "REMOVED_MODULES", 10),
-        ("smoke_removed_names", "REMOVED_NAMES", 43),
+        ("smoke_removed_names", "REMOVED_NAMES", 44),
         ("smoke_removed_names", "REMOVED_ENV_MEMBERS", 21),
         ("smoke_removed_names", "REMOVED_ENV_NAMES", 29),
     ],
@@ -441,6 +442,28 @@ def test_symbols_removed_in_3_20_0_are_absent_from_modules_and_packages(
     for part in parents:
         owner = getattr(owner, part)
     assert not hasattr(owner, leaf), f"{module}.{dotted} was removed in 3.20.0"
+    if not parents:
+        for package in (infra2_sdk, infra2_sdk.runtime):
+            assert leaf not in package.__all__, f"{package.__name__}.__all__ lists {leaf}"
+            assert not hasattr(package, leaf), f"{package.__name__} still exposes {leaf}"
+
+
+REMOVED_IN_3_22_0: tuple[tuple[str, str], ...] = (("infra2_sdk.deploy", "dispatch_and_wait"),)
+
+
+@pytest.mark.parametrize(
+    ("module", "dotted"),
+    REMOVED_IN_3_22_0,
+    ids=[f"{m}.{n}" for m, n in REMOVED_IN_3_22_0],
+)
+def test_symbols_removed_in_3_22_0_are_absent_from_modules_and_packages(
+    module: str, dotted: str
+) -> None:
+    owner = importlib.import_module(module)
+    *parents, leaf = dotted.split(".")
+    for part in parents:
+        owner = getattr(owner, part)
+    assert not hasattr(owner, leaf), f"{module}.{dotted} was removed in 3.22.0"
     if not parents:
         for package in (infra2_sdk, infra2_sdk.runtime):
             assert leaf not in package.__all__, f"{package.__name__}.__all__ lists {leaf}"

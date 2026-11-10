@@ -22,7 +22,6 @@
     "PRODUCTION_REQUEST_MAX_AGE_SECONDS": "consumer: finance_report, infra2",
     "verify_production_evidence": "consumer: infra2",
     "poll_until_healthy": "consumer: finance_report, infra2, truealpha",
-    "dispatch_and_wait": "consumer: finance_report, truealpha",
     "HOOK_SLOTS": "consumer: finance_report, infra2, truealpha",
     "HookRunResult": "consumer: finance_report, infra2, truealpha",
     "HookSlotSpec": "consumer: finance_report, infra2, truealpha",
