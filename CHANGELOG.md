@@ -10,7 +10,8 @@ backfill from the merged pull requests.
 
 ### Changed
 
-- Preserve both `stdout` and `stderr` tails in `HookRunResult.stderr_tail` when a runtime verification hook step fails or times out with output on both streams, and set default `PYTHONPATH=.` in `build_hook_env` unless overridden by `required_env` or `optional_env` ([#190](https://github.com/wangzitian0/infra2-sdk/issues/190)).
+- Preserve both `stdout` and `stderr` tails in `HookRunResult.stderr_tail` when a hook step fails or times out ([#190](https://github.com/wangzitian0/infra2-sdk/issues/190)).
+- Default `PYTHONPATH=.` in `build_hook_env` unless `required_env` or `optional_env` overrides it ([#190](https://github.com/wangzitian0/infra2-sdk/issues/190)).
 
 ## 3.23.0 - 2026-11-10
 

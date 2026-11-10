@@ -346,9 +346,7 @@ def test_run_hook_slot_preserves_both_stdout_and_stderr_when_both_non_empty() ->
     assert "--- stderr ---" in huge_res.stderr_tail
     assert "STDERR_FINAL_MARKER" in huge_res.stderr_tail
 
-    def dual_timeout_runner(
-        cmd: list[str], **kwargs: object
-    ) -> subprocess.CompletedProcess[str]:
+    def dual_timeout_runner(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         raise subprocess.TimeoutExpired(
             cmd=cmd,
             timeout=60,
