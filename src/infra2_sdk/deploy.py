@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from infra2_sdk._wire import (
+    canonical_json_bytes,
     parse_contract_version,
     parse_iso_utc,
     parse_string,
@@ -1111,6 +1112,7 @@ def read_deployed_release(url: str, http_get: HttpGet) -> str:
 
 
 __all__ = [
+    "canonical_json_bytes",
     "DeployOperation",
     "DeployRequest",
     "DeployType",
