@@ -6,6 +6,20 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+## 3.20.0 - 2026-11-10
+
+### Added
+
+- Add `DependencyKind.ORCHESTRATOR` and `probe_orchestrator` in `infra2_sdk.runtime.health` to support declarative pipeline orchestrator readiness checks across stream and batch frameworks (Prefect, Dagster).
+
+### Removed
+
+- Remove 5 unused zombie symbols: `canonical_json`, `announce_approval_wait`, `render_sender_request`, and `run_deploy_transport_cli` from `infra2_sdk.deploy`, and `evaluate_peer_liveness` from `infra2_sdk.observability`.
+
+### Changed
+
+- Privatize 8 internal-only utilities: `CommandRunner` -> `_CommandRunner`, `redact_repo` -> `_redact_repo`, and `MANIFEST_ACCEPT` -> `_MANIFEST_ACCEPT` in `infra2_sdk.refs`; `ReceiverRun` -> `_ReceiverRun`, `github_api_client` -> `_github_api_client`, and `validate_sender_request` -> `_validate_sender_request` in `infra2_sdk.deploy`.
+
 ## 3.19.0 - 2026-11-04
 
 ### Added

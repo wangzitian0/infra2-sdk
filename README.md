@@ -25,7 +25,7 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.19.0"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.20.0"
 ```
 
 ## Modules
@@ -59,7 +59,7 @@ python -m pip install \
 | Capability | Canonical entrypoint | Primary module | Description |
 |---|---|---|---|
 | Service bootstrap | `init_service` | `infra2_sdk.fastapi` | Mounts `/livez`, `/readyz`, `/health` routes and configures OpenTelemetry providers |
-| Health probes | `check_health`, `run_probes` | `infra2_sdk.runtime.health` | Framework-agnostic readiness evaluation across declared dependency probes |
+| Health probes | `check_health`, `run_probes`, `probe_orchestrator` | `infra2_sdk.runtime.health` | Framework-agnostic readiness evaluation across declared dependency probes |
 | HTTP client | `create_http_client`, `probe_http` | `infra2_sdk.runtime.http` | Standard httpx client with connection limits, timeouts, and connect retries, plus a reachability probe |
 | PostgreSQL | `normalize_postgres_dsn`, `probe_postgres` | `infra2_sdk.runtime.postgres` | Psycopg reachability probe with credential redaction and DSN normalization |
 | S3 storage | `create_s3_client`, `probe_s3`, `ensure_bucket` | `infra2_sdk.runtime.s3` | Boto3 client initialization, bucket reachability probe, and idempotent bucket creation |
@@ -73,10 +73,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.19.0'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.20.0'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.19.0'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.20.0'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -200,7 +200,7 @@ Install the published wheel in a fresh Python 3.11+ environment:
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install \
-  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.19.0/infra2_sdk-3.19.0-py3-none-any.whl'
+  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.20.0/infra2_sdk-3.20.0-py3-none-any.whl'
 ```
 
 For a local connectivity exercise, start this server in another terminal:

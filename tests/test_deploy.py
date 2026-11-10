@@ -19,6 +19,7 @@ from infra2_sdk.deploy import (
     DeployType,
     ProductionEvidencePolicy,
     _default_github_json_fetcher,
+    _github_api_client,
     _HealthCheckResult,
     _run_id,
     _RunEvidenceExpectation,
@@ -28,7 +29,6 @@ from infra2_sdk.deploy import (
     _workflow_runs,
     default_http_get,
     dispatch_and_wait,
-    github_api_client,
     parse_sender_deadline,
     poll_until_healthy,
     production_request_accept_until,
@@ -306,15 +306,6 @@ def sample_policy() -> ProductionEvidencePolicy:
         ),
         review_base_ref="main",
     )
-
-
-def test_canonical_json_produces_deterministic_sorted_output() -> None:
-    from infra2_sdk.deploy import canonical_json
-
-    req = request()
-    json_str = canonical_json(req)
-    assert json_str.endswith("\n")
-    assert json.loads(json_str) == req.to_dict()
 
 
 def prod_request(**overrides) -> DeployRequest:
@@ -1049,7 +1040,7 @@ def test_run_id_rejects_non_positive_integers() -> None:
 
 
 def _client_for(response: httpx.Response):
-    api, fetch_logs = github_api_client(
+    api, fetch_logs = _github_api_client(
         token="test-token",
         user_agent="test-agent",
         transport=httpx.MockTransport(lambda _request: response),
@@ -1405,48 +1396,6 @@ def test_validate_evidence_urls_rejects_a_foreign_repository_and_a_wrong_resourc
 
 
 SENDER_DEADLINE = "2026-10-23T12:01:31Z"
-
-
-def test_the_approval_notice_uses_the_sender_deadline_of_the_dispatch() -> None:
-    from infra2_sdk.deploy import announce_approval_wait
-
-    waiting = {
-        "workflow_runs": [
-            {
-                "display_title": "Deploy x prod v1.2.3 [request-0001]",
-                "status": "waiting",
-                "created_at": "2026-10-23T11:02:13Z",
-                "html_url": "https://github.com/wangzitian0/infra2/actions/runs/5",
-            }
-        ]
-    }
-    notices: list[str] = []
-    api = announce_approval_wait(
-        lambda method, path, body=None: None if method == "POST" else waiting,
-        "request-0001",
-        "v1.2.3",
-        announce=notices.append,
-    )
-    api(
-        "POST",
-        "/dispatches",
-        {"client_payload": {"request_id": "request-0001", "sender_deadline": SENDER_DEADLINE}},
-    )
-    api("GET", "/runs")
-    # 12:01:31 minus the 300 s deploy budget minus the 120 s approval margin.
-    assert "Approve before 2026-10-23 11:54:31Z" in notices[0]
-    assert "sender stops waiting at 2026-10-23 12:01:31Z" in notices[0]
-
-    old_sender: list[str] = []
-    api = announce_approval_wait(
-        lambda method, path, body=None: waiting,
-        "request-0001",
-        "v1.2.3",
-        announce=old_sender.append,
-    )
-    api("GET", "/runs")
-    # 11:02:13 plus 1440 s minus the 120 s approval margin.
-    assert "Approve before 2026-10-23 11:24:13Z" in old_sender[0]
 
 
 def test_dispatch_states_the_sender_deadline_in_utc_for_any_clock_zone() -> None:

@@ -44,11 +44,8 @@ from infra2_sdk.deploy import (
     DeployOperation,
     DeployRequest,
     DeployType,
-    ReceiverRun,
-    canonical_json,
     dispatch_and_wait,
     poll_until_healthy,
-    run_deploy_transport_cli,
     verify_production_evidence,
 )
 from infra2_sdk.manifests import (
@@ -61,12 +58,10 @@ from infra2_sdk.manifests import (
     run_hook_slot,
 )
 from infra2_sdk.refs import (
-    CommandRunner,
     ReleaseError,
     ResolvedRef,
     classify_ref,
     next_patch_tag,
-    redact_repo,
     resolve_branch_to_sha,
     resolve_image_ref,
     resolve_pr,
@@ -122,14 +117,11 @@ __all__ = [
     "DeployRequest",
     "DeployType",
     "PRODUCTION_REQUEST_MAX_AGE_SECONDS",
-    "canonical_json",
     "verify_production_evidence",
     # Deploy health polling
     "poll_until_healthy",
     # Deploy dispatch
-    "ReceiverRun",
     "dispatch_and_wait",
-    "run_deploy_transport_cli",
     # Manifests
     "HOOK_SLOTS",
     "HookRunResult",
@@ -139,11 +131,9 @@ __all__ = [
     "load_hooks_manifest",
     "run_hook_slot",
     # Refs
-    "CommandRunner",
     "ResolvedRef",
     "classify_ref",
     "next_patch_tag",
-    "redact_repo",
     "resolve_branch_to_sha",
     "resolve_image_ref",
     "resolve_pr",

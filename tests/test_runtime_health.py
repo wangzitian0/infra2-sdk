@@ -447,3 +447,21 @@ async def test_sync_probes_reach_and_never_exceed_sixteen_threads_while_probes_f
 
     assert results == list(range(total))
     assert active["peak"] == limit
+
+
+async def test_probe_orchestrator(monkeypatch: pytest.MonkeyPatch) -> None:
+    from infra2_sdk.runtime import probe_orchestrator
+
+    assert DependencyKind.ORCHESTRATOR == "orchestrator"
+
+    async def fake_probe_http(url, *, name="http", client=None, settings=None):
+        return ProbeResult(name, DependencyStatus.PRESENT, f"HTTP 200 from {url}", 5.0)
+
+    import infra2_sdk.runtime.http
+
+    monkeypatch.setattr(infra2_sdk.runtime.http, "probe_http", fake_probe_http)
+
+    result = await probe_orchestrator("http://127.0.0.1:4200/api/health", name="prefect")
+    assert result.name == "prefect"
+    assert result.status == DependencyStatus.PRESENT
+    assert "HTTP 200" in result.detail
