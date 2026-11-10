@@ -201,10 +201,13 @@ def _ls_remote_rows(
     return rows
 
 
-def _redact_repo(repo: str) -> str:
+def redact_repo(repo: str) -> str:
     """Replace credentials embedded in a URL (``scheme://user:token@host``) with ``<redacted>``."""
 
     return re.sub(r"(://)[^/@\s]+@", r"\1<redacted>@", repo)
+
+
+_redact_repo = redact_repo
 
 
 _OCI_DIGEST_RE = re.compile(r"\Asha256:[0-9a-f]{64}\Z")
@@ -386,6 +389,7 @@ __all__ = [
     "classify_ref",
     "identifier_kind",
     "next_patch_tag",
+    "redact_repo",
     "resolve_branch_to_sha",
     "resolve_image_digest",
     "resolve_image_ref",

@@ -416,7 +416,6 @@ REMOVED_IN_3_20_0: tuple[tuple[str, str], ...] = (
     ("infra2_sdk.deploy", "run_deploy_transport_cli"),
     ("infra2_sdk.observability", "evaluate_peer_liveness"),
     ("infra2_sdk.refs", "CommandRunner"),
-    ("infra2_sdk.refs", "redact_repo"),
     ("infra2_sdk.refs", "MANIFEST_ACCEPT"),
     ("infra2_sdk.deploy", "ReceiverRun"),
     ("infra2_sdk.deploy", "github_api_client"),

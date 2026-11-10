@@ -6,6 +6,13 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+## 3.20.1 - 2026-11-10
+
+### Added
+
+- Re-export `canonical_json_bytes` in `infra2_sdk.deploy` to preserve compatibility with downstream ledger and probe deduplication consumers.
+- Restore `redact_repo` in `infra2_sdk.refs` and re-export it in `__all__` to satisfy the documented credential redaction capability.
+
 ## 3.20.0 - 2026-11-10
 
 ### Added

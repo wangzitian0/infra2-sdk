@@ -7,8 +7,8 @@ import pytest
 from infra2_sdk.refs import (
     ReleaseError,
     _ls_remote_rows,
-    _redact_repo,
     classify_ref,
+    redact_repo,
     resolve_image_digest,
     resolve_image_ref,
     resolve_pr,
@@ -177,7 +177,7 @@ def test_ls_remote_rows_wraps_failures_and_never_leaks_embedded_credentials(erro
     ],
 )
 def test_redact_repo_is_public_and_strips_url_credentials(value: str, expected: str) -> None:
-    assert _redact_repo(value) == expected
+    assert redact_repo(value) == expected
 
 
 # --- Registry digest resolution ------------------------------------------------
