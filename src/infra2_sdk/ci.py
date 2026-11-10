@@ -86,20 +86,10 @@ def load_workflow(path: str | Path) -> dict:
 
 
 _MINUTES_PER_DAY = 24 * 60
-_CRON_LINE = re.compile(
-    r"""^[ \t]*-?[ \t]*cron:[ \t]*(?P<quote>["']?)(?P<expr>[^"'#\n]+?)(?P=quote)[ \t]*(?:#.*)?$""",
-    re.MULTILINE,
-)
-_ELEMENT = re.compile(r"^(?P<span>\*|\d+(?:-\d+)?)(?:/(?P<step>\d+))?$")
 
 
 class ScheduleError(ValueError):
     """The workflow's schedule is not one this module can measure."""
-
-
-def crons_in(workflow_text: str) -> list[str]:
-    """Return the ``cron:`` values in a workflow file, in order."""
-    return [match.group("expr").strip() for match in _CRON_LINE.finditer(workflow_text)]
 
 
 _GAP_WINDOW_DAYS = 1461
@@ -409,12 +399,6 @@ def load_delivery_stages(path: str | Path | None = None) -> dict[str, dict]:
     return _load_stages_section("stages", path)
 
 
-def _load_pipeline_stage_deadlines(path: str | Path | None = None) -> dict[str, int]:
-    """Load default pipeline stage deadlines in milliseconds from ``stages.yaml``."""
-    raw = _load_stages_section("pipeline_stage_deadlines_ms", path)
-    return {str(stage): int(ms) for stage, ms in raw.items()}
-
-
 def validate_gate(
     raw: dict,
     *,
@@ -479,7 +463,6 @@ __all__ = [
     "ScheduleError",
     "TARGET_PER_SHARD_S",
     "check_no_regression",
-    "crons_in",
     "defanged_steps",
     "largest_gap",
     "load_baseline",

@@ -112,35 +112,8 @@ def resolve_pr(
     remote_ref = f"refs/pull/{number}/head"
     for sha, name in _ls_remote_rows(repo, remote_ref, runner=runner):
         if name == remote_ref:
-            return ResolvedRef(sha=sha, image_ref=sha[:7], form="pr")
+            return ResolvedRef(sha=sha, image_ref=sha[:_SHORT_SHA_LENGTH], form="pr")
     raise ValueError(f"PR #{number} head not found in {_redact_repo(repo)}")
-
-
-def resolve_branch_to_sha(
-    branch: str,
-    *,
-    repo: str,
-    runner: _CommandRunner = subprocess.run,
-) -> str:
-    """Resolve a clone-only branch without broadening the deploy authority grammar."""
-    cleaned = branch.strip()
-    invalid_chars = " ~^:?*[\x5c"
-    if (
-        not cleaned
-        or cleaned.startswith(("-", ".", "/", "refs/"))
-        or cleaned.endswith((".", "/", ".lock"))
-        or ".." in cleaned
-        or "@{" in cleaned
-        or "//" in cleaned
-        or any(ord(char) < 32 or char in invalid_chars for char in cleaned)
-    ):
-        raise ValueError(f"invalid clone branch {branch!r}")
-
-    remote_ref = f"refs/heads/{cleaned}"
-    for sha, name in _ls_remote_rows(repo, remote_ref, runner=runner):
-        if name == remote_ref:
-            return sha
-    raise ValueError(f"clone branch {branch!r} ({remote_ref}) not found in {_redact_repo(repo)}")
 
 
 def _remote_ref_for(form: str, cleaned: str) -> str:
@@ -177,7 +150,7 @@ def _ls_remote_rows(
 
     ``runner`` is injectable (any ``subprocess.run``-compatible callable). A failing command,
     a missing ``git``, or a timeout raises ``ValueError`` whose message has credentials
-    embedded in the repository URL redacted by ``redact_repo``.
+    embedded in the repository URL redacted by ``_redact_repo``.
     """
 
     try:
@@ -201,13 +174,10 @@ def _ls_remote_rows(
     return rows
 
 
-def redact_repo(repo: str) -> str:
+def _redact_repo(repo: str) -> str:
     """Replace credentials embedded in a URL (``scheme://user:token@host``) with ``<redacted>``."""
 
     return re.sub(r"(://)[^/@\s]+@", r"\1<redacted>@", repo)
-
-
-_redact_repo = redact_repo
 
 
 _OCI_DIGEST_RE = re.compile(r"\Asha256:[0-9a-f]{64}\Z")
@@ -311,7 +281,7 @@ def _bearer_token(send: HttpTransport, challenge: str) -> str:
     return token
 
 
-SHORT_SHA_LENGTH = 7
+_SHORT_SHA_LENGTH = 7
 _FULL_SHA_RE = re.compile(r"\A[0-9a-f]{40}\Z")
 
 
@@ -319,7 +289,7 @@ def short_sha(sha: str) -> str:
     """Return the 7-character short commit SHA after validating a 40-hex commit SHA."""
     if not _FULL_SHA_RE.fullmatch(sha):
         raise ValueError(f"--sha must be the full 40-hex commit sha the tag points at, got {sha!r}")
-    return sha[:SHORT_SHA_LENGTH]
+    return sha[:_SHORT_SHA_LENGTH]
 
 
 def next_patch_tag(tags: Any, *, initial: str = "v0.1.0") -> str:
@@ -384,13 +354,10 @@ def assert_after_on_main(
 __all__ = [
     "ReleaseError",
     "ResolvedRef",
-    "SHORT_SHA_LENGTH",
     "assert_after_on_main",
     "classify_ref",
     "identifier_kind",
     "next_patch_tag",
-    "redact_repo",
-    "resolve_branch_to_sha",
     "resolve_image_digest",
     "resolve_image_ref",
     "resolve_pr",

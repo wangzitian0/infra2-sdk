@@ -15,7 +15,7 @@ The SDK enforces a dual-mode execution invariant across all runtime environments
 
 ## 1. Five Core Decision Principles (Why the SDK Has This Shape)
 
-Across 170+ issues and 44 releases (`v0.1.0` through `v3.19.0`), consumer requirements and defect analyses shaped `infra2-sdk` around five core architectural decision principles.
+Across 170+ issues and 44 releases (`v0.1.0` through `v3.22.0`), consumer requirements and defect analyses shaped `infra2-sdk` around five core architectural decision principles.
 
 ### P1 — Contract vs. Orchestration, Zero-I/O on Import, and Thin Open-Protocol Adapters (`#19`, `#33`, `#102`)
 
@@ -59,7 +59,7 @@ Application processes import these modules directly at runtime:
 |---|---|
 | `infra2_sdk.runtime.environment` | Six-tier environment vocabulary (`EnvironmentTier`), `RuntimeEnvKey` resolution, and `runtime_env_contract()` |
 | `infra2_sdk.runtime.config_schema` | `EnvironmentField`, `EnvironmentManifest`, `assert_environment`, and manifest config fingerprints |
-| `infra2_sdk.runtime.health` | Framework-agnostic readiness probes (`check_health`, `run_probes`) and dependency status contracts |
+| `infra2_sdk.runtime.health` | Framework-agnostic readiness probes (`check_health`, `run_probes`, `probe_orchestrator`) and dependency status contracts |
 | `infra2_sdk.runtime.http` | `HttpClientSettings`, standard `httpx` client builders (`create_http_client`), and `probe_http` |
 | `infra2_sdk.runtime.llm` | `LlmSettings` contract, capability roles (`large`, `small`, `multimodal`), and role-based model defaults |
 | `infra2_sdk.runtime.otel` | Explicit OTLP/HTTP trace, metric, and log provider bootstrap (`OtelSettings`, `configure_telemetry`) |
@@ -75,11 +75,11 @@ Application processes import these modules directly at runtime:
 | Module | Responsibility |
 |---|---|
 | `infra2_sdk.capacity` | Capacity limits, `CapacityReading`, `evaluate` thresholds, and Cloudflare analytics collection |
-| `infra2_sdk.ci` | Delivery-stage vocabulary, CI gate inventory validation, workflow step inspection, cron schedule gap analysis (`ScheduleError`, `crons_in`, `largest_gap`), and coverage ratchets |
-| `infra2_sdk.deploy` | `DeployRequest` wire contracts, dispatch client, health poller, deployed release reader, and production evidence verification |
+| `infra2_sdk.ci` | Delivery-stage vocabulary, CI gate inventory validation, workflow step inspection, cron schedule gap analysis (`ScheduleError`, `largest_gap`), and coverage ratchets |
+| `infra2_sdk.deploy` | `DeployRequest` wire contracts, health poller, deployed release reader, and production evidence verification |
 | `infra2_sdk.manifests` | Settings and runtime hooks manifest CLI driver (`--write`, `--check`, `--validate-env`, `--check-hooks`, `--run-hook`), `ManifestSpec`, `RuntimeHooksManifest`, `HookSlotSpec`, `HookRunResult`, `load_hooks_manifest`, `run_hook_slot`, `all_manifests`, `check`, and `load` |
 | `infra2_sdk.observability` | Flap hysteresis trackers, scheduled peer workflow liveness evaluation, self-healing GitHub issue trails, and OpenPanel query primitives |
-| `infra2_sdk.refs` | Git ref resolution (`resolve_to_sha`, `resolve_branch_to_sha`, `resolve_pr`, `identifier_kind`, `next_patch_tag`), OCI image digest resolution, and repo URL redaction |
+| `infra2_sdk.refs` | Git ref resolution (`resolve_to_sha`, `resolve_pr`, `identifier_kind`, `next_patch_tag`), OCI image digest resolution, and repo URL redaction |
 | `infra2_sdk.routing` | Canonical domain and routing SSOT (`CANARY_SLOT`, `PreviewStackCoordinates`, hostname and service URL resolution) |
 | `infra2_sdk.rules.compose` | Pure Docker Compose file rules enforcing memory ceilings and rejecting bare `:latest` image references |
 | `infra2_sdk.scaffold` | Microservice scaffolding engine (`python -m infra2_sdk.scaffold`) for `standalone` and `infra2` profiles |

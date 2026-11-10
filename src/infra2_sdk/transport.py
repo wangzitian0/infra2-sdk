@@ -56,16 +56,6 @@ def _urlopen_json(
     return json.loads(text) if text.strip() else None
 
 
-def _extract_workflow_runs(payload: object) -> list[dict[str, Any]]:
-    """Validate and return the ``workflow_runs`` list from a GitHub Actions runs payload."""
-    if not isinstance(payload, Mapping):
-        raise TypeError("GitHub workflow-runs response must be an object")
-    runs = payload.get("workflow_runs")
-    if not isinstance(runs, list) or not all(isinstance(run, Mapping) for run in runs):
-        raise ValueError("GitHub workflow-runs response must contain a run list")
-    return runs  # type: ignore[return-value]
-
-
 def _decode_github_contents(payload: object, *, require_encoding: bool = False) -> bytes:
     """Extract and base64-decode ``content`` from a GitHub REST repository contents payload."""
     if not isinstance(payload, Mapping):

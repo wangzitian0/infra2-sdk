@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import binascii
 import json
 import math
 import os
@@ -13,13 +12,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from infra2_sdk._wire import _is_loopback_host, parse_iso_utc
 from infra2_sdk.transport import (
-    _decode_github_contents,
-    _extract_workflow_runs,
     _github_api_url,
     _github_headers,
     _urlopen_json,
@@ -96,25 +93,14 @@ def evaluate_consecutive_hysteresis(
 # Scheduler peer liveness (truealpha#876)
 # ---------------------------------------------------------------------------
 
-_PEER_REPOSITORY = "wangzitian0/truealpha"
-_PEER_WORKFLOW = "scheduler-liveness.yml"
 _BOUND_CAP_ENV = "_".join(("INFRA2", "PEER", "LIVENESS", "BOUND", "CAP", "HOURS"))
 MISSED_TICKS_TOLERATED = 2
 DELAY_ALLOWANCE = timedelta(hours=1)
-_SCHEDULED_PAGE = 5
-_UNFILTERED_PAGE = 50
 _STARTED = ("in_progress", "completed")
 _STARTUP_FAILURE = "startup_failure"
 _API_TIMEOUT_SECONDS = 20.0
 
 _OK = "OK"
-_STALE = "STALE"
-_DISABLED = "DISABLED"
-_NEVER = "NEVER"
-_INVALID = "INVALID"
-_UNVERIFIABLE = "UNVERIFIABLE"
-
-_Get = Callable[[str], object]
 
 
 class PeerReadError(RuntimeError):
@@ -133,7 +119,7 @@ class PeerVerdict:
 
 def github_getter(
     token: str = "", *, timeout: float = _API_TIMEOUT_SECONDS, opener=urlopen
-) -> _Get:
+) -> Callable[[str], object]:
     """Return a reader for the public GitHub REST API; the token is optional."""
     headers = _github_headers(
         token=token,
@@ -169,13 +155,6 @@ def parse_bound_cap_hours(raw: str | None) -> timedelta | None:
     return timedelta(hours=hours)
 
 
-def _object(get: _Get, path: str) -> dict:
-    body = get(path)
-    if not isinstance(body, dict):
-        raise PeerReadError(f"GET {path} returned {type(body).__name__}, not an object")
-    return body
-
-
 def _timestamp(value: object, what: str) -> datetime:
     if not isinstance(value, str):
         raise PeerReadError(f"{what} has no timestamp ({value!r})")
@@ -185,13 +164,6 @@ def _timestamp(value: object, what: str) -> datetime:
         if "time zone" in str(exc):
             raise PeerReadError(f"{what} has a timestamp without a zone ({value!r})") from exc
         raise PeerReadError(f"{what} has an unreadable timestamp {value!r}") from exc
-
-
-def _runs(get: _Get, path: str) -> list[dict]:
-    try:
-        return _extract_workflow_runs(_object(get, path))
-    except ValueError as exc:
-        raise PeerReadError(f"GET {path} has no usable workflow_runs list") from exc
 
 
 def newest_tick(runs: Iterable[dict]) -> datetime | None:
@@ -204,34 +176,6 @@ def newest_tick(runs: Iterable[dict]) -> datetime | None:
         and run.get("conclusion") != _STARTUP_FAILURE
     ]
     return max(ticks) if ticks else None
-
-
-def _file_text(get: _Get, path: str, branch: str) -> str:
-    body = _object(
-        get,
-        f"/repos/{_PEER_REPOSITORY}/contents/{quote(path)}?ref={quote(branch, safe='')}",
-    )
-    try:
-        return _decode_github_contents(body, require_encoding=True).decode("utf-8")
-    except KeyError:
-        raise PeerReadError(f"{path} came back without base64 content") from None
-    except (binascii.Error, ValueError, UnicodeDecodeError) as exc:
-        raise PeerReadError(f"{path} content does not decode: {exc}") from exc
-
-
-def _last_changed(get: _Get, path: str, branch: str) -> datetime:
-    commits = get(
-        f"/repos/{_PEER_REPOSITORY}/commits?path={quote(path, safe='')}"
-        f"&sha={quote(branch, safe='')}&per_page=1"
-    )
-    if not isinstance(commits, list) or not commits or not isinstance(commits[0], dict):
-        raise PeerReadError(f"no commit on {branch} touches {path}")
-    committer = (commits[0].get("commit") or {}).get("committer") or {}
-    return _timestamp(committer.get("date"), f"the last commit to {path}")
-
-
-def _hours(span: timedelta) -> str:
-    return f"{span.total_seconds() / 3600:.1f}h"
 
 
 # ---------------------------------------------------------------------------

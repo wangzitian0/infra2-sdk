@@ -201,7 +201,7 @@ def smoke_removed_names() -> None:
 
     assert len(REMOVED_NAMES) == 44 and len(set(REMOVED_NAMES)) == 44, (
         f"REMOVED_NAMES has {len(REMOVED_NAMES)} entries ({len(set(REMOVED_NAMES))} unique), "
-        "expected 43"
+        "expected 44"
     )
     for module, dotted in REMOVED_NAMES:
         *parents, leaf = dotted.split(".")
