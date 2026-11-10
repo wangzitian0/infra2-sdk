@@ -8,7 +8,7 @@ import os
 import re
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
@@ -22,7 +22,6 @@ from infra2_sdk._wire import (
     parse_iso_utc,
     parse_string,
     require_contract_version,
-    require_exact_fields,
 )
 from infra2_sdk.transport import (
     _decode_github_contents,
@@ -202,40 +201,6 @@ def _validate_deploy_request(request: DeployRequest) -> None:
         DeployType.CANARY,
     }:
         raise ValueError("remove is limited to preview and canary targets")
-
-
-def _validate_wire_shape(raw: Mapping[str, Any]) -> None:
-    """Fail closed unless ``raw``'s keys are EXACTLY the DeployRequest v1 wire shape.
-
-    ``DeployRequest.from_dict`` is deliberately lenient about extra/missing keys —
-    it only reads what it needs, so a minor sdk field addition doesn't break an
-    older sender. This is the opposite, stricter check for a sender that wants a
-    hard guarantee it is emitting the current wire shape exactly: no field silently
-    dropped, no unexpected extra field silently accepted. Expected field sets are
-    derived from the dataclasses themselves (``dataclasses.fields``), not
-    hand-copied, so they can never drift from the real contract the way a
-    hardcoded ``frozenset`` in a caller repo can.
-
-    Call this BEFORE ``DeployRequest.from_dict(raw)`` (so a structurally wrong
-    payload fails with a shape error, not a confusing missing-field error), and
-    call it again on ``request.to_dict()`` after round-tripping if the caller
-    wants to prove serialization is lossless too.
-    """
-    expected = {f.name for f in fields(DeployRequest)}
-    require_exact_fields(
-        raw,
-        expected,
-        description="deploy request",
-        contract_message="request fields must exactly match DeployRequest v1",
-    )
-    evidence = raw.get("evidence")
-    expected_evidence = {f.name for f in fields(DeployEvidence)}
-    require_exact_fields(
-        evidence,  # type: ignore[arg-type]
-        expected_evidence,
-        description="evidence",
-        contract_message="evidence fields must exactly match DeployEvidence v1",
-    )
 
 
 # --- Production evidence policy (infra2#576 / infra2-sdk#8) -----------------------

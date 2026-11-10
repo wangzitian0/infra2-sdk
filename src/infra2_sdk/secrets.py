@@ -294,16 +294,16 @@ class OnePasswordBackend:
         self._category = category
         self._timeout = timeout
 
-    def _op(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    def _op(
+        self, *args: str, check: bool = True, input: str | None = None
+    ) -> subprocess.CompletedProcess[str]:
         kwargs: dict[str, Any] = {"capture_output": True, "text": True}
         if self._timeout is not None:
             kwargs["timeout"] = self._timeout
+        if input is not None:
+            kwargs["input"] = input
         try:
-            try:
-                result = self._run(["op", *args], **kwargs)
-            except TypeError:
-                kwargs.pop("timeout", None)
-                result = self._run(["op", *args], **kwargs)
+            result = self._run(["op", *args], **kwargs)
         except subprocess.TimeoutExpired as exc:
             raise SecretsError(f"op {args[0]} {args[1]} timed out after {self._timeout}s") from exc
         if check and result.returncode != 0:
@@ -340,14 +340,22 @@ class OnePasswordBackend:
     def write(self, path: str, values: Mapping[str, str]) -> WriteResult:
         item = self._item(path)
         if item is None:
-            assignments = [f"{label}[password]={value}" for label, value in values.items()]
+            payload = {
+                "title": path,
+                "category": self._category,
+                "fields": [
+                    {"id": label, "label": label, "type": "CONCEALED", "value": value}
+                    for label, value in values.items()
+                ],
+            }
             self._op(
                 "item",
                 "create",
+                "-",
                 f"--vault={self._vault}",
                 f"--category={self._category}",
                 f"--title={path}",
-                *assignments,
+                input=json.dumps(payload),
             )
             return WriteResult(tuple(sorted(values)))
         existing = {
@@ -355,19 +363,35 @@ class OnePasswordBackend:
             for f in item.get("fields", [])
             if f.get("label") or f.get("id")
         }
-        assignments: list[str] = []
         changed: list[str] = []
         for label, value in values.items():
             current = existing.get(label)
             if current is not None and str(current.get("value") or "") == value:
                 continue
-            section = (current or {}).get("section") or {}
-            prefix = section.get("label") or section.get("id")
-            target = f"{prefix}.{label}" if prefix else label
-            assignments.append(f"{target}[password]={value}")
             changed.append(label)
-        if assignments:
-            self._op("item", "edit", str(item["id"]), f"--vault={self._vault}", *assignments)
+        if changed:
+            updated_fields: list[dict[str, Any]] = []
+            seen: set[str] = set()
+            for field in item.get("fields", []):
+                label = field.get("label") or field.get("id")
+                if label and str(label) in values:
+                    seen.add(str(label))
+                    updated_fields.append({**field, "value": values[str(label)]})
+                else:
+                    updated_fields.append(dict(field))
+            for label, value in values.items():
+                if label not in seen:
+                    updated_fields.append(
+                        {"id": label, "label": label, "type": "CONCEALED", "value": value}
+                    )
+            updated_item = {**item, "fields": updated_fields}
+            self._op(
+                "item",
+                "edit",
+                str(item["id"]),
+                f"--vault={self._vault}",
+                input=json.dumps(updated_item),
+            )
         return WriteResult(tuple(sorted(changed)))
 
 

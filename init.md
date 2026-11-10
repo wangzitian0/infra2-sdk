@@ -15,7 +15,7 @@ The SDK enforces a dual-mode execution invariant across all runtime environments
 
 ## 1. Five Core Decision Principles (Why the SDK Has This Shape)
 
-Across 170+ issues and 44 releases (`v0.1.0` through `v3.22.0`), consumer requirements and defect analyses shaped `infra2-sdk` around five core architectural decision principles.
+Across 170+ issues and 45 releases (`v0.1.0` through `v3.23.0`), consumer requirements and defect analyses shaped `infra2-sdk` around five core architectural decision principles.
 
 ### P1 — Contract vs. Orchestration, Zero-I/O on Import, and Thin Open-Protocol Adapters (`#19`, `#33`, `#102`)
 
@@ -38,7 +38,7 @@ Across 170+ issues and 44 releases (`v0.1.0` through `v3.22.0`), consumer requir
 
 ### P4 — Mechanism over Prose: AST Locks and Bidirectional Documentation Guards (`#18`, `#70`, `#102`)
 
-- `tests/test_source_environment_reads.py` parses the AST of every file under `src/infra2_sdk/` without importing the modules. It restricts environment variable reads to `RuntimeEnvKey` (9 keys) plus `FIXED_READS` (10 keys). Direct reads of legacy aliases (`ENV`, `APP_ENV`, `IMAGE_TAG`, `SERVICE_NAME`) are forbidden outside `resolve_runtime_env` (`#102`).
+- `tests/test_source_environment_reads.py` parses the AST of every file under `src/infra2_sdk/` without importing the modules. It restricts constant-key environment variable reads to `RuntimeEnvKey` (9 keys) plus `FIXED_READS` (10 keys), and locks parameterized or runtime-built environment variable reads in `DYNAMIC_READS` (9 keys across `ci.py`, `deploy.py`, and `observability.py`). Direct reads of legacy aliases (`ENV`, `APP_ENV`, `IMAGE_TAG`, `SERVICE_NAME`) are forbidden outside `resolve_runtime_env` (`#102`, `#169`).
 - `tests/test_release_hygiene.py` verifies release identity: the newest `CHANGELOG.md` entry and the `README.md` install pins equal the version in `pyproject.toml` (`#18`, `#70`). `release.yml` publishes only a tag on `main` that equals that version. A change under `src/infra2_sdk/` does not need a release.
 - `tests/test_readme_claims.py`, `tests/test_contract_documentation.py`, and `tests/test_release_hygiene.py` execute code blocks in `README.md` and verify that the `README.md` and `init.md` module tables match the public modules and exported symbols on disk 1:1.
 

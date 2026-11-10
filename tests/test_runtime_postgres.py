@@ -259,3 +259,78 @@ def test_redact_postgres_error_with_migrations_dsn() -> None:
     assert "app_pass" not in redacted
     assert "<redacted>" in redacted
     assert "<redacted-postgres-dsn>" in redacted
+
+
+def test_postgres_settings_extended_fields_are_keyword_only_and_guarded_across_runtime() -> None:
+    from dataclasses import fields
+
+    from infra2_sdk.runtime.http import HttpClientSettings
+    from infra2_sdk.runtime.llm import LlmSettings
+    from infra2_sdk.runtime.otel import OtelSettings
+    from infra2_sdk.runtime.s3 import S3Settings
+
+    with pytest.raises(TypeError):
+        PostgresSettings("postgresql://u:p@h/db", 5, 5, "postgresql://u:p@h/db")  # type: ignore[misc]
+
+    expected_positional = {
+        PostgresSettings: ("dsn", "connect_timeout_seconds", "statement_timeout_seconds"),
+        S3Settings: (
+            "bucket",
+            "endpoint_url",
+            "access_key_id",
+            "secret_access_key",
+            "session_token",
+            "region_name",
+            "connect_timeout_seconds",
+            "read_timeout_seconds",
+            "addressing_style",
+        ),
+        HttpClientSettings: (
+            "timeout_seconds",
+            "connect_timeout_seconds",
+            "max_connections",
+            "max_keepalive_connections",
+            "connect_retries",
+            "user_agent",
+            "follow_redirects",
+        ),
+        OtelSettings: (
+            "service_name",
+            "endpoint",
+            "service_version",
+            "environment",
+            "instance_id",
+            "resource_attributes",
+            "enabled",
+            "export_interval_millis",
+        ),
+        LlmSettings: (
+            "provider",
+            "base_url",
+            "api_key",
+            "chat_completions_path",
+            "json_timeout_seconds",
+            "json_max_tokens",
+            "json_disable_thinking",
+            "json_seed",
+            "extract_max_attempts",
+            "encryption_keys",
+        ),
+    }
+    for cls, allowed_positional in expected_positional.items():
+        actual_positional = tuple(f.name for f in fields(cls) if not f.kw_only)
+        assert actual_positional == allowed_positional, (
+            f"{cls.__name__} has non-kw_only fields outside the initial positional set: "
+            f"{actual_positional}"
+        )
+
+
+def test_redact_postgres_error_redacts_query_string_password_on_fragment_error() -> None:
+    from infra2_sdk.runtime.postgres import redact_postgres_error
+
+    settings = PostgresSettings(dsn="postgresql://u@h/db?password=s3cr%40t")
+    error = "FATAL: password authentication failed: password=s3cr%40t (s3cr@t)"
+    redacted = redact_postgres_error(error, settings)
+    assert "s3cr%40t" not in redacted
+    assert "s3cr@t" not in redacted
+    assert redacted == "FATAL: password authentication failed: password=<redacted> (<redacted>)"

@@ -80,6 +80,11 @@ REMOVED_NAMES = (
     ("infra2_sdk.snapshot", "SnapshotProducer"),
     # Retired client-side dispatch transport in 3.22.0.
     ("infra2_sdk.deploy", "dispatch_and_wait"),
+    # Retired non-prod public symbols in 3.23.0 (#187).
+    ("infra2_sdk.ci", "crons_in"),
+    ("infra2_sdk.refs", "resolve_branch_to_sha"),
+    ("infra2_sdk.refs", "redact_repo"),
+    ("infra2_sdk.refs", "SHORT_SHA_LENGTH"),
 )
 
 # RuntimeEnvKey members removed in 3.4.0 (issue #102, decision 2) and 3.8.2 (#126).
@@ -199,9 +204,9 @@ def smoke_removed_names() -> None:
     import infra2_sdk.runtime
     from infra2_sdk.runtime.environment import RuntimeEnvKey, runtime_env_contract
 
-    assert len(REMOVED_NAMES) == 44 and len(set(REMOVED_NAMES)) == 44, (
+    assert len(REMOVED_NAMES) == 48 and len(set(REMOVED_NAMES)) == 48, (
         f"REMOVED_NAMES has {len(REMOVED_NAMES)} entries ({len(set(REMOVED_NAMES))} unique), "
-        "expected 44"
+        "expected 48"
     )
     for module, dotted in REMOVED_NAMES:
         *parents, leaf = dotted.split(".")

@@ -18,7 +18,6 @@ from infra2_sdk.deploy import (
     _default_github_json_fetcher,
     _HealthCheckResult,
     _RunEvidenceExpectation,
-    _validate_wire_shape,
     _verify_reviewed_pull,
     _verify_run,
     default_http_get,
@@ -50,62 +49,6 @@ def request(**overrides) -> DeployRequest:
 def test_request_round_trip() -> None:
     original = request()
     assert DeployRequest.from_dict(original.to_dict()) == original
-
-
-# --- _validate_wire_shape: exact-field-set completeness (infra2#597 audit) ---------
-
-
-def test_validate_wire_shape_accepts_the_real_wire_dict() -> None:
-    raw = request().to_dict()
-    _validate_wire_shape(raw)
-    assert DeployRequest.from_dict(raw) == request()
-
-
-@pytest.mark.parametrize(
-    "mutator,message",
-    [
-        (
-            lambda r: (r.update({"unexpected_field": "oops"}), r)[1],
-            "request fields must exactly match",
-        ),
-        (
-            lambda r: (r.pop("source_sha"), r)[1],
-            "request fields must exactly match",
-        ),
-        (
-            lambda r: (r["evidence"].update({"unexpected_field": "oops"}), r)[1],
-            "evidence fields must exactly match",
-        ),
-        (
-            lambda r: (r["evidence"].pop("source_run_id"), r)[1],
-            "evidence fields must exactly match",
-        ),
-        (
-            lambda r: (r.update({"evidence": "not-an-object"}), r)[1],
-            "evidence must be an object",
-        ),
-        (
-            lambda r: "not-an-object",
-            "deploy request must be an object",
-        ),
-    ],
-)
-def test_validate_wire_shape_rejects_malformed_input(mutator, message) -> None:
-    raw = request().to_dict()
-    target = mutator(raw)
-    with pytest.raises(ValueError, match=message):
-        _validate_wire_shape(target)  # type: ignore[arg-type]
-
-
-def test_validate_wire_shape_field_sets_track_the_dataclasses_not_a_hardcoded_copy() -> None:
-    """Regression guard for the exact drift this function replaces: the expected
-    field sets are derived from DeployRequest/DeployEvidence's own dataclass
-    fields, not a hand-copied literal that could silently go stale."""
-    from dataclasses import fields
-
-    raw = request().to_dict()
-    assert set(raw) == {f.name for f in fields(DeployRequest)}
-    assert set(raw["evidence"]) == {f.name for f in fields(DeployEvidence)}
 
 
 def test_production_requires_staging_and_review_evidence() -> None:
