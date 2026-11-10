@@ -37,7 +37,6 @@ from infra2_sdk.deploy import (
     DeployOperation,
     DeployRequest,
     DeployType,
-    dispatch_and_wait,
     poll_until_healthy,
     verify_production_evidence,
 )
@@ -107,8 +106,6 @@ __all__ = [
     "verify_production_evidence",
     # Deploy health polling
     "poll_until_healthy",
-    # Deploy dispatch
-    "dispatch_and_wait",
     # Manifests
     "HOOK_SLOTS",
     "HookRunResult",

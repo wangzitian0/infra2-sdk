@@ -25,7 +25,7 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.21.0"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.22.0"
 ```
 
 ## Modules
@@ -72,10 +72,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.21.0'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.22.0'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.21.0'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.22.0'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -199,7 +199,7 @@ Install the published wheel in a fresh Python 3.11+ environment:
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install \
-  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.21.0/infra2_sdk-3.21.0-py3-none-any.whl'
+  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.22.0/infra2_sdk-3.22.0-py3-none-any.whl'
 ```
 
 For a local connectivity exercise, start this server in another terminal:
@@ -518,7 +518,7 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   start is the one exception. The `init_service` documentation describes it.
 - In v3.4.0, 8 names left `__all__` of `infra2_sdk` and `infra2_sdk.runtime` and are no longer
   attributes of these packages (24 other names that left `__all__` in v3.4.0 or v3.5.1 were
-  deleted or made private in v3.5.1, v3.5.2, v3.8.2, v3.15.0, and v3.21.0 and are listed in the notes below).
+  deleted or made private in v3.5.1, v3.5.2, v3.8.2, v3.15.0, v3.21.0, and v3.22.0 and are listed in the notes below).
   No consumer imports them from the package, and no recorded decision holds them. All 8 names below
   stay defined in their modules. Import them from the module, for example
   `from infra2_sdk.deploy import ProductionEvidencePolicy`:
