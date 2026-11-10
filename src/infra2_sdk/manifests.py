@@ -322,6 +322,8 @@ def build_hook_env(
             value = ambient_env[key]
             if value:
                 clean[key] = value
+    for env_key, env_val in (("PYTHONPATH", "."),):
+        clean[env_key] = env_val
     missing: list[str] = []
     for req_key in slot_spec.required_env:
         val = ambient_env.get(req_key, "")
@@ -351,11 +353,33 @@ def build_hook_env(
     return clean
 
 
-def _tail_text(value: str | bytes | None) -> str:
+def _strip_stream(value: str | bytes | None) -> str:
     if value is None:
         return ""
     text = value.decode("utf-8", "replace") if isinstance(value, bytes) else value
-    return text.strip()[-_HOOK_STDERR_TAIL_LIMIT:]
+    return text.strip()
+
+
+def _tail_text(value: str | bytes | None) -> str:
+    return _strip_stream(value)[-_HOOK_STDERR_TAIL_LIMIT:]
+
+
+def _format_hook_output_tail(
+    stdout: str | bytes | None,
+    stderr: str | bytes | None,
+    fallback: str,
+) -> str:
+    out_text = _strip_stream(stdout)
+    err_text = _strip_stream(stderr)
+    if out_text and err_text:
+        overhead = len("--- stdout ---\n\n--- stderr ---\n")
+        per_stream = (_HOOK_STDERR_TAIL_LIMIT - overhead) // 2
+        return f"--- stdout ---\n{out_text[-per_stream:]}\n--- stderr ---\n{err_text[-per_stream:]}"
+    if err_text:
+        return _tail_text(err_text)
+    if out_text:
+        return _tail_text(out_text)
+    return fallback
 
 
 def _write_hook_result(result: HookRunResult, result_path: Path | None) -> HookRunResult:
@@ -436,7 +460,7 @@ def run_hook_slot(
         except subprocess.TimeoutExpired as exc:
             duration = time.monotonic() - start
             summary = f"{step_name} timed out after {slot_spec.timeout_seconds}s"
-            stderr_tail = _tail_text(exc.stderr) or _tail_text(exc.stdout) or summary
+            stderr_tail = _format_hook_output_tail(exc.stdout, exc.stderr, summary)
             return _write_hook_result(
                 HookRunResult(
                     service=manifest.service,
@@ -456,7 +480,7 @@ def run_hook_slot(
         if proc.returncode != 0:
             duration = time.monotonic() - start
             summary = f"{step_name} exited with code {proc.returncode}"
-            stderr_tail = _tail_text(proc.stderr) or _tail_text(proc.stdout) or summary
+            stderr_tail = _format_hook_output_tail(proc.stdout, proc.stderr, summary)
             return _write_hook_result(
                 HookRunResult(
                     service=manifest.service,

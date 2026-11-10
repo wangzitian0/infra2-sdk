@@ -178,6 +178,44 @@ def test_build_hook_env_strips_ambient_secrets_and_injects_canonical_vars() -> N
     assert clean["HOOK_ARTIFACTS_DIR"] == ".artifacts/custom"
 
 
+def test_build_hook_env_defaults_pythonpath_to_dot_and_allows_explicit_override() -> None:
+    default_spec = HookSlotSpec(run="pytest")
+    clean_default = build_hook_env(
+        default_spec,
+        slot="smoke",
+        app_url="http://127.0.0.1:8000",
+        environment="local_dev",
+        version_ref="local",
+        artifacts_dir=default_spec.artifacts_dir,
+        ambient_env={"PATH": "/usr/bin", "PYTHONPATH": "/ambient/ignored"},
+    )
+    assert clean_default["PYTHONPATH"] == "."
+
+    override_opt = HookSlotSpec(run="pytest", optional_env=("PYTHONPATH",))
+    clean_opt = build_hook_env(
+        override_opt,
+        slot="smoke",
+        app_url="http://127.0.0.1:8000",
+        environment="local_dev",
+        version_ref="local",
+        artifacts_dir=override_opt.artifacts_dir,
+        ambient_env={"PYTHONPATH": "src:apps/web"},
+    )
+    assert clean_opt["PYTHONPATH"] == "src:apps/web"
+
+    override_req = HookSlotSpec(run="pytest", required_env=("PYTHONPATH",))
+    clean_req = build_hook_env(
+        override_req,
+        slot="smoke",
+        app_url="http://127.0.0.1:8000",
+        environment="local_dev",
+        version_ref="local",
+        artifacts_dir=override_req.artifacts_dir,
+        ambient_env={"PYTHONPATH": "custom/lib"},
+    )
+    assert clean_req["PYTHONPATH"] == "custom/lib"
+
+
 def test_run_hook_slot_missing_required_env_fails_closed(tmp_path: Path) -> None:
     manifest = RuntimeHooksManifest.from_dict(_sample_manifest_dict())
     result_file = tmp_path / "out" / "hook-result.json"
@@ -252,6 +290,86 @@ def test_run_hook_slot_timeout_records_timeout_step() -> None:
     assert res.failed_step == "timeout"
     assert "timed out after 60s" in res.summary
     assert "hung on request" in res.stderr_tail
+
+
+def test_run_hook_slot_preserves_both_stdout_and_stderr_when_both_non_empty() -> None:
+    manifest = RuntimeHooksManifest.from_dict(_sample_manifest_dict())
+
+    def dual_stream_runner(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            cmd,
+            1,
+            stdout="Error: ERROR: Playwright does not support chromium on ubuntu26.04-x64\n",
+            stderr="Installed 16 packages in 9ms\n",
+        )
+
+    res = run_hook_slot(
+        manifest,
+        "preview_gate",
+        app_url="https://preview.example.com",
+        environment="preview",
+        version_ref="1234567",
+        ambient_env={"E2E_USER_EMAIL": "bot@example.com"},
+        runner=dual_stream_runner,
+    )
+    assert res.status == "fail"
+    assert res.failed_step == "bootstrap"
+    assert "--- stdout ---" in res.stderr_tail
+    assert (
+        "Error: ERROR: Playwright does not support chromium on ubuntu26.04-x64" in res.stderr_tail
+    )
+    assert "--- stderr ---" in res.stderr_tail
+    assert "Installed 16 packages in 9ms" in res.stderr_tail
+
+    def huge_dual_stream_runner(
+        cmd: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            cmd,
+            1,
+            stdout=("A" * 2500) + "STDOUT_FINAL_MARKER",
+            stderr=("B" * 2500) + "STDERR_FINAL_MARKER",
+        )
+
+    huge_res = run_hook_slot(
+        manifest,
+        "smoke",
+        app_url="https://preview.example.com",
+        environment="preview",
+        version_ref="1234567",
+        ambient_env={},
+        runner=huge_dual_stream_runner,
+    )
+    assert len(huge_res.stderr_tail) <= 2000
+    assert "--- stdout ---" in huge_res.stderr_tail
+    assert "STDOUT_FINAL_MARKER" in huge_res.stderr_tail
+    assert "--- stderr ---" in huge_res.stderr_tail
+    assert "STDERR_FINAL_MARKER" in huge_res.stderr_tail
+
+    def dual_timeout_runner(
+        cmd: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(
+            cmd=cmd,
+            timeout=60,
+            output="stdout before timeout",
+            stderr="stderr before timeout",
+        )
+
+    timeout_res = run_hook_slot(
+        manifest,
+        "smoke",
+        app_url="https://staging.example.com",
+        environment="staging",
+        version_ref="v0.1.0",
+        ambient_env={},
+        runner=dual_timeout_runner,
+    )
+    assert timeout_res.failed_step == "timeout"
+    assert "--- stdout ---" in timeout_res.stderr_tail
+    assert "stdout before timeout" in timeout_res.stderr_tail
+    assert "--- stderr ---" in timeout_res.stderr_tail
+    assert "stderr before timeout" in timeout_res.stderr_tail
 
 
 def test_cli_check_hooks_and_run_hook(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
