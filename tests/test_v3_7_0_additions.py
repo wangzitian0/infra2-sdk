@@ -27,7 +27,6 @@ from infra2_sdk.ci import (
     CoverageBaselineInvalid,
     ScheduleError,
     check_no_regression,
-    crons_in,
     defanged_steps,
     largest_gap,
     load_baseline,
@@ -41,9 +40,7 @@ from infra2_sdk.ci import (
 )
 from infra2_sdk.deploy import (
     VERSION_KEYS,
-    DeployType,
     ReleaseIdentityError,
-    _validate_sender_request,
     identity_from_body,
     read_deployed_release,
 )
@@ -74,7 +71,7 @@ from infra2_sdk.observability import (
 )
 from infra2_sdk.refs import (
     _MANIFEST_ACCEPT,
-    SHORT_SHA_LENGTH,
+    _SHORT_SHA_LENGTH,
     assert_after_on_main,
     identifier_kind,
     short_sha,
@@ -89,7 +86,7 @@ from infra2_sdk.secrets import (
 
 def test_short_sha_and_manifest_accept() -> None:
     sha = "a" * 40
-    assert SHORT_SHA_LENGTH == 7
+    assert _SHORT_SHA_LENGTH == 7
     assert short_sha(sha) == "aaaaaaa"
     assert "application/vnd.oci.image.manifest.v1+json" in _MANIFEST_ACCEPT
     with pytest.raises(ValueError, match="full 40-hex commit sha"):
@@ -162,31 +159,6 @@ def test_assert_environment_passes_and_fails(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="is not in the image"):
         assert_environment(tmp_path / "missing.yaml", environ={}, require_injected=False)
-
-
-def test_approval_notice_and_sender_request() -> None:
-    prod_req = _validate_sender_request(
-        {
-            "contract_version": 1,
-            "request_id": "request-0124",
-            "operation": "deploy",
-            "service": "finance_report/app",
-            "deploy_type": "prod",
-            "version_ref": "v1.2.3",
-            "source_repository": "org/repo",
-            "source_sha": "a" * 40,
-            "evidence": {
-                "source_run_url": "https://github.com/org/repo/actions/runs/10",
-                "source_run_id": "10",
-                "staging_run_url": "https://github.com/org/repo/actions/runs/11",
-                "reviewed_change_url": "https://github.com/org/repo/pull/5",
-            },
-        },
-        service="finance_report/app",
-        source_repository="org/repo",
-        repo_label="org/repo",
-    )
-    assert prod_req.deploy_type == DeployType.PRODUCTION
 
 
 def test_deployed_release_and_freshness() -> None:
@@ -350,8 +322,7 @@ def test_observability_peer_liveness() -> None:
     assert MISSED_TICKS_TOLERATED == 2
     assert timedelta(hours=1) == DELAY_ALLOWANCE
     wf_yaml = "on:\n  schedule:\n    - cron: '*/30 * * * *'\n"
-    crons = crons_in(wf_yaml)
-    assert crons == ["*/30 * * * *"]
+    crons = ["*/30 * * * *"]
     gap = largest_gap(crons)
     assert gap == timedelta(minutes=30)
     bound = bound_for(gap)
@@ -473,45 +444,6 @@ def test_secrets_vault_token_target_and_policy_name() -> None:
     assert policy_name("apps", "prod", "report") == "apps-production-report"
 
 
-def test_v3_8_0_resolve_branch_to_sha() -> None:
-    from infra2_sdk.refs import resolve_branch_to_sha
-
-    sha = "a" * 40
-
-    def fake_runner(
-        args: list[str],
-        *,
-        capture_output: bool = True,
-        text: bool = True,
-        check: bool = True,
-        timeout: float | None = None,
-        **kwargs: Any,
-    ) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(args, 0, f"{sha}\trefs/heads/fix/branch-test\n", "")
-
-    assert (
-        resolve_branch_to_sha(
-            "fix/branch-test",
-            repo="https://github.com/org/repo.git",
-            runner=fake_runner,
-        )
-        == sha
-    )
-    for bad in ("", "-flag", ".hidden", "refs/heads/main", "a..b", "a//b", "branch.lock"):
-        with pytest.raises(ValueError, match="invalid clone branch"):
-            resolve_branch_to_sha(
-                bad,
-                repo="https://github.com/org/repo.git",
-                runner=fake_runner,
-            )
-    with pytest.raises(ValueError, match="not found"):
-        resolve_branch_to_sha(
-            "missing/branch",
-            repo="https://github.com/org/repo.git",
-            runner=fake_runner,
-        )
-
-
 def test_v3_8_0_bare_interpreter_import_without_yaml() -> None:
     import sys
 
@@ -519,7 +451,7 @@ def test_v3_8_0_bare_interpreter_import_without_yaml() -> None:
         "import sys; sys.modules['yaml'] = None; "
         "import infra2_sdk; "
         "from infra2_sdk import ci, deploy, observability, refs, secrets; "
-        "assert callable(refs.resolve_branch_to_sha); "
+        "assert callable(refs.resolve_to_sha); "
         "assert callable(deploy.poll_until_healthy)"
     )
     proc = subprocess.run(
@@ -974,16 +906,12 @@ def test_issue154_function_placement_ssot_invariants() -> None:
         ScheduleError as CiScheduleError,
     )
     from infra2_sdk.ci import (
-        crons_in as ci_crons_in,
-    )
-    from infra2_sdk.ci import (
         largest_gap as ci_largest_gap,
     )
     from infra2_sdk.refs import identifier_kind as refs_identifier_kind
     from infra2_sdk.runtime.config_schema import assert_environment as config_assert_environment
     from infra2_sdk.transport import (
         _decode_github_contents,
-        _extract_workflow_runs,
         _urlopen_json,
     )
 
@@ -998,11 +926,11 @@ def test_issue154_function_placement_ssot_invariants() -> None:
     assert not hasattr(ci_mod, "inspect_compose")
     assert "inspect_compose" not in ci_mod.__all__
 
-    assert ci_crons_in.__module__ == "infra2_sdk.ci"
     assert ci_largest_gap.__module__ == "infra2_sdk.ci"
     assert CiScheduleError.__module__ == "infra2_sdk.ci"
     assert "ScheduleError" not in obs_mod.__all__
     assert "crons_in" not in obs_mod.__all__
+    assert "crons_in" not in ci_mod.__all__
     assert "largest_gap" not in obs_mod.__all__
 
     assert parse_iso_utc("2026-10-27T01:02:03Z") == datetime(2026, 10, 27, 1, 2, 3, tzinfo=UTC)
@@ -1017,12 +945,6 @@ def test_issue154_function_placement_ssot_invariants() -> None:
     assert _is_loopback_host("localhost")
     assert _is_loopback_host("[::1]")
     assert not _is_loopback_host("example.com")
-
-    assert _extract_workflow_runs({"workflow_runs": [{"id": 1}]}) == [{"id": 1}]
-    with pytest.raises(TypeError, match="must be an object"):
-        _extract_workflow_runs([])
-    with pytest.raises(ValueError, match="must contain a run list"):
-        _extract_workflow_runs({"workflow_runs": "bad"})
 
     encoded = base64.b64encode(b'{"a":1}').decode("ascii")
     assert _decode_github_contents({"encoding": "base64", "content": encoded}) == b'{"a":1}'

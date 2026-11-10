@@ -179,7 +179,7 @@ _PLATFORM_OWNED_TIERS = frozenset(
 #: The canary deployment slot, and therefore that slot's ``deployment.environment.name``.
 #: Defined here, not in ``routing`` (which re-exports it), because ``routing`` imports this
 #: module: one definition, and the tier vocabulary below recognises it as a preview (#54).
-CANARY_SLOT = "canary-preview"
+_CANARY_SLOT = "canary-preview"
 
 _LOCAL_DEV_ALIASES = frozenset({"dev", "development", "local", "local_dev"})
 _LOCAL_TEST_ALIASES = frozenset({"test", "testing", "ci", "local_ci", "local_test"})
@@ -195,7 +195,7 @@ _UNDERSCORE_PREVIEW_PREFIX_RE = re.compile(
 def _canonicalize_preview_alias(cleaned: str) -> str:
     """Convert underscore preview aliases from infra2 into hyphenated form."""
     if cleaned == "canary_preview":
-        return CANARY_SLOT
+        return _CANARY_SLOT
     match = _UNDERSCORE_PREVIEW_PREFIX_RE.match(cleaned)
     if match is not None:
         rest = match["rest"]
@@ -208,7 +208,7 @@ def _canonicalize_preview_alias(cleaned: str) -> str:
 def is_preview_alias(value: str) -> bool:
     """Return True when value is a canonical or underscore preview alias."""
     alias = _canonicalize_preview_alias(value.strip().lower())
-    return alias == CANARY_SLOT or bool(_PREVIEW_ALIAS_RE.match(alias))
+    return alias == _CANARY_SLOT or bool(_PREVIEW_ALIAS_RE.match(alias))
 
 
 @dataclass(frozen=True)
@@ -252,7 +252,7 @@ def to_environment_tier(
         alias = _canonicalize_preview_alias(cleaned)
         if (
             normalized == EnvironmentTier.PREVIEW.value
-            or alias == CANARY_SLOT
+            or alias == _CANARY_SLOT
             or _PREVIEW_ALIAS_RE.match(alias)
         ):
             return EnvironmentTier.PREVIEW
@@ -422,7 +422,6 @@ def _normalize_deployment_environment(
 
 
 __all__ = [
-    "CANARY_SLOT",
     "EnvironmentTier",
     "RuntimeEnvKey",
     "is_preview_alias",

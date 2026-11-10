@@ -6,7 +6,9 @@ import re
 from dataclasses import dataclass
 
 from infra2_sdk.runtime.environment import (
-    CANARY_SLOT,
+    _CANARY_SLOT as CANARY_SLOT,
+)
+from infra2_sdk.runtime.environment import (
     EnvironmentTier,
     _canonicalize_preview_alias,
     is_preview_alias,

@@ -34,7 +34,7 @@ python -m pip install \
 |---|---|
 | `infra2_sdk.capacity` | Capacity limits and readings, `evaluate` (a level per item: ok, warn, exceeded or unknown), and the collector for Cloudflare analytics |
 | `infra2_sdk.ci` | Delivery-stage vocabulary, CI gate inventory validation, workflow step inspection, cron schedule gap analysis, coverage ratchets, and GitHub Actions helpers |
-| `infra2_sdk.deploy` | Deploy lifecycle wire contracts, dispatch client, health poller, deployed release identity reader, and production evidence policies |
+| `infra2_sdk.deploy` | Deploy lifecycle wire contracts, health poller, deployed release identity reader, and production evidence policies |
 | `infra2_sdk.fastapi` | `init_service`: /livez, /readyz and /health routes for a FastAPI app, plus OTLP telemetry bootstrap |
 | `infra2_sdk.manifests` | Settings and runtime verification hooks manifest CLI driver (`--write`, `--check`, `--validate-env`, `--check-hooks`, `--run-hook`), `ManifestSpec`, `RuntimeHooksManifest`, `HookSlotSpec`, `HookRunResult`, `load_hooks_manifest`, `run_hook_slot`, `all_manifests`, `check`, and `load` |
 | `infra2_sdk.observability` | Flap hysteresis trackers, scheduled peer workflow liveness evaluation, self-healing GitHub issue trails, and OpenPanel export query & funnel summary primitives |
@@ -565,6 +565,10 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   `ocr_model`, `vision_model`, `fallback_models`, `vision_fallback_models`, `layout_parsing_path`)
   and `_RoleDefault` in favor of `large`, `small`, and `multimodal` role fields and `role_model` /
   `role_reasoning_effort`.
+- In v3.21.0 (`#184`), the SDK retired `infra2_sdk.delivery` (including `assert_manifest_fresh`)
+  and generalized `ci.largest_gap` across arbitrary cron schedules.
+- In v3.22.0 (`#186`), the SDK retired `deploy.dispatch_and_wait` so callers dispatch workflows
+  and poll health explicitly.
 - `tests/surface.json` records the reason for each name in `__all__`: a consumer imports it, the
   README documents it, or a recorded decision holds it.
 - `to_environment_tier` maps `DeployType` values to `EnvironmentTier`.

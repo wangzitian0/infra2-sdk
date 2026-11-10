@@ -24,7 +24,6 @@ from infra2_sdk._wire import (
     require_contract_version,
     require_exact_fields,
 )
-from infra2_sdk.refs import _TAG_RE as _RELEASE_REF_RE
 from infra2_sdk.transport import (
     _decode_github_contents,
     _github_api_url,
@@ -64,7 +63,7 @@ PRODUCTION_DEPLOY_BUDGET_SECONDS = 300
 #: A GitHub Actions job runs for 6 h at most, so no sender waits longer after its dispatch.
 SENDER_MAX_WAIT_SECONDS = 6 * 60 * 60
 #: The dispatch payload key that holds the time when the sender stops waiting (infra2#1363).
-#: ``dispatch_and_wait`` sets it. It is transport data, not a ``DeployRequest`` field.
+#: The dispatching sender workflow sets it. It is transport data, not a ``DeployRequest`` field.
 SENDER_DEADLINE_KEY = "sender_deadline"
 
 
@@ -769,132 +768,6 @@ def _version_prefix_matches(actual: str, expected: str) -> bool:
 
 _SAFE_REF_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._/-]{0,199}$")
 VERSION_KEYS = ("git_sha", "version")
-
-
-def _github_path_match(url: str, pattern: re.Pattern[str], message: str) -> re.Match[str]:
-    parsed = urlparse(url)
-    path_match = pattern.fullmatch(parsed.path)
-    if (
-        parsed.scheme != "https"
-        or parsed.netloc != "github.com"
-        or parsed.params
-        or parsed.query
-        or parsed.fragment
-        or path_match is None
-    ):
-        raise ValueError(message)
-    return path_match
-
-
-def _validate_sender_request(
-    raw: Mapping[str, Any],
-    *,
-    service: str,
-    source_repository: str,
-    repo_label: str,
-    supported_deploy_types: Sequence[str] = (
-        DeployType.STAGING.value,
-        DeployType.PRODUCTION.value,
-    ),
-    version_ref_error: str = "version_ref must be a release tag like vX.Y.Z",
-    prod_staging_required_error: str = "evidence.staging_run_url is required for prod",
-    prod_review_required_error: str = "evidence.reviewed_change_url is required for prod",
-    prod_staging_url_error: str | None = None,
-    prod_review_url_error: str | None = None,
-    non_prod_evidence_error: str | None = None,
-) -> DeployRequest:
-    """Validate and deserialize a sender-side DeployRequest under repository authority rules."""
-    source_run_re = re.compile(rf"\A/{re.escape(source_repository)}/actions/runs/([1-9][0-9]*)\Z")
-    review_re = re.compile(rf"\A/{re.escape(source_repository)}/pull/([1-9][0-9]*)\Z")
-    supported_set = frozenset(supported_deploy_types)
-
-    def _check(mapping: Mapping[str, Any]) -> None:
-        _validate_wire_shape(mapping)
-        contract_version = mapping.get("contract_version")
-        if isinstance(contract_version, bool) or contract_version != CONTRACT_VERSION:
-            raise ValueError(f"contract_version must be {CONTRACT_VERSION}")
-        if mapping.get("service") != service:
-            raise ValueError(f"service must be {service}")
-        if mapping.get("source_repository") != source_repository:
-            raise ValueError(f"source_repository must be {source_repository}")
-        if mapping.get("operation") != DeployOperation.DEPLOY.value:
-            raise ValueError("operation must be deploy")
-
-        deploy_type = mapping.get("deploy_type")
-        if not isinstance(deploy_type, str) or deploy_type not in supported_set:
-            if DeployType.PREVIEW_TAG.value in supported_set:
-                raise ValueError("deploy_type must be preview/tag, staging, or prod")
-            raise ValueError("deploy_type must be staging or prod")
-
-        version_ref = mapping.get("version_ref")
-        if not isinstance(version_ref, str):
-            if DeployType.PREVIEW_TAG.value in supported_set:
-                raise ValueError("version_ref must be a string")
-            raise ValueError(version_ref_error)
-        if _RELEASE_REF_RE.fullmatch(version_ref) is None:
-            raise ValueError(version_ref_error)
-
-        source_sha = mapping.get("source_sha")
-        if not isinstance(source_sha, str) or _SHA40_RE.fullmatch(source_sha) is None:
-            raise ValueError("source_sha must be a lowercase 40-hex commit sha")
-
-        evidence = mapping.get("evidence")
-        assert isinstance(evidence, Mapping)
-        source_run_url = evidence.get("source_run_url")
-        if not isinstance(source_run_url, str) or not source_run_url:
-            raise ValueError("evidence.source_run_url is required")
-        path_match = _github_path_match(
-            source_run_url,
-            source_run_re,
-            f"evidence.source_run_url must point to the {repo_label} GitHub Actions run",
-        )
-        source_run_id = evidence.get("source_run_id")
-        if not isinstance(source_run_id, str) or not source_run_id:
-            raise ValueError("evidence.source_run_id is required")
-        if source_run_id != path_match.group(1):
-            raise ValueError("evidence.source_run_id must match source_run_url")
-
-        staging_run_url = evidence.get("staging_run_url")
-        reviewed_change_url = evidence.get("reviewed_change_url")
-        if staging_run_url is not None and not isinstance(staging_run_url, str):
-            raise ValueError("evidence.staging_run_url must be a string")
-        if reviewed_change_url is not None and not isinstance(reviewed_change_url, str):
-            raise ValueError("evidence.reviewed_change_url must be a string")
-
-        if deploy_type == DeployType.PRODUCTION.value:
-            if not isinstance(staging_run_url, str) or not staging_run_url:
-                raise ValueError(prod_staging_required_error)
-            _github_path_match(
-                staging_run_url,
-                source_run_re,
-                prod_staging_url_error
-                or f"evidence.staging_run_url must be a canonical {repo_label} GitHub URL",
-            )
-            if not isinstance(reviewed_change_url, str) or not reviewed_change_url:
-                raise ValueError(prod_review_required_error)
-            _github_path_match(
-                reviewed_change_url,
-                review_re,
-                prod_review_url_error
-                or f"evidence.reviewed_change_url must be a canonical {repo_label} GitHub URL",
-            )
-            return
-
-        if non_prod_evidence_error is not None:
-            if staging_run_url or reviewed_change_url:
-                raise ValueError(non_prod_evidence_error)
-        else:
-            for field_name, value in (
-                ("staging_run_url", staging_run_url),
-                ("reviewed_change_url", reviewed_change_url),
-            ):
-                if value != "":
-                    raise ValueError(f"evidence.{field_name} must be empty for staging")
-
-    _check(raw)
-    request = DeployRequest.from_dict(raw)
-    _check(request.to_dict())
-    return request
 
 
 class ReleaseIdentityError(RuntimeError):

@@ -147,13 +147,13 @@ def test_the_canary_slot_is_a_preview_tier_and_routing_shares_the_definition() -
     from infra2_sdk import routing
     from infra2_sdk.runtime import environment
 
-    assert routing.CANARY_SLOT is environment.CANARY_SLOT == "canary-preview"
-    assert to_environment_tier(environment.CANARY_SLOT) is EnvironmentTier.PREVIEW
-    assert to_environment_tier(environment.CANARY_SLOT.upper()) is EnvironmentTier.PREVIEW
+    assert routing.CANARY_SLOT is environment._CANARY_SLOT == "canary-preview"
+    assert to_environment_tier(routing.CANARY_SLOT) is EnvironmentTier.PREVIEW
+    assert to_environment_tier(routing.CANARY_SLOT.upper()) is EnvironmentTier.PREVIEW
     normalize = environment._normalize_deployment_environment
-    assert normalize(environment.CANARY_SLOT, EnvironmentTier.PREVIEW) == "canary-preview"
+    assert normalize(routing.CANARY_SLOT, EnvironmentTier.PREVIEW) == "canary-preview"
     with pytest.raises(ValueError, match="disagrees"):
-        normalize(environment.CANARY_SLOT, EnvironmentTier.STAGING)
+        normalize(routing.CANARY_SLOT, EnvironmentTier.STAGING)
 
 
 # --- Runtime Environment Variable Registry & Resolution ----------------------
