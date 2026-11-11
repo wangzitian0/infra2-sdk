@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from collections.abc import Iterable, Mapping
@@ -354,7 +355,7 @@ def _timestamp_epoch(value: str | int | float | datetime | None) -> float | None
             return None
         return value.astimezone(UTC).timestamp()
     if isinstance(value, int | float):
-        return float(value) if value > 0 else None
+        return float(value) if math.isfinite(value) and value > 0 else None
     if isinstance(value, str):
         try:
             parsed = parse_github_time(value)
@@ -373,7 +374,12 @@ def is_pr_behind_fresh(
     """Return True when base divergence started within ``max_age_seconds`` of ``now``."""
     diverged = _timestamp_epoch(first_behind_at)
     current = _timestamp_epoch(now)
-    if diverged is None or current is None or max_age_seconds < 0:
+    if (
+        diverged is None
+        or current is None
+        or not math.isfinite(max_age_seconds)
+        or max_age_seconds < 0
+    ):
         return False
     return (current - diverged) <= max_age_seconds
 
