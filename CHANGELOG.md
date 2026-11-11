@@ -6,6 +6,12 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+## 3.25.0 - 2026-11-11
+
+### Added
+
+- Add `PR_BEHIND_MAX_AGE_SECONDS` (86400 s) and `is_pr_behind_fresh` in `infra2_sdk.ci` so merge gates share one 24-hour conflict-free behind-base freshness contract ([#195](https://github.com/wangzitian0/infra2-sdk/issues/195)).
+
 ## 3.24.0 - 2026-11-10
 
 ### Changed

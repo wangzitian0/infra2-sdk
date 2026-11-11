@@ -130,3 +130,36 @@ def test_validate_manifest_offline_flags_contract_violations() -> None:
         ),
     )
     assert validate_manifest_offline(clean) == []
+
+
+# ----------------------------------------------------------------------------- PR behind window
+
+
+def test_pr_behind_window_contract() -> None:
+    from datetime import UTC, datetime
+
+    from infra2_sdk.ci import PR_BEHIND_MAX_AGE_SECONDS, is_pr_behind_fresh
+
+    assert PR_BEHIND_MAX_AGE_SECONDS == 86400
+    now_iso = "2026-11-11T12:00:00Z"
+    now_dt = datetime(2026, 11, 11, 12, 0, 0, tzinfo=UTC)
+    now_epoch = now_dt.timestamp()
+
+    # Exact 24h boundary and fresher commits pass.
+    assert is_pr_behind_fresh("2026-11-10T12:00:00Z", now=now_iso)
+    assert is_pr_behind_fresh("2026-11-11T11:55:00Z", now=now_dt)
+    assert is_pr_behind_fresh(now_epoch - 3600, now=now_epoch)
+
+    # Older than 24h fails closed.
+    assert not is_pr_behind_fresh("2026-11-10T11:59:59Z", now=now_iso)
+    assert not is_pr_behind_fresh(now_epoch - 86401, now=now_epoch)
+
+    # Missing, malformed, boolean, naive-datetime, non-positive, or negative window fails closed.
+    assert not is_pr_behind_fresh(None, now=now_iso)
+    assert not is_pr_behind_fresh("", now=now_iso)
+    assert not is_pr_behind_fresh("not-a-timestamp", now=now_iso)
+    assert not is_pr_behind_fresh(True, now=now_epoch)
+    assert not is_pr_behind_fresh(0, now=now_epoch)
+    assert not is_pr_behind_fresh(datetime(2026, 11, 11, 11, 0, 0), now=now_dt)
+    assert not is_pr_behind_fresh(now_iso, now="bad")
+    assert not is_pr_behind_fresh(now_iso, now=now_iso, max_age_seconds=-1)

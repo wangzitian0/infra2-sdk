@@ -340,8 +340,42 @@ def check_no_regression(
 
 # --- GitHub Actions timestamp parsing and output writing ---------------------
 
+PR_BEHIND_MAX_AGE_SECONDS = 24 * 60 * 60
+
 _GITHUB_OUTPUT_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _DEFAULT_OUTPUT_ENV = "_".join(("GITHUB", "OUTPUT"))
+
+
+def _timestamp_epoch(value: str | int | float | datetime | None) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return None
+        return value.astimezone(UTC).timestamp()
+    if isinstance(value, int | float):
+        return float(value) if value > 0 else None
+    if isinstance(value, str):
+        try:
+            parsed = parse_github_time(value)
+        except ValueError:
+            return None
+        return parsed.timestamp() if parsed is not None else None
+    return None
+
+
+def is_pr_behind_fresh(
+    first_behind_at: str | int | float | datetime | None,
+    *,
+    now: str | int | float | datetime,
+    max_age_seconds: float = PR_BEHIND_MAX_AGE_SECONDS,
+) -> bool:
+    """Return True when base divergence started within ``max_age_seconds`` of ``now``."""
+    diverged = _timestamp_epoch(first_behind_at)
+    current = _timestamp_epoch(now)
+    if diverged is None or current is None or max_age_seconds < 0:
+        return False
+    return (current - diverged) <= max_age_seconds
 
 
 def parse_github_time(value: str | None) -> datetime | None:
@@ -456,6 +490,7 @@ __all__ = [
     "GATE_EXEMPT_RE",
     "GATE_WALL_CLOCK_BUDGET_S",
     "MAX_SINGLE_TEST_S",
+    "PR_BEHIND_MAX_AGE_SECONDS",
     "SHARD_MAX",
     "SHARD_MIN",
     "SOFT_WARN_S",
@@ -464,6 +499,7 @@ __all__ = [
     "TARGET_PER_SHARD_S",
     "check_no_regression",
     "defanged_steps",
+    "is_pr_behind_fresh",
     "largest_gap",
     "load_baseline",
     "load_delivery_stages",
