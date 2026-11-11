@@ -18,10 +18,7 @@ from infra2_sdk._wire import _yaml, parse_iso_utc
 _GATE_ID_RE = re.compile(r"\A[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+\Z")
 _REQUIRED_GATE_FIELDS = ("id", "stage", "task_category", "workflow", "job")
 
-# --- Cross-repo CI testing hierarchy and compute budgets (#788, #840) --------
-
 SPEC_VERSION = "1.0.0"
-
 GATE_WALL_CLOCK_BUDGET_S = 90
 SOFT_WARN_S = 75
 MAX_SINGLE_TEST_S = 30
@@ -37,14 +34,7 @@ BANNED_IN_GATE_PATTERNS = (
     "full_reconcile",
     "soak_test",
 )
-
-BANNED_GATE_MARKERS = (
-    "benchmark",
-    "slow",
-    "reconciliation",
-    "full_recon",
-)
-
+BANNED_GATE_MARKERS = ("benchmark", "slow", "reconciliation", "full_recon")
 GATE_EXEMPT_RE = re.compile(r"#\s*gate-exempt:\s*(\S.*)")
 _JOB_KEY_RE = re.compile(r"^  ([A-Za-z_][\w-]*):\s*$")
 _BLOCK_SCALAR_RE = re.compile(r":\s*[|>][+-]?\d*\s*$")
@@ -71,26 +61,20 @@ def _parse_workflow(path: str | Path) -> tuple[dict, str, str | None]:
 
 
 def read_workflow(path: str | Path) -> tuple[dict, str]:
-    """Return a workflow's parsed YAML and its raw text from a single read."""
     parsed, source, _ = _parse_workflow(path)
     return parsed, source
 
 
 def workflow_read_error(path: str | Path) -> str | None:
-    """Return why ``read_workflow`` gave back an empty mapping for ``path``, or None."""
     return _parse_workflow(path)[2]
 
 
 def load_workflow(path: str | Path) -> dict:
-    """Return a workflow's parsed YAML, or {} when absent or unreadable."""
     return read_workflow(path)[0]
 
 
-_MINUTES_PER_DAY = 24 * 60
-
-
 class ScheduleError(ValueError):
-    """The workflow's schedule is not one this module can measure."""
+    """Workflow schedule expression cannot be evaluated."""
 
 
 _GAP_WINDOW_DAYS = 1461
@@ -99,38 +83,32 @@ _NAMES = {
     "month": {
         n: i
         for i, n in enumerate(
-            ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"], 1
+            ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"), 1
         )
     },
-    "dow": {n: i for i, n in enumerate(["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"])},
+    "dow": {n: i for i, n in enumerate(("SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"))},
 }
-_RANGES = {
-    "minute": (0, 59),
-    "hour": (0, 23),
-    "dom": (1, 31),
-    "month": (1, 12),
-    "dow": (0, 7),
-}
+_RANGES = {"minute": (0, 59), "hour": (0, 23), "dom": (1, 31), "month": (1, 12), "dow": (0, 7)}
 
 
 def _value(token: str, field: str) -> int:
     low, high = _RANGES[field]
     if token.isdigit():
-        number = int(token)
-        if not low <= number <= high:
+        num = int(token)
+        if not low <= num <= high:
             raise ScheduleError(f"{field}: {token!r} is outside {low}-{high}")
-        return number
-    number = _NAMES.get(field, {}).get(token.upper())
-    if number is None:
+        return num
+    num = _NAMES.get(field, {}).get(token.upper())
+    if num is None:
         raise ScheduleError(f"{field}: {token!r} is not a number")
-    return number
+    return num
 
 
 def _field_values(text: str, field: str) -> set[int]:
     low, high = _RANGES[field]
-    values: set[int] = set()
-    for element in text.split(","):
-        span, _, step_text = element.partition("/")
+    out: set[int] = set()
+    for elem in text.split(","):
+        span, _, step_text = elem.partition("/")
         if step_text and not step_text.isdigit():
             raise ScheduleError(f"{field}: step {step_text!r} is not a number")
         step = int(step_text) if step_text else 1
@@ -139,65 +117,51 @@ def _field_values(text: str, field: str) -> set[int]:
         if span == "*":
             first, last = low, (6 if field == "dow" else high)
         elif "-" in span:
-            first, _, end = span.partition("-")
-            first, last = _value(first, field), _value(end, field)
+            a, _, b = span.partition("-")
+            first, last = _value(a, field), _value(b, field)
         else:
             first = _value(span, field)
             last = high if step_text else first
         if first > last:
             raise ScheduleError(f"{field}: range {span!r} runs backwards")
-        values.update(range(first, last + 1, step))
-    return values
+        out.update(range(first, last + 1, step))
+    return out
 
 
 def largest_gap(crons: Iterable[str]) -> timedelta:
-    """Return the largest gap between consecutive fire times of all *crons*."""
+    """Return the largest gap between consecutive fire times across ``crons``."""
     listed = list(crons)
     if not listed:
         raise ScheduleError("the workflow has no cron")
     day_times: dict[int, set[int]] = {}
-    for expression in listed:
-        parts = expression.split()
+    for expr in listed:
+        parts = expr.split()
         if len(parts) != 5:
-            raise ScheduleError(f"cron {expression!r} has {len(parts)} fields, not 5")
-        minutes, hours, doms, months, dows = (
-            _field_values(part, field)
-            for part, field in zip(parts, ("minute", "hour", "dom", "month", "dow"), strict=True)
+            raise ScheduleError(f"cron {expr!r} has {len(parts)} fields, not 5")
+        mins, hrs, doms, months, dows = (
+            _field_values(p, f)
+            for p, f in zip(parts, ("minute", "hour", "dom", "month", "dow"), strict=True)
         )
         if 7 in dows:
             dows = (dows - {7}) | {0}
+        both = parts[2] != "*" and parts[4] != "*"
         cursor = _WINDOW_START
-        day_index = 0
-        while day_index < _GAP_WINDOW_DAYS:
-            dom_restricted = parts[2] != "*"
-            dow_restricted = parts[4] != "*"
-            day_matches = (
-                (cursor.day in doms or cursor.isoweekday() % 7 in dows)
-                if (dom_restricted and dow_restricted)
-                else (cursor.day in doms and cursor.isoweekday() % 7 in dows)
-            )
-            if cursor.month in months and day_matches:
-                day_times.setdefault(day_index, set()).update(
-                    h * 60 + m for h in hours for m in minutes
-                )
+        for idx in range(_GAP_WINDOW_DAYS):
+            dm, dw = cursor.day in doms, cursor.isoweekday() % 7 in dows
+            if cursor.month in months and ((dm or dw) if both else (dm and dw)):
+                day_times.setdefault(idx, set()).update(h * 60 + m for h in hrs for m in mins)
             cursor += timedelta(days=1)
-            day_index += 1
-
-    ordered = [
-        day * _MINUTES_PER_DAY + m for day in sorted(day_times) for m in sorted(day_times[day])
-    ]
+    ordered = [d * 1440 + m for d in sorted(day_times) for m in sorted(day_times[d])]
     if len(ordered) < 2:
         raise ScheduleError("the schedule fires fewer than twice in the sample window")
-    gaps = [later - earlier for earlier, later in zip(ordered, ordered[1:], strict=False)]
-    return timedelta(minutes=max(gaps))
+    return timedelta(minutes=max(b - a for a, b in zip(ordered, ordered[1:], strict=False)))
 
 
 def _exempt_lines(source: str) -> set[tuple[str, str]]:
     if not source:
         return set()
     found: set[tuple[str, str]] = set()
-    job_id = ""
-    current = ""
+    job_id = current = ""
     in_jobs = False
     block_indent: int | None = None
     for line in source.splitlines():
@@ -211,11 +175,8 @@ def _exempt_lines(source: str) -> set[tuple[str, str]]:
             in_jobs = code.startswith("jobs:")
             if not in_jobs:
                 job_id = current = ""
-        elif in_jobs:
-            job = _JOB_KEY_RE.match(code.rstrip())
-            if job:
-                job_id = job.group(1)
-                current = job_id
+        elif in_jobs and (job := _JOB_KEY_RE.match(code.rstrip())):
+            job_id = current = job.group(1)
         stripped = code.strip()
         if stripped == "-" or stripped.startswith("- "):
             current = ""
@@ -230,61 +191,48 @@ def _exempt_lines(source: str) -> set[tuple[str, str]]:
 
 
 def defanged_steps(workflow: dict, job_id: str, source: str = "") -> list[str]:
-    """Return steps in ``job_id`` whose failure cannot fail the job, minus declared exemptions."""
     jobs = workflow.get("jobs")
     job = (jobs if isinstance(jobs, dict) else {}).get(job_id)
     if not isinstance(job, dict):
         return []
     exempt = _exempt_lines(source)
-    out: list[str] = []
-    if job.get("continue-on-error") and (job_id, job_id) not in exempt:
-        out.append("<job>")
+    out = ["<job>"] if job.get("continue-on-error") and (job_id, job_id) not in exempt else []
     steps = job.get("steps")
-    for index, step in enumerate(steps if isinstance(steps, list) else []):
-        if not isinstance(step, dict) or not step.get("continue-on-error"):
-            continue
-        name = str(step.get("name") or step.get("uses") or f"step #{index}")
-        if (job_id, name) not in exempt:
-            out.append(name)
+    for idx, step in enumerate(steps if isinstance(steps, list) else []):
+        if isinstance(step, dict) and step.get("continue-on-error"):
+            name = str(step.get("name") or step.get("uses") or f"step #{idx}")
+            if (job_id, name) not in exempt:
+                out.append(name)
     return out
 
-
-# --- Cobertura XML line-coverage no-regression ratchet -----------------------
 
 EPSILON = 1e-6
 
 
 class CoverageArtifactMissing(RuntimeError):
-    """The expected Cobertura XML does not exist or fails to parse."""
+    """Expected Cobertura XML file is missing or malformed."""
 
 
 class CoverageBaselineInvalid(RuntimeError):
-    """The committed baseline file exists but is not well-formed."""
+    """Committed coverage baseline file is malformed."""
 
 
 def read_coverage_summary(xml_path: Path) -> dict[str, float | int]:
-    """Extract aggregate line coverage from a Cobertura XML file's root element."""
     if not xml_path.is_file():
-        raise CoverageArtifactMissing(
-            f"required coverage artifact is missing (expected {xml_path}); "
-            "run `pytest --cov=common --cov=tools --cov-report=xml:...` first"
-        )
+        raise CoverageArtifactMissing(f"required coverage artifact is missing ({xml_path})")
     try:
         root = ElementTree.parse(xml_path).getroot()
-        lines_valid = int(root.attrib["lines-valid"])
-        lines_covered = int(root.attrib["lines-covered"])
+        valid, covered = int(root.attrib["lines-valid"]), int(root.attrib["lines-covered"])
     except (ElementTree.ParseError, KeyError, ValueError) as exc:
         raise CoverageArtifactMissing(f"{xml_path} is not a valid Cobertura report: {exc}") from exc
-    line_rate = lines_covered / lines_valid if lines_valid else 0.0
     return {
-        "lines_valid": lines_valid,
-        "lines_covered": lines_covered,
-        "line_rate": line_rate,
+        "lines_valid": valid,
+        "lines_covered": covered,
+        "line_rate": covered / valid if valid else 0.0,
     }
 
 
 def load_baseline(baseline_path: Path) -> dict[str, float | int] | None:
-    """Load the committed baseline, or None if it does not exist yet (first run)."""
     if not baseline_path.is_file():
         return None
     try:
@@ -299,50 +247,33 @@ def load_baseline(baseline_path: Path) -> dict[str, float | int] | None:
 
 
 def write_baseline(baseline_path: Path, summary: dict[str, float | int]) -> None:
-    """Write the Cobertura coverage summary to ``baseline_path``."""
     baseline_path.parent.mkdir(parents=True, exist_ok=True)
-    baseline_path.write_text(
-        json.dumps(
-            {
-                "line_rate": round(summary["line_rate"], 6),
-                "lines_covered": summary["lines_covered"],
-                "lines_valid": summary["lines_valid"],
-            },
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    payload = {
+        "line_rate": round(summary["line_rate"], 6),
+        "lines_covered": summary["lines_covered"],
+        "lines_valid": summary["lines_valid"],
+    }
+    baseline_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def check_no_regression(
     current: dict[str, float | int], baseline: dict[str, float | int] | None
 ) -> tuple[bool, str]:
-    """Return (ok, message). No baseline yet is always ok (first run establishes it)."""
-    current_pct = current["line_rate"] * 100
+    cur_pct = current["line_rate"] * 100
     if baseline is None:
-        return (
-            True,
-            f"no committed baseline yet; current line coverage {current_pct:.2f}%",
-        )
-    baseline_pct = baseline["line_rate"] * 100
+        return True, f"no committed baseline yet; current line coverage {cur_pct:.2f}%"
+    base_pct = baseline["line_rate"] * 100
     if current["line_rate"] + EPSILON < baseline["line_rate"]:
         return False, (
-            f"line coverage regressed: {current_pct:.2f}% "
+            f"line coverage regressed: {cur_pct:.2f}% "
             f"(covered {current['lines_covered']}/{current['lines_valid']}) < "
-            f"baseline {baseline_pct:.2f}% "
-            f"(covered {baseline['lines_covered']}/{baseline['lines_valid']}). "
-            "Add tests to recover the floor, or if this drop is deliberate and "
-            "reviewed, re-run with --update-baseline."
+            f"baseline {base_pct:.2f}% "
+            f"(covered {baseline['lines_covered']}/{baseline['lines_valid']})"
         )
-    return True, f"line coverage {current_pct:.2f}% >= baseline {baseline_pct:.2f}%"
+    return True, f"line coverage {cur_pct:.2f}% >= baseline {base_pct:.2f}%"
 
-
-# --- GitHub Actions timestamp parsing and output writing ---------------------
 
 PR_BEHIND_MAX_AGE_SECONDS = 24 * 60 * 60
-
 _GITHUB_OUTPUT_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _DEFAULT_OUTPUT_ENV = "_".join(("GITHUB", "OUTPUT"))
 
@@ -385,10 +316,7 @@ def is_pr_behind_fresh(
 
 
 def parse_github_time(value: str | None) -> datetime | None:
-    """Parse an optional GitHub ISO timestamp as a UTC datetime."""
-    if value is None or not value.strip():
-        return None
-    return parse_iso_utc(value, allow_naive=True)
+    return None if value is None or not value.strip() else parse_iso_utc(value, allow_naive=True)
 
 
 def write_github_output(
@@ -397,58 +325,39 @@ def write_github_output(
     output_path: str | Path | None = None,
     output_env: str = _DEFAULT_OUTPUT_ENV,
 ) -> None:
-    """Append GitHub Actions outputs when the runner exposes ``GITHUB_OUTPUT``."""
     resolved_path = str(output_path) if output_path is not None else os.getenv(output_env)
     if not resolved_path:
         return
-
-    invalid_keys = [
-        key
-        for key in values
-        if not isinstance(key, str) or not _GITHUB_OUTPUT_KEY_RE.fullmatch(key)
-    ]
-    if invalid_keys:
-        raise ValueError(f"invalid GitHub output key: {invalid_keys[0]!r}")
-
+    for key in values:
+        if not isinstance(key, str) or not _GITHUB_OUTPUT_KEY_RE.fullmatch(key):
+            raise ValueError(f"invalid GitHub output key: {key!r}")
     with open(resolved_path, "a", encoding="utf-8") as handle:
         for key, value in values.items():
             if "\n" not in value and "\r" not in value:
                 print(f"{key}={value}", file=handle)
                 continue
-
-            delimiter = f"FINANCE_REPORT_OUTPUT_{os.urandom(16).hex()}"
-            while delimiter in value.splitlines():
-                delimiter = f"FINANCE_REPORT_OUTPUT_{os.urandom(16).hex()}"
-            print(f"{key}<<{delimiter}", file=handle)
-            print(value, file=handle)
-            print(delimiter, file=handle)
-
-
-def _load_stages_section(section: str, path: str | Path | None = None) -> dict[str, Any]:
-    source = Path(path) if path is not None else files("infra2_sdk").joinpath("data/stages.yaml")
-    with source.open(encoding="utf-8") as handle:
-        data = _yaml().safe_load(handle) or {}
-    mapping = data.get(section)
-    if not isinstance(mapping, dict):
-        raise ValueError(f"stages.yaml: {section!r} must be a mapping")
-    return mapping
+            delim = f"FINANCE_REPORT_OUTPUT_{os.urandom(16).hex()}"
+            while delim in value.splitlines():
+                delim = f"FINANCE_REPORT_OUTPUT_{os.urandom(16).hex()}"
+            print(f"{key}<<{delim}\n{value}\n{delim}", file=handle)
 
 
 def load_delivery_stages(path: str | Path | None = None) -> dict[str, dict]:
-    """Load the SDK-owned stage vocabulary as ``stage_id -> metadata``."""
-    return _load_stages_section("stages", path)
+    source = Path(path) if path is not None else files("infra2_sdk").joinpath("data/stages.yaml")
+    with source.open(encoding="utf-8") as handle:
+        data = _yaml().safe_load(handle) or {}
+    mapping = data.get("stages")
+    if not isinstance(mapping, dict):
+        raise ValueError("stages.yaml: 'stages' must be a mapping")
+    return mapping
 
 
-def validate_gate(
-    raw: dict,
-    *,
-    stage_ids: set[str],
-    id_prefix: str | None = None,
-) -> list[str]:
-    errors: list[str] = []
-    for field in _REQUIRED_GATE_FIELDS:
-        if not str(raw.get(field, "")).strip():
-            errors.append(f"missing required field {field!r}")
+def validate_gate(raw: dict, *, stage_ids: set[str], id_prefix: str | None = None) -> list[str]:
+    errors = [
+        f"missing required field {f!r}"
+        for f in _REQUIRED_GATE_FIELDS
+        if not str(raw.get(f, "")).strip()
+    ]
     gate_id = str(raw.get("id", ""))
     if gate_id and not _GATE_ID_RE.match(gate_id):
         errors.append(f"gate id {gate_id!r} must match {_GATE_ID_RE.pattern}")
@@ -461,16 +370,15 @@ def validate_gate(
 
 
 def validate_inventory(
-    gates: list[dict],
-    *,
-    stage_ids: set[str],
-    id_prefix: str | None = None,
+    gates: list[dict], *, stage_ids: set[str], id_prefix: str | None = None
 ) -> dict[str, object]:
     errors: list[str] = []
     seen: set[str] = set()
-    for index, gate in enumerate(gates):
-        for error in validate_gate(gate, stage_ids=stage_ids, id_prefix=id_prefix):
-            errors.append(f"gate[{index}] ({gate.get('id', '?')}): {error}")
+    for idx, gate in enumerate(gates):
+        errors.extend(
+            f"gate[{idx}] ({gate.get('id', '?')}): {err}"
+            for err in validate_gate(gate, stage_ids=stage_ids, id_prefix=id_prefix)
+        )
         gate_id = str(gate.get("id", ""))
         if gate_id in seen:
             errors.append(f"duplicate gate id {gate_id!r}")
@@ -479,11 +387,7 @@ def validate_inventory(
     return {"errors": errors, "ids": sorted(seen)}
 
 
-# --------------------------------------------------------------------------- manifests
-
-
 def validate_manifest_offline(manifest: Any) -> list[str]:
-    """Gate an environment manifest without any infrastructure."""
     return list(manifest.validate_offline())
 
 

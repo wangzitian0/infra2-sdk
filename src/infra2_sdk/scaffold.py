@@ -1,19 +1,4 @@
-"""Scaffolding engine and CLI for infra2 services.
-
-Generates a service skeleton:
-- compose.yaml (explicit memory ceilings, tmpfs secrets, health checks)
-- deploy.py (literal AST-evaluable ProbeFacet, SignalFacet, SecretsFacet)
-- secrets.ctmpl and vault-policy.hcl (rendered by infra2_sdk.secrets from one manifest)
-- vault-agent.hcl (AppRole sidecar configuration)
-- entrypoint.sh (secrets synchronization and alembic database migrations)
-- app.py (FastAPI app that calls init_service for /livez, /readyz and /health)
-- Dockerfile and requirements.txt
-
-The standalone profile skips the Vault files and writes .env.example instead.
-
-Usage:
-    python -m infra2_sdk.scaffold <name> [--project apps] [--port 8000] [--db postgres]
-"""
+"""Scaffolding engine and CLI for infra2 services."""
 
 from __future__ import annotations
 
@@ -29,7 +14,6 @@ from infra2_sdk.secrets import render_agent_policy, render_agent_template
 
 
 def _clean_ident(value: str) -> str:
-    """Normalize identifier for Postgres/Vault (lowercase, replace '-' with '_')."""
     return re.sub(r"[^a-zA-Z0-9_]", "_", value.strip().lower())
 
 
@@ -40,36 +24,40 @@ def _generate_compose_yaml(
     db: str = "postgres",
     profile: str = "infra2",
 ) -> str:
-    """Generate compose.yaml compliant with ops.standards.md §5 and memory limit lint."""
-    clean_service = _clean_ident(service_name)
-    clean_project = _clean_ident(project)
-    container_prefix = f"{clean_project}-{clean_service}"
+    svc = _clean_ident(service_name)
+    pfx = f"{_clean_ident(project)}-{svc}"
     db_env = "      DATABASE_URL: ${DATABASE_URL:-}\n" if db == "postgres" else ""
-    # A manifest without fields renders an empty .env, so the sidecar check tests existence.
-    env_file_test = "-s" if _scaffold_manifest(service_name, project, db).fields else "-e"
-
-    if profile == "standalone":
-        return f"""services:
-  {clean_service}:
+    ef_test = "-s" if _scaffold_manifest(service_name, project, db).fields else "-e"
+    is_sa = profile == "standalone"
+    cname = svc if is_sa else f"{pfx}${{ENV_SUFFIX}}"
+    mid = (
+        "    env_file:\n      - .env"
+        if is_sa
+        else "    depends_on:\n      - vault-agent\n    volumes:\n      - secrets:/secrets:ro"
+    )
+    env_val = "${ENV:-local_dev}" if is_sa else "${ENV}"
+    otel_svc = f"${{OTEL_SERVICE_NAME:-{svc}}}" if is_sa else "${OTEL_SERVICE_NAME:-}"
+    net_blk = "" if is_sa else "    networks:\n      - dokploy-network\n"
+    start_p = "30s" if is_sa else "120s"
+    app_blk = f"""  {svc}:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: {clean_service}
+    container_name: {cname}
     restart: always
     mem_limit: 256M
     deploy:
       resources:
         limits:
           memory: 256M
-    env_file:
-      - .env
+{mid}
     environment:
 {db_env}      PORT: "{port}"
-      ENV: ${{ENV:-local_dev}}
+      ENV: {env_val}
       OTEL_EXPORTER_OTLP_ENDPOINT: ${{OTEL_EXPORTER_OTLP_ENDPOINT:-}}
-      OTEL_SERVICE_NAME: ${{OTEL_SERVICE_NAME:-{clean_service}}}
+      OTEL_SERVICE_NAME: {otel_svc}
       OTEL_RESOURCE_ATTRIBUTES: ${{OTEL_RESOURCE_ATTRIBUTES:-}}
-    logging:
+{net_blk}    logging:
       driver: json-file
       options:
         max-size: "10m"
@@ -79,14 +67,15 @@ def _generate_compose_yaml(
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: {start_p}
 """
-
+    if is_sa:
+        return f"services:\n{app_blk}"
     return f"""services:
   vault-agent:
     init: true
     image: hashicorp/vault:1.15
-    container_name: {container_prefix}-vault-agent${{ENV_SUFFIX}}
+    container_name: {pfx}-vault-agent${{ENV_SUFFIX}}
     restart: always
     mem_limit: 128M
     deploy:
@@ -130,7 +119,7 @@ def _generate_compose_yaml(
       test:
         - CMD-SHELL
         - |
-          test {env_file_test} /vault/secrets/.env && \\
+          test {ef_test} /vault/secrets/.env && \\
             ! grep -q "<no value>" /vault/secrets/.env && \\
             test -s /vault/.token || exit 1
           if [ -z "$$(find /tmp/.vault_hc -mmin -5 2>/dev/null)" ]; then
@@ -143,41 +132,7 @@ def _generate_compose_yaml(
       retries: 3
       start_period: 10s
 
-  {clean_service}:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: {container_prefix}${{ENV_SUFFIX}}
-    restart: always
-    mem_limit: 256M
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-    depends_on:
-      - vault-agent
-    volumes:
-      - secrets:/secrets:ro
-    environment:
-{db_env}      PORT: "{port}"
-      ENV: ${{ENV}}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${{OTEL_EXPORTER_OTLP_ENDPOINT:-}}
-      OTEL_SERVICE_NAME: ${{OTEL_SERVICE_NAME:-}}
-      OTEL_RESOURCE_ATTRIBUTES: ${{OTEL_RESOURCE_ATTRIBUTES:-}}
-    networks:
-      - dokploy-network
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:{port}/health || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 120s
-
+{app_blk}
 volumes:
   secrets:
     driver_opts:
@@ -191,18 +146,11 @@ networks:
 """
 
 
-def _generate_deploy_py(
-    service_name: str,
-    project: str,
-    port: int,
-) -> str:
-    """Generate deploy.py with literal AST-compliant facet assignments on ClassDef.body."""
-    clean_service = _clean_ident(service_name)
-    clean_project = _clean_ident(project)
-    class_name = "".join(part.capitalize() for part in clean_service.split("_")) + "Deployer"
-    container_prefix = f"{clean_project}-{clean_service}"
-
-    return f'''"""{clean_service} service deployment — AST-compliant Deployer definition."""
+def _generate_deploy_py(service_name: str, project: str, port: int) -> str:
+    svc, prj = _clean_ident(service_name), _clean_ident(project)
+    cls_name = "".join(p.capitalize() for p in svc.split("_")) + "Deployer"
+    pfx = f"{prj}-{svc}"
+    return f'''"""{svc} service deployment — AST-compliant Deployer definition."""
 
 from __future__ import annotations
 
@@ -212,24 +160,24 @@ from invoke import task
 from common.core.facets import ProbeFacet, PublicRouteFacet, SecretsFacet, SignalFacet
 from common.deploy.deployer import Deployer, make_tasks
 
-shared_tasks = sys.modules.get("{clean_project}.{clean_service}.shared")
+shared_tasks = sys.modules.get("{prj}.{svc}.shared")
 
 
-class {class_name}(Deployer):
-    service = "{clean_service}"
-    project = "{clean_project}"
-    compose_path = "{clean_project}/{clean_service}/compose.yaml"
+class {cls_name}(Deployer):
+    service = "{svc}"
+    project = "{prj}"
+    compose_path = "{prj}/{svc}/compose.yaml"
     service_port = {port}
-    subdomain = "{clean_service}"
+    subdomain = "{svc}"
     public_route = PublicRouteFacet()
 
     backups = ()
 
     probes = (
         ProbeFacet(
-            name="{clean_service}-http",
+            name="{svc}-http",
             kind="http",
-            target="http://{container_prefix}${{ENV_SUFFIX}}:{port}/health",
+            target="http://{pfx}${{ENV_SUFFIX}}:{port}/health",
             expected="200",
             timeout_seconds=10,
         ),
@@ -246,15 +194,15 @@ class {class_name}(Deployer):
 
     secrets = (
         SecretsFacet(
-            vault_agent_container="{container_prefix}-vault-agent${{ENV_SUFFIX}}",
-            app_containers=("{container_prefix}${{ENV_SUFFIX}}",),
+            vault_agent_container="{pfx}-vault-agent${{ENV_SUFFIX}}",
+            app_containers=("{pfx}${{ENV_SUFFIX}}",),
             auth_method="approle",
         ),
     )
 
 
 if shared_tasks:
-    _tasks = make_tasks({class_name}, shared_tasks)
+    _tasks = make_tasks({cls_name}, shared_tasks)
     status = _tasks["status"]
     pre_compose = _tasks["pre_compose"]
     composing = _tasks["composing"]
@@ -267,10 +215,6 @@ if shared_tasks:
 def _scaffold_manifest(
     service_name: str, project: str, db: str = "postgres"
 ) -> EnvironmentManifest:
-    """Declare the secrets the generated app reads.
-
-    ``infra2_sdk.secrets`` renders the Vault Agent template and policy from this manifest.
-    """
     fields: tuple[EnvironmentField, ...] = ()
     if db == "postgres":
         fields = (
@@ -284,12 +228,12 @@ def _scaffold_manifest(
                 source=_FieldSource.HUMAN,
             ),
         )
-    source = f"scaffold:{_clean_ident(project)}/{_clean_ident(service_name)}"
-    return EnvironmentManifest(source=source, fields=fields)
+    return EnvironmentManifest(
+        source=f"scaffold:{_clean_ident(project)}/{_clean_ident(service_name)}", fields=fields
+    )
 
 
 def _generate_vault_agent_hcl() -> str:
-    """Generate platform canonical Vault Agent configuration."""
     return """vault {
   address = "${VAULT_ADDR}"
 }
@@ -326,13 +270,8 @@ template {
 
 
 def _generate_entrypoint_sh(port: int, profile: str = "infra2") -> str:
-    """Generate entrypoint script waiting for tmpfs secrets and executing migrations."""
-    if profile == "standalone":
-        return f"""#!/bin/sh
-set -e
-
-# Source .env if present
-if [ -f ".env" ]; then
+    head = (
+        """if [ -f ".env" ]; then
   set -a
   . ./.env
   set +a
@@ -340,33 +279,21 @@ elif [ -f "/secrets/.env" ]; then
   set -a
   . /secrets/.env
   set +a
-fi
-
-# Apply database migrations if alembic exists
-if [ -f "alembic.ini" ]; then
-  echo "Applying database migrations..."
-  alembic upgrade head || echo "Alembic upgrade completed with warnings"
-fi
-
-echo "Starting service on port ${{PORT:-{port}}}..."
-exec "$@"
-"""
-
-    return f"""#!/bin/sh
-set -e
-
-# Wait for Vault Agent sidecar to render secrets
-echo "Waiting for /secrets/.env..."
+fi"""
+        if profile == "standalone"
+        else """echo "Waiting for /secrets/.env..."
 while [ ! -f /secrets/.env ]; do
   sleep 1
 done
-
-# Source runtime secrets into environment
 set -a
 . /secrets/.env
-set +a
+set +a"""
+    )
+    return f"""#!/bin/sh
+set -e
 
-# Apply database migrations if alembic exists
+{head}
+
 if [ -f "alembic.ini" ]; then
   echo "Applying database migrations..."
   alembic upgrade head || echo "Alembic upgrade completed with warnings"
@@ -378,92 +305,68 @@ exec "$@"
 
 
 def _generate_env_example(service_name: str, port: int, db: str = "postgres") -> str:
-    """Generate 12-factor environment template."""
-    clean_service = _clean_ident(service_name)
+    svc = _clean_ident(service_name)
     lines = [
         f"PORT={port}",
         "ENV=local_dev",
-        f"OTEL_SERVICE_NAME={clean_service}",
+        f"OTEL_SERVICE_NAME={svc}",
         "OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318",
     ]
     if db == "postgres":
-        lines.append(f"DATABASE_URL=postgresql://postgres:postgres@localhost:5432/{clean_service}")
+        lines.append(f"DATABASE_URL=postgresql://postgres:postgres@localhost:5432/{svc}")
     return "\n".join(lines) + "\n"
 
 
 def _generate_fastapi_app(service_name: str, db: str = "postgres", profile: str = "infra2") -> str:
-    """Generate starter FastAPI application with 1-liner init_service.
-
-    The infra2 profile keeps the default ``strict_otel=True``: its compose file passes ``ENV``
-    from the deployment, and an unset ``ENV`` stops the service. The standalone profile passes
-    ``strict_otel=False``, because a laptop sets no tier. Its compose file defaults ``ENV`` to
-    ``local_dev``, so a deployment must also set a real ``ENV``.
-    """
-    clean_service = _clean_ident(service_name)
+    svc = _clean_ident(service_name)
     if profile == "standalone":
-        strict_note = (
+        note = (
             "# A laptop sets no ENVIRONMENT, so strict_otel=False lets the service start.\n"
             "# For a deployment, remove it and set ENV to the real tier.\n"
             "# The compose file defaults ENV to local_dev: removing the keyword is not enough.\n"
         )
-        strict_option = ", strict_otel=False"
+        opt = ", strict_otel=False"
     else:
-        strict_note = strict_option = ""
+        note = opt = ""
     if db == "postgres":
-        return f'''"""Application entry point for {clean_service}."""
-
-import os
-
-from fastapi import FastAPI
-from infra2_sdk.fastapi import init_service
-from infra2_sdk.runtime.postgres import PostgresSettings, probe_postgres
-
-app = FastAPI(title="{clean_service}")
-
-# The compose file passes an empty DATABASE_URL when the shell sets none.
+        imports = (
+            "import os\n\nfrom fastapi import FastAPI\n"
+            "from infra2_sdk.fastapi import init_service\n"
+            "from infra2_sdk.runtime.postgres import PostgresSettings, probe_postgres"
+        )
+        db_blk = """
 database_url = os.environ.get("DATABASE_URL", "").strip()
 if not database_url:
     raise RuntimeError("DATABASE_URL is required")
 
-# Database reachability probe via infra2_sdk standard PostgreSQL adapter
 db_settings = PostgresSettings(dsn=database_url)
 
 
 def check_db() -> tuple[bool, str]:
     res = probe_postgres(db_settings)
     return (res.status.value == "present", res.detail or "ok")
+"""
+        db_kw = ", db_checker=check_db"
+    else:
+        imports = "from fastapi import FastAPI\nfrom infra2_sdk.fastapi import init_service"
+        db_blk = db_kw = ""
+    return f'''"""Application entry point for {svc}."""
 
+{imports}
 
-# Registers /livez, /readyz and /health.
-# Starts OpenTelemetry when OTEL_EXPORTER_OTLP_ENDPOINT is set.
-{strict_note}init_service(app, name="{clean_service}", db_checker=check_db{strict_option})
+app = FastAPI(title="{svc}")
+{db_blk}
 
-
-@app.get("/")
-def read_root():
-    return {{"service": "{clean_service}", "status": "running"}}
-'''
-
-    return f'''"""Application entry point for {clean_service}."""
-
-from fastapi import FastAPI
-from infra2_sdk.fastapi import init_service
-
-app = FastAPI(title="{clean_service}")
-
-# Registers /livez, /readyz and /health.
-# Starts OpenTelemetry when OTEL_EXPORTER_OTLP_ENDPOINT is set.
-{strict_note}init_service(app, name="{clean_service}"{strict_option})
+{note}init_service(app, name="{svc}"{db_kw}{opt})
 
 
 @app.get("/")
 def read_root():
-    return {{"service": "{clean_service}", "status": "running"}}
+    return {{"service": "{svc}", "status": "running"}}
 '''
 
 
 def _generate_dockerfile(port: int) -> str:
-    """Generate standard lightweight Dockerfile."""
     return f"""FROM python:3.12-slim
 
 WORKDIR /app
@@ -486,32 +389,17 @@ CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "{port}"]
 
 
 def _sdk_release_version() -> str:
-    """Return the release part (``major.minor.patch``) of the running SDK version.
-
-    The generated app relies on the behavior of the SDK that generated it.
-    A suffix such as ``.dev1``, ``+local``, ``rc1`` or ``.post1`` is dropped.
-    Raise ``ValueError`` when the version has no release part.
-    """
-    sdk_version = infra2_sdk.__version__
-    match = re.match(r"\d+\.\d+\.\d+", sdk_version)
-    if match is None:
-        raise ValueError(f"SDK version {sdk_version!r} has no major.minor.patch release part")
-    return match.group()
+    m = re.match(r"\d+\.\d+\.\d+", infra2_sdk.__version__)
+    if m is None:
+        raise ValueError(
+            f"SDK version {infra2_sdk.__version__!r} has no major.minor.patch release part"
+        )
+    return m.group()
 
 
 def _generate_requirements_txt(template: str = "fastapi", db: str = "postgres") -> str:
-    """Generate minimum starter dependencies.
-
-    The lower bound of ``infra2-sdk`` is the release part of the SDK version that runs
-    this function. The bound follows the SDK release without a second version number.
-    """
-    extras = ["fastapi", "otel"]
-    if db == "postgres":
-        extras.append("postgres")
-    extras_str = ",".join(extras)
-    return f"""uvicorn[standard]>=0.28.0,<1.0.0
-infra2-sdk[{extras_str}]>={_sdk_release_version()}
-"""
+    extras = ",".join(["fastapi", "otel", *(["postgres"] if db == "postgres" else [])])
+    return f"uvicorn[standard]>=0.28.0,<1.0.0\ninfra2-sdk[{extras}]>={_sdk_release_version()}\n"
 
 
 def scaffold_service(
@@ -523,15 +411,9 @@ def scaffold_service(
     db: str = "postgres",
     profile: str = "infra2",
 ) -> list[str]:
-    """Scaffold a new microservice repository or subdirectory.
-
-    Returns list of created relative file paths.
-    """
     if template != "fastapi":
         raise ValueError(f"unsupported template {template!r}: only 'fastapi' exists")
     target_dir.mkdir(parents=True, exist_ok=True)
-    created: list[str] = []
-
     files: dict[str, str] = {
         "compose.yaml": _generate_compose_yaml(name, project, port, db, profile=profile),
         "entrypoint.sh": _generate_entrypoint_sh(port, profile=profile),
@@ -539,85 +421,53 @@ def scaffold_service(
         "requirements.txt": _generate_requirements_txt(template=template, db=db),
         "app.py": _generate_fastapi_app(name, db=db, profile=profile),
     }
-
     if profile == "infra2":
-        manifest = _scaffold_manifest(name, project, db)
-        vault_names = {"project": _clean_ident(project), "service": _clean_ident(name)}
-        files["deploy.py"] = _generate_deploy_py(name, project, port)
-        files["secrets.ctmpl"] = render_agent_template(manifest, **vault_names)
-        files["vault-policy.hcl"] = render_agent_policy(manifest, **vault_names)
-        files["vault-agent.hcl"] = _generate_vault_agent_hcl()
+        mf = _scaffold_manifest(name, project, db)
+        vn = {"project": _clean_ident(project), "service": _clean_ident(name)}
+        files.update(
+            {
+                "deploy.py": _generate_deploy_py(name, project, port),
+                "secrets.ctmpl": render_agent_template(mf, **vn),
+                "vault-policy.hcl": render_agent_policy(mf, **vn),
+                "vault-agent.hcl": _generate_vault_agent_hcl(),
+            }
+        )
     elif profile == "standalone":
         files[".env.example"] = _generate_env_example(name, port, db)
-
-    for rel_path, content in files.items():
-        file_path = target_dir / rel_path
-        file_path.write_text(content, encoding="utf-8")
-        if rel_path.endswith(".sh"):
-            file_path.chmod(0o755)
-        created.append(rel_path)
-
-    return created
+    for rel, content in files.items():
+        fp = target_dir / rel
+        fp.write_text(content, encoding="utf-8")
+        if rel.endswith(".sh"):
+            fp.chmod(0o755)
+    return list(files)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
-    if argv and argv[0] == "scaffold":
+    if argv[:1] == ["scaffold"]:
         argv = argv[1:]
-
-    parser = argparse.ArgumentParser(description="Zero-Compromise Microservice Scaffolder")
-    parser.add_argument("name", help="Service name (e.g. demo-app)")
-    parser.add_argument("--project", default="apps", help="Project identifier (default: apps)")
-    parser.add_argument("--port", type=int, default=8000, help="HTTP service port (default: 8000)")
-    parser.add_argument(
-        "--template",
-        choices=["fastapi"],
-        default="fastapi",
-        help="App template",
-    )
-    parser.add_argument(
-        "--db",
-        choices=["postgres", "none"],
-        default="postgres",
-        help="Database backend",
-    )
-    parser.add_argument(
-        "--profile",
-        choices=["infra2", "standalone"],
-        default="infra2",
-        help="Target profile: infra2 (Dokploy/Vault sidecar) or standalone (pure 12-factor .env)",
-    )
-    parser.add_argument(
-        "--out-dir", default=None, help="Target output directory (default: ./<name>)"
-    )
-
-    args = parser.parse_args(argv)
-    out = Path(args.out_dir) if args.out_dir else Path(f"./{args.name}")
-
+    p = argparse.ArgumentParser(description="Zero-Compromise Microservice Scaffolder")
+    p.add_argument("name")
+    p.add_argument("--project", default="apps")
+    p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--template", choices=["fastapi"], default="fastapi")
+    p.add_argument("--db", choices=["postgres", "none"], default="postgres")
+    p.add_argument("--profile", choices=["infra2", "standalone"], default="infra2")
+    p.add_argument("--out-dir", default=None)
+    a = p.parse_args(argv)
+    out = Path(a.out_dir or f"./{a.name}")
     try:
-        created = scaffold_service(
-            name=args.name,
-            target_dir=out,
-            project=args.project,
-            port=args.port,
-            template=args.template,
-            db=args.db,
-            profile=args.profile,
-        )
-        print(f"✅ Successfully scaffolded '{args.name}' in {out.resolve()}:")
+        created = scaffold_service(a.name, out, a.project, a.port, a.template, a.db, a.profile)
+        print(f"Successfully scaffolded '{a.name}' in {out.resolve()}:")
         for f in created:
             print(f"  - {f}")
         return 0
     except Exception as exc:
-        print(f"❌ Scaffolding failed: {exc}", file=sys.stderr)
+        print(f"Scaffolding failed: {exc}", file=sys.stderr)
         return 1
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())
 
-
-__all__ = [
-    "main",
-    "scaffold_service",
-]
+__all__ = ["main", "scaffold_service"]

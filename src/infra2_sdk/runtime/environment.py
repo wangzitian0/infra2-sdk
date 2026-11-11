@@ -13,8 +13,6 @@ from infra2_sdk.runtime._otel_env import load_resource_attributes
 
 
 class RuntimeEnvKey(StrEnum):
-    """Canonical environment variables owned by the portable runtime contract."""
-
     ENVIRONMENT = "ENVIRONMENT"
     SERVICE_NAME = "OTEL_SERVICE_NAME"
     SERVICE_VERSION = "SERVICE_VERSION"
@@ -36,11 +34,7 @@ class RuntimeEnvSpec:
     sensitive: bool = False
 
     def to_dict(self) -> dict[str, object]:
-        return {
-            "name": self.key.value,
-            "aliases": list(self.aliases),
-            "sensitive": self.sensitive,
-        }
+        return {"name": self.key.value, "aliases": list(self.aliases), "sensitive": self.sensitive}
 
 
 RUNTIME_ENV_SPECS = (
@@ -54,7 +48,6 @@ RUNTIME_ENV_SPECS = (
     RuntimeEnvSpec(RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT),
     RuntimeEnvSpec(RuntimeEnvKey.OTEL_RESOURCE_ATTRIBUTES),
 )
-
 _SPECS_BY_KEY = {spec.key: spec for spec in RUNTIME_ENV_SPECS}
 
 
@@ -63,7 +56,6 @@ def runtime_env_spec(key: str | RuntimeEnvKey) -> RuntimeEnvSpec:
 
 
 def runtime_env_contract() -> dict[str, object]:
-    """Return the stable, serializable vocabulary consumed by platform canaries."""
     return {
         "contract_version": RUNTIME_ENV_CONTRACT_VERSION,
         "variables": [spec.to_dict() for spec in RUNTIME_ENV_SPECS],
@@ -77,7 +69,6 @@ def resolve_runtime_env(
     default: str | None = None,
     required: bool = False,
 ) -> _ResolvedEnvValue:
-    """Resolve a registered key using its single-source aliases and sensitivity."""
     spec = runtime_env_spec(key)
     return _resolve_env(
         environ,
@@ -108,22 +99,18 @@ def _resolve_env(
     required: bool = False,
     sensitive: bool = False,
 ) -> _ResolvedEnvValue:
-    """Resolve one variable and reject ambiguous aliases without logging values."""
     values = os.environ if environ is None else environ
     canonical = str(key)
     candidates = (canonical, *aliases)
-    present: list[tuple[str, str]] = []
-    for name in candidates:
-        raw = values.get(name)
-        if isinstance(raw, str) and raw.strip():
-            present.append((name, raw if sensitive else raw.strip()))
-
-    distinct = {value for _, value in present}
-    if len(distinct) > 1:
+    present = [
+        (name, raw if sensitive else raw.strip())
+        for name in candidates
+        if isinstance(raw := values.get(name), str) and raw.strip()
+    ]
+    if len({val for _, val in present}) > 1:
         names = ", ".join(name for name, _ in present)
         label = "sensitive environment variables" if sensitive else "environment variables"
         raise EnvironmentConflictError(f"conflicting {label} for {canonical}: {names}")
-
     if present:
         by_name = dict(present)
         for name in candidates:
@@ -151,8 +138,6 @@ def env_int(
 
 
 class EnvironmentTier(StrEnum):
-    """A runtime tier, independent of the backend that provides its dependencies."""
-
     LOCAL_DEV = "local_dev"
     LOCAL_TEST = "local_test"
     GITHUB_CI = "github_ci"
@@ -162,25 +147,14 @@ class EnvironmentTier(StrEnum):
 
 
 class _UnknownEnvironmentPolicy(StrEnum):
-    """How a consumer handles an environment name outside the shared vocabulary."""
-
     ERROR = "error"
     PRODUCTION = "production"
 
 
 _PLATFORM_OWNED_TIERS = frozenset(
-    {
-        EnvironmentTier.PREVIEW,
-        EnvironmentTier.STAGING,
-        EnvironmentTier.PRODUCTION,
-    }
+    {EnvironmentTier.PREVIEW, EnvironmentTier.STAGING, EnvironmentTier.PRODUCTION}
 )
-
-#: The canary deployment slot, and therefore that slot's ``deployment.environment.name``.
-#: Defined here, not in ``routing`` (which re-exports it), because ``routing`` imports this
-#: module: one definition, and the tier vocabulary below recognises it as a preview (#54).
 _CANARY_SLOT = "canary-preview"
-
 _LOCAL_DEV_ALIASES = frozenset({"dev", "development", "local", "local_dev"})
 _LOCAL_TEST_ALIASES = frozenset({"test", "testing", "ci", "local_ci", "local_test"})
 _PRODUCTION_ALIASES = frozenset({"prod", "production"})
@@ -193,28 +167,22 @@ _UNDERSCORE_PREVIEW_PREFIX_RE = re.compile(
 
 
 def _canonicalize_preview_alias(cleaned: str) -> str:
-    """Convert underscore preview aliases from infra2 into hyphenated form."""
     if cleaned == "canary_preview":
         return _CANARY_SLOT
     match = _UNDERSCORE_PREVIEW_PREFIX_RE.match(cleaned)
     if match is not None:
-        rest = match["rest"]
-        if match["prefix"] == "tag":
-            rest = rest.replace("_", "-")
+        rest = match["rest"].replace("_", "-") if match["prefix"] == "tag" else match["rest"]
         return f"{match['prefix']}-{rest}"
     return cleaned
 
 
 def is_preview_alias(value: str) -> bool:
-    """Return True when value is a canonical or underscore preview alias."""
     alias = _canonicalize_preview_alias(value.strip().lower())
     return alias == _CANARY_SLOT or bool(_PREVIEW_ALIAS_RE.match(alias))
 
 
 @dataclass(frozen=True)
 class RuntimeEnvironment:
-    """A deployment display name and its portable behavioral tier."""
-
     name: str
     tier: EnvironmentTier
 
@@ -225,23 +193,12 @@ def to_environment_tier(
     github_actions: bool = False,
     unknown: str | _UnknownEnvironmentPolicy = _UnknownEnvironmentPolicy.ERROR,
 ) -> EnvironmentTier:
-    """Map any environment representation to canonical EnvironmentTier.
-
-    Accepts:
-    - EnvironmentTier instance
-    - DeployType instance or value (STAGING -> STAGING, PRODUCTION -> PRODUCTION,
-      PREVIEW_* -> PREVIEW, CANARY -> PREVIEW)
-    - Raw environment strings and aliases ("prod", "production", "preview",
-      "local", "pr", "local_ci", etc.)
-    """
     if isinstance(value, EnvironmentTier):
         return value
-
     if isinstance(value, str):
         cleaned = value.strip().lower()
         if cleaned in ("pr", "canary") or cleaned.startswith("preview/"):
             return EnvironmentTier.PREVIEW
-
         normalized = cleaned.replace("-", "_")
         if normalized in _LOCAL_DEV_ALIASES:
             return EnvironmentTier.LOCAL_DEV
@@ -260,15 +217,11 @@ def to_environment_tier(
             return EnvironmentTier.STAGING
         if normalized in _PRODUCTION_ALIASES:
             return EnvironmentTier.PRODUCTION
-
-        policy = _UnknownEnvironmentPolicy(unknown)
-        if policy is _UnknownEnvironmentPolicy.PRODUCTION:
+        if _UnknownEnvironmentPolicy(unknown) is _UnknownEnvironmentPolicy.PRODUCTION:
             return EnvironmentTier.PRODUCTION
         raise ValueError(f"unknown environment: {value!r}")
-
     if hasattr(value, "value") and isinstance(value.value, str):
         return to_environment_tier(value.value, github_actions=github_actions, unknown=unknown)
-
     raise TypeError(f"cannot convert {type(value).__name__} to EnvironmentTier")
 
 
@@ -278,10 +231,6 @@ def resolve_environment_tier(
     github_actions: bool = False,
     unknown: str | _UnknownEnvironmentPolicy = _UnknownEnvironmentPolicy.ERROR,
 ) -> EnvironmentTier:
-    """Normalize common aliases while making fail-closed behavior explicit.
-
-    Delegates to the canonical implementation `to_environment_tier`.
-    """
     if not isinstance(value, (str, EnvironmentTier)):
         raise TypeError("environment must be a string or EnvironmentTier")
     return to_environment_tier(value, github_actions=github_actions, unknown=unknown)
@@ -294,8 +243,6 @@ def environment_from_env(
     github_actions: bool | None = None,
     unknown: str | _UnknownEnvironmentPolicy = _UnknownEnvironmentPolicy.ERROR,
 ) -> RuntimeEnvironment:
-    """Resolve locally, optionally requiring an explicit deployed environment."""
-
     resolved = resolve_runtime_env(
         environ,
         RuntimeEnvKey.ENVIRONMENT,
@@ -307,11 +254,7 @@ def environment_from_env(
     values = os.environ if environ is None else environ
     if github_actions is None:
         github_actions = values.get("GITHUB_ACTIONS", "").strip().lower() == "true"
-    tier = to_environment_tier(
-        resolved.value,
-        github_actions=github_actions,
-        unknown=unknown,
-    )
+    tier = to_environment_tier(resolved.value, github_actions=github_actions, unknown=unknown)
     raw_name = _canonicalize_preview_alias(resolved.value.strip().lower())
     name = raw_name if tier is EnvironmentTier.PREVIEW and raw_name != "preview" else tier.value
     return RuntimeEnvironment(name=name, tier=tier)
@@ -323,32 +266,16 @@ def strict_environment_from_env(
     github_actions: bool | None = None,
     unknown: str | _UnknownEnvironmentPolicy = _UnknownEnvironmentPolicy.ERROR,
 ) -> RuntimeEnvironment:
-    """Require an explicit environment for deployed/protected runtime validation."""
-
     return environment_from_env(
-        environ,
-        required=True,
-        github_actions=github_actions,
-        unknown=unknown,
+        environ, required=True, github_actions=github_actions, unknown=unknown
     )
 
 
-#: The resource attributes that name a service. A blank one is missing, like a blank variable.
-_IDENTITY_ATTRIBUTES = (
-    "service.name",
-    "service.version",
-    "service.instance.id",
-)
+_IDENTITY_ATTRIBUTES = ("service.name", "service.version", "service.instance.id")
 
 
 @dataclass(frozen=True)
 class _ServiceIdentity:
-    """What one environment says about one service. ``_resolve_service_identity`` builds it.
-
-    ``environment_is_set`` is true when ``ENVIRONMENT`` or one of its aliases is set. When it is
-    false in non-strict mode, the tier is the ``local_dev`` default.
-    """
-
     environment: RuntimeEnvironment
     environment_is_set: bool
     attributes: dict[str, str]
@@ -365,12 +292,9 @@ def _resolve_service_identity(
     default_service_name: str | None = None,
     ignore_environment: bool = False,
 ) -> _ServiceIdentity:
-    """Resolve the tier and the service coordinates of one environment."""
-
     if ignore_environment:
         runtime = RuntimeEnvironment(
-            name=EnvironmentTier.LOCAL_DEV.value,
-            tier=EnvironmentTier.LOCAL_DEV,
+            name=EnvironmentTier.LOCAL_DEV.value, tier=EnvironmentTier.LOCAL_DEV
         )
         environment_is_set = False
     else:
@@ -404,12 +328,7 @@ def _resolve_service_identity(
     )
 
 
-def _normalize_deployment_environment(
-    value: str,
-    tier: str | EnvironmentTier,
-) -> str:
-    """Validate a display identity without imposing a platform's preview naming scheme."""
-
+def _normalize_deployment_environment(value: str, tier: str | EnvironmentTier) -> str:
     resolved_tier = to_environment_tier(tier)
     display = _canonicalize_preview_alias(value.strip().lower())
     if not display:

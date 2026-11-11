@@ -1,14 +1,12 @@
-"""Capacity limits and readings: the quota side of every external dependency.
-
-A limit is a number per window; a reading is what was used. ``evaluate`` turns them into
-levels a daily check can act on. The collector for an open API (Cloudflare analytics) lives
-here so that no consumer re-implements the query.
-"""
+"""Capacity limits, quota evaluation, sliding-window rate budgets, and Cloudflare readings."""
 
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+import threading
+import time
+from collections import deque
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from datetime import date
 
@@ -80,25 +78,75 @@ def evaluate(
     *,
     warn_ratio: float = 0.8,
 ) -> CapacityReport:
-    """Pair limits with readings by name. A limit without a reading is ``unknown``."""
-
-    used_by_name = {reading.name: reading.used for reading in readings}
+    """Pair limits with readings by name; a limit without a reading is ``unknown``."""
+    used_by_name = {r.name: r.used for r in readings}
     items: list[_CapacityItem] = []
-    for limit in limits:
-        used = used_by_name.get(limit.name)
-        if used is None:
-            level = "unknown"
-        elif used >= limit.limit:
-            level = "exceeded"
-        elif used >= limit.limit * warn_ratio:
-            level = "warn"
-        else:
-            level = "ok"
-        items.append(_CapacityItem(limit.name, used, limit.limit, limit.window, level))
+    for lim in limits:
+        used = used_by_name.get(lim.name)
+        level = (
+            "unknown"
+            if used is None
+            else "exceeded"
+            if used >= lim.limit
+            else "warn"
+            if used >= lim.limit * warn_ratio
+            else "ok"
+        )
+        items.append(_CapacityItem(lim.name, used, lim.limit, lim.window, level))
     return CapacityReport(tuple(items))
 
 
-# --------------------------------------------------------------------------- known limits
+class RateLimitWindow:
+    """Thread-safe sliding-window request or token budget tracker."""
+
+    def __init__(
+        self,
+        limit: int,
+        window_seconds: float,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        if limit <= 0 or window_seconds <= 0:
+            raise ValueError("limit and window_seconds must be positive")
+        self.limit = limit
+        self.window_seconds = float(window_seconds)
+        self._clock = clock
+        self._events: deque[tuple[float, int]] = deque()
+        self._used = 0
+        self._lock = threading.Lock()
+
+    def _evict(self, now: float) -> None:
+        cutoff = now - self.window_seconds
+        while self._events and self._events[0][0] <= cutoff:
+            _, cost = self._events.popleft()
+            self._used -= cost
+
+    def acquire(self, cost: int = 1) -> tuple[bool, float]:
+        """Consume ``cost`` units when within budget; return ``(allowed, retry_after_seconds)``."""
+        if cost <= 0 or cost > self.limit:
+            raise ValueError("cost must be between 1 and limit")
+        with self._lock:
+            now = self._clock()
+            self._evict(now)
+            if self._used + cost <= self.limit:
+                self._events.append((now, cost))
+                self._used += cost
+                return True, 0.0
+            freed = 0
+            wait_until = now + self.window_seconds
+            for ts, entry_cost in self._events:
+                freed += entry_cost
+                if self._used - freed + cost <= self.limit:
+                    wait_until = ts + self.window_seconds
+                    break
+            return False, max(0.0, wait_until - now)
+
+    @property
+    def used(self) -> int:
+        with self._lock:
+            self._evict(self._clock())
+            return self._used
+
 
 CLOUDFLARE_FREE_TIER = (
     _CapacityLimit("cloudflare.kv.write", 1_000),
@@ -108,71 +156,55 @@ CLOUDFLARE_FREE_TIER = (
     _CapacityLimit("cloudflare.workers.requests", 100_000),
 )
 
-# --------------------------------------------------------------------------- collectors
-
 _CF_GRAPHQL = "https://api.cloudflare.com/client/v4/graphql"
-_CF_QUERY = """
-query($account: string!, $start: Time!, $end: Time!) {
-  viewer { accounts(filter: {accountTag: $account}) {
-    kv: kvOperationsAdaptiveGroups(
-      limit: 500, filter: {datetime_geq: $start, datetime_leq: $end}
-    ) { sum { requests } dimensions { actionType } }
-    workers: workersInvocationsAdaptive(
-      limit: 500, filter: {datetime_geq: $start, datetime_leq: $end}
-    ) { sum { requests } }
-  } }
-}
-"""
+_CF_QUERY = (
+    "query($account: string!, $start: Time!, $end: Time!) {"
+    " viewer { accounts(filter: {accountTag: $account}) {"
+    " kv: kvOperationsAdaptiveGroups("
+    "limit: 500, filter: {datetime_geq: $start, datetime_leq: $end})"
+    " { sum { requests } dimensions { actionType } }"
+    " workers: workersInvocationsAdaptive("
+    "limit: 500, filter: {datetime_geq: $start, datetime_leq: $end})"
+    " { sum { requests } } } } }"
+)
 
 
 def cloudflare_readings(
-    *,
-    account: str,
-    token: str,
-    day: date,
-    transport: HttpTransport | None = None,
+    *, account: str, token: str, day: date, transport: HttpTransport | None = None
 ) -> tuple[CapacityReading, ...]:
-    """KV operations by action and Workers invocations for one UTC day."""
-
+    """Return Cloudflare KV and Workers readings for one UTC day."""
     send = transport or urllib_transport()
-    variables = {
-        "account": account,
-        "start": f"{day.isoformat()}T00:00:00Z",
-        "end": f"{day.isoformat()}T23:59:59Z",
-    }
-    response = send(
+    iso = day.isoformat()
+    variables = {"account": account, "start": f"{iso}T00:00:00Z", "end": f"{iso}T23:59:59Z"}
+    resp = send(
         "POST",
         _CF_GRAPHQL,
         {"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        json.dumps({"query": _CF_QUERY, "variables": variables}).encode("utf-8"),
+        json.dumps({"query": _CF_QUERY, "variables": variables}).encode(),
     )
-    if response.status != 200:
-        raise RuntimeError(f"Cloudflare analytics failed with HTTP {response.status}")
-    payload = json.loads(response.body.decode("utf-8"))
+    if resp.status != 200:
+        raise RuntimeError(f"Cloudflare analytics failed with HTTP {resp.status}")
+    payload = json.loads(resp.body.decode())
     if payload.get("errors"):
         raise RuntimeError("Cloudflare analytics returned errors")
-    data = payload.get("data") or {}
-    viewer = data.get("viewer") or {}
-    accounts = viewer.get("accounts") or []
+    accounts = ((payload.get("data") or {}).get("viewer") or {}).get("accounts") or []
     if not accounts:
         return ()
     kv: dict[str, int] = {}
     for row in accounts[0].get("kv") or []:
-        action = str(row["dimensions"]["actionType"])
-        kv[action] = kv.get(action, 0) + int(row["sum"]["requests"])
-    worker_rows = accounts[0].get("workers") or []
-    workers = sum(int(row["sum"]["requests"]) for row in worker_rows)
-    readings = [
-        CapacityReading(f"cloudflare.kv.{action}", used) for action, used in sorted(kv.items())
-    ]
-    readings.append(CapacityReading("cloudflare.workers.requests", workers))
-    return tuple(readings)
+        act = str(row["dimensions"]["actionType"])
+        kv[act] = kv.get(act, 0) + int(row["sum"]["requests"])
+    workers = sum(int(r["sum"]["requests"]) for r in accounts[0].get("workers") or [])
+    out = [CapacityReading(f"cloudflare.kv.{act}", val) for act, val in sorted(kv.items())]
+    out.append(CapacityReading("cloudflare.workers.requests", workers))
+    return tuple(out)
 
 
 __all__ = [
     "CLOUDFLARE_FREE_TIER",
     "CapacityReading",
     "CapacityReport",
+    "RateLimitWindow",
     "cloudflare_readings",
     "evaluate",
 ]

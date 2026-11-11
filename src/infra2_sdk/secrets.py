@@ -1,10 +1,4 @@
-"""Secret-store adapters and the manifest-driven resolver.
-
-Two open protocols, one resolver, two renderers. The resolver is the only writer of the
-deployment secret store: human-class values are copied from the human store (1Password),
-runtime-class values are generated once, release/decision values never enter the store.
-Every operation is idempotent (read, diff, write only what differs) and reports names only.
-"""
+"""Secret-store adapters and manifest-driven resolver."""
 
 from __future__ import annotations
 
@@ -15,21 +9,15 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from infra2_sdk.runtime.config_schema import (
-    EnvironmentField,
-    EnvironmentManifest,
-    _FieldSource,
-)
+from infra2_sdk.runtime.config_schema import EnvironmentField, EnvironmentManifest, _FieldSource
 from infra2_sdk.transport import HttpResponse, HttpTransport, urllib_transport
 
 _VAULT_USER_AGENT = "infra2-sdk/secrets (+https://github.com/wangzitian0/infra2-sdk)"
-
-
 _WRITE_MODES = ("patch", "update")
 
 
 class SecretsError(RuntimeError):
-    """A backend refused or failed; the message never carries a secret value."""
+    pass
 
 
 @dataclass(frozen=True)
@@ -43,36 +31,22 @@ class WriteResult:
 
 class _SecretsBackend(Protocol):
     def read(self, path: str) -> Mapping[str, str]: ...
-
     def write(self, path: str, values: Mapping[str, str]) -> WriteResult: ...
 
 
-# --------------------------------------------------------------------------- paths
-
-
 def vault_path(project: str, env: str, service: str) -> str:
-    """Mount-relative KV path; the same coordinate every infra2 service already uses."""
     return f"{project}/{env}/{service}"
 
 
 def op_item(project: str, env: str, service: str, *, scope: str = "env") -> str:
-    """1Password item title for a service's human-class values.
-
-    ``project/env/service`` per environment, ``project/shared/service`` for
-    project-scoped values, and ``bootstrap/service`` for the bootstrap project, which
-    has no environment layer.
-    """
-    if project == "bootstrap":
-        return f"bootstrap/{service}"
-    return f"{project}/{'shared' if scope == 'project' else env}/{service}"
-
-
-# --------------------------------------------------------------------------- backends
+    return (
+        f"bootstrap/{service}"
+        if project == "bootstrap"
+        else f"{project}/{'shared' if scope == 'project' else env}/{service}"
+    )
 
 
 class VaultKvBackend:
-    """HashiCorp Vault KV v2 over its HTTP API. Writes are merge patches of changed keys."""
-
     def __init__(
         self,
         address: str,
@@ -94,9 +68,6 @@ class VaultKvBackend:
         self._mount = mount.strip("/")
         self._send = transport or urllib_transport()
         self._user_agent = user_agent
-        # "patch": KV v2 merge PATCH of the changed keys (needs the ``patch`` capability).
-        # "update": read → merge → POST of the whole document (needs only ``update``,
-        # which is what deploy identities are typically granted).
         self._write_mode = write_mode
 
     @classmethod
@@ -107,7 +78,6 @@ class VaultKvBackend:
         transport: HttpTransport | None = None,
         write_mode: str = "patch",
     ) -> VaultKvBackend:
-        """VAULT_ADDR + VAULT_TOKEN, or VAULT_ADDR + VAULT_ROLE_ID/VAULT_SECRET_ID (AppRole)."""
         address = environ.get("VAULT_ADDR", "").strip()
         if not address:
             raise SecretsError("VAULT_ADDR is not set")
@@ -125,101 +95,76 @@ class VaultKvBackend:
         address: str, role_id: str, secret_id: str, *, transport: HttpTransport | None = None
     ) -> str:
         send = transport or urllib_transport()
-        body = json.dumps({"role_id": role_id, "secret_id": secret_id}).encode("utf-8")
-        response = send(
+        resp = send(
             "POST",
             f"{address.rstrip('/')}/v1/auth/approle/login",
             {"Content-Type": "application/json", "User-Agent": _VAULT_USER_AGENT},
-            body,
+            json.dumps({"role_id": role_id, "secret_id": secret_id}).encode("utf-8"),
         )
-        if response.status != 200:
-            raise SecretsError(f"AppRole login failed with HTTP {response.status}")
-        token = _json(response).get("auth", {}).get("client_token", "")
-        if not token:
+        if resp.status != 200:
+            raise SecretsError(f"AppRole login failed with HTTP {resp.status}")
+        if not (token := _json(resp).get("auth", {}).get("client_token", "")):
             raise SecretsError("AppRole login returned no client token")
         return str(token)
 
     def replace(self, path: str, values: Mapping[str, str]) -> WriteResult:
-        """Make the document exactly ``values``: keys absent from it stop existing.
-
-        KV v2 has no per-key delete, so removing a value means writing the document
-        without it — a plain create/update, never the ``delete`` capability a deploy
-        identity is not granted. The previous version stays in Vault's history, so a
-        prune is reversible. ``changed`` names every key added, altered or removed.
-        """
-        current = dict(self.read(path))
+        cur = dict(self.read(path))
         desired = {str(k): str(v) for k, v in values.items()}
         changed = tuple(
-            sorted(
-                set(current) ^ set(desired) | {k for k, v in desired.items() if current.get(k) != v}
-            )
+            sorted(set(cur) ^ set(desired) | {k for k, v in desired.items() if cur.get(k) != v})
         )
         if not changed:
             return WriteResult()
-        response = self._send(
-            "POST",
-            self._url("data", path),
-            self._headers("application/json"),
-            json.dumps({"data": desired}).encode("utf-8"),
-        )
-        if response.status not in (200, 204):
-            raise SecretsError(f"Vault write to {path} failed with HTTP {response.status}")
+        self._post(path, desired)
         return WriteResult(changed)
 
     def token_status(self) -> _TokenStatus:
-        """``auth/token/lookup-self`` for this backend's token (names and numbers only)."""
         return vault_token_status(self._address, self._token, transport=self._send)
 
     def _url(self, kind: str, path: str) -> str:
         return f"{self._address}/v1/{self._mount}/{kind}/{path.strip('/')}"
 
     def _headers(self, content_type: str | None = None) -> dict[str, str]:
-        headers = {"X-Vault-Token": self._token, "User-Agent": self._user_agent}
+        h = {"X-Vault-Token": self._token, "User-Agent": self._user_agent}
         if content_type:
-            headers["Content-Type"] = content_type
-        return headers
+            h["Content-Type"] = content_type
+        return h
+
+    def _post(self, path: str, doc: Mapping[str, str], *, patch: bool = False) -> None:
+        method = "PATCH" if patch else "POST"
+        ctype = "application/merge-patch+json" if patch else "application/json"
+        resp = self._send(
+            method,
+            self._url("data", path),
+            self._headers(ctype),
+            json.dumps({"data": doc}).encode(),
+        )
+        if resp.status not in (200, 204):
+            raise SecretsError(f"Vault write to {path} failed with HTTP {resp.status}")
 
     def read(self, path: str) -> Mapping[str, str]:
-        response = self._send("GET", self._url("data", path), self._headers(), None)
-        if response.status == 404:
+        resp = self._send("GET", self._url("data", path), self._headers(), None)
+        if resp.status == 404:
             return {}
-        if response.status != 200:
-            raise SecretsError(f"Vault read of {path} failed with HTTP {response.status}")
-        data = _json(response).get("data", {}).get("data", {})
+        if resp.status != 200:
+            raise SecretsError(f"Vault read of {path} failed with HTTP {resp.status}")
+        data = _json(resp).get("data", {}).get("data", {})
         return {str(k): "" if v is None else str(v) for k, v in data.items()}
 
     def write(self, path: str, values: Mapping[str, str]) -> WriteResult:
-        current = self.read(path)
-        changed = {k: v for k, v in values.items() if current.get(k) != v}
+        cur = self.read(path)
+        changed = {k: v for k, v in values.items() if cur.get(k) != v}
         if not changed:
             return WriteResult()
-        if current and self._write_mode == "patch":
-            response = self._send(
-                "PATCH",
-                self._url("data", path),
-                self._headers("application/merge-patch+json"),
-                json.dumps({"data": changed}).encode("utf-8"),
-            )
+        if cur and self._write_mode == "patch":
+            self._post(path, changed, patch=True)
         else:
-            document = {**current, **changed} if current else dict(values)
-            response = self._send(
-                "POST",
-                self._url("data", path),
-                self._headers("application/json"),
-                json.dumps({"data": document}).encode("utf-8"),
-            )
-        if response.status not in (200, 204):
-            raise SecretsError(f"Vault write to {path} failed with HTTP {response.status}")
+            self._post(path, {**cur, **changed} if cur else dict(values))
         return WriteResult(tuple(sorted(changed)))
-
-
-_Runner = Callable[..., subprocess.CompletedProcess[str]]
 
 
 @dataclass(frozen=True)
 class _TokenStatus:
-    """What ``auth/token/lookup-self`` says about a token; never the token itself."""
-
     valid: bool
     ttl_seconds: int
     renewable: bool
@@ -247,95 +192,76 @@ def vault_token_status(
     min_ttl_seconds: int = 0,
     user_agent: str = _VAULT_USER_AGENT,
 ) -> _TokenStatus:
-    """Look a token up; ``valid`` also requires ``ttl >= min_ttl_seconds``.
-
-    A transport failure or a non-200 answer is a status with ``valid=False`` and a
-    reason, not an exception: callers decide whether an unverifiable token stops them.
-    """
     send = transport or urllib_transport()
     try:
-        response = send(
+        resp = send(
             "GET",
             f"{address.rstrip('/')}/v1/auth/token/lookup-self",
             {"X-Vault-Token": token, "User-Agent": user_agent},
             None,
         )
-    except OSError as error:
-        return _TokenStatus(False, -1, False, f"cannot reach Vault: {error}")
-    if response.status == 403:
+    except OSError as err:
+        return _TokenStatus(False, -1, False, f"cannot reach Vault: {err}")
+    if resp.status == 403:
         return _TokenStatus(False, -1, False, "token expired or invalid (HTTP 403)")
-    if response.status != 200:
-        return _TokenStatus(False, -1, False, f"Vault returned HTTP {response.status}")
-    data = _json(response).get("data", {})
-    ttl = int(data.get("ttl", 0) or 0)
-    renewable = bool(data.get("renewable", False))
+    if resp.status != 200:
+        return _TokenStatus(False, -1, False, f"Vault returned HTTP {resp.status}")
+    data = _json(resp).get("data", {})
+    ttl, ren = int(data.get("ttl", 0) or 0), bool(data.get("renewable", False))
     if ttl < min_ttl_seconds:
-        return _TokenStatus(False, ttl, renewable, f"TTL too low: {ttl}s < {min_ttl_seconds}s")
-    return _TokenStatus(True, ttl, renewable)
+        return _TokenStatus(False, ttl, ren, f"TTL too low: {ttl}s < {min_ttl_seconds}s")
+    return _TokenStatus(True, ttl, ren)
 
 
 class OnePasswordBackend:
-    """1Password via the ``op`` CLI. A path is an item title; values are labelled fields.
-
-    Item titles may contain ``/`` (``project/env/service``), which ``op://`` references
-    cannot express, so this adapter only ever addresses items by title or id.
-    """
-
     def __init__(
         self,
         vault: str = "Infra2",
         *,
-        runner: _Runner = subprocess.run,
+        runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
         category: str = "Login",
         timeout: float = 30.0,
     ) -> None:
-        self._vault = vault
-        self._run = runner
-        self._category = category
-        self._timeout = timeout
+        self._vault, self._run, self._category, self._timeout = vault, runner, category, timeout
 
     def _op(
         self, *args: str, check: bool = True, input: str | None = None
     ) -> subprocess.CompletedProcess[str]:
-        kwargs: dict[str, Any] = {"capture_output": True, "text": True}
+        kw: dict[str, Any] = {"capture_output": True, "text": True}
         if self._timeout is not None:
-            kwargs["timeout"] = self._timeout
+            kw["timeout"] = self._timeout
         if input is not None:
-            kwargs["input"] = input
+            kw["input"] = input
         try:
-            result = self._run(["op", *args], **kwargs)
+            res = self._run(["op", *args], **kw)
         except subprocess.TimeoutExpired as exc:
             raise SecretsError(f"op {args[0]} {args[1]} timed out after {self._timeout}s") from exc
-        if check and result.returncode != 0:
-            tail = (result.stderr or "").strip().splitlines()[-1:] or ["no stderr"]
+        if check and res.returncode != 0:
+            tail = (res.stderr or "").strip().splitlines()[-1:] or ["no stderr"]
             raise SecretsError(f"op {args[0]} {args[1]} failed: {tail[0][:160]}")
-        return result
+        return res
 
     def _item(self, title: str) -> dict[str, Any] | None:
-        result = self._op(
-            "item", "get", title, f"--vault={self._vault}", "--format=json", check=False
-        )
-        if result.returncode != 0:
-            if (
-                "isn't an item" in (result.stderr or "")
-                or "not found" in (result.stderr or "").lower()
-            ):
+        res = self._op("item", "get", title, f"--vault={self._vault}", "--format=json", check=False)
+        if res.returncode != 0:
+            err = res.stderr or ""
+            if "isn't an item" in err or "not found" in err.lower():
                 return None
-            tail = (result.stderr or "").strip().splitlines()[-1:] or ["no stderr"]
+            tail = err.strip().splitlines()[-1:] or ["no stderr"]
             raise SecretsError(f"op item get failed: {tail[0][:160]}")
-        return json.loads(result.stdout)
+        return json.loads(res.stdout)
 
     def read(self, path: str) -> Mapping[str, str]:
         item = self._item(path)
-        if item is None:
-            return {}
-        values: dict[str, str] = {}
-        for field in item.get("fields", []):
-            label = field.get("label") or field.get("id")
-            if not label or field.get("purpose") == "NOTES":
-                continue
-            values[str(label)] = str(field.get("value") or "")
-        return values
+        return (
+            {}
+            if item is None
+            else {
+                str(lbl): str(f.get("value") or "")
+                for f in item.get("fields", [])
+                if (lbl := f.get("label") or f.get("id")) and f.get("purpose") != "NOTES"
+            }
+        )
 
     def write(self, path: str, values: Mapping[str, str]) -> WriteResult:
         item = self._item(path)
@@ -344,8 +270,8 @@ class OnePasswordBackend:
                 "title": path,
                 "category": self._category,
                 "fields": [
-                    {"id": label, "label": label, "type": "CONCEALED", "value": value}
-                    for label, value in values.items()
+                    {"id": k, "label": k, "type": "CONCEALED", "value": v}
+                    for k, v in values.items()
                 ],
             }
             self._op(
@@ -359,49 +285,40 @@ class OnePasswordBackend:
             )
             return WriteResult(tuple(sorted(values)))
         existing = {
-            (f.get("label") or f.get("id")): f
-            for f in item.get("fields", [])
-            if f.get("label") or f.get("id")
+            lbl: f for f in item.get("fields", []) if (lbl := f.get("label") or f.get("id"))
         }
-        changed: list[str] = []
-        for label, value in values.items():
-            current = existing.get(label)
-            if current is not None and str(current.get("value") or "") == value:
-                continue
-            changed.append(label)
+        changed = [
+            k
+            for k, v in values.items()
+            if (c := existing.get(k)) is None or str(c.get("value") or "") != v
+        ]
         if changed:
-            updated_fields: list[dict[str, Any]] = []
             seen: set[str] = set()
-            for field in item.get("fields", []):
-                label = field.get("label") or field.get("id")
-                if label and str(label) in values:
-                    seen.add(str(label))
-                    updated_fields.append({**field, "value": values[str(label)]})
-                else:
-                    updated_fields.append(dict(field))
-            for label, value in values.items():
-                if label not in seen:
-                    updated_fields.append(
-                        {"id": label, "label": label, "type": "CONCEALED", "value": value}
-                    )
-            updated_item = {**item, "fields": updated_fields}
+            fields = [
+                (
+                    seen.add(str(lbl)) or {**f, "value": values[str(lbl)]}
+                    if (lbl := f.get("label") or f.get("id")) and str(lbl) in values
+                    else dict(f)
+                )
+                for f in item.get("fields", [])
+            ]
+            fields.extend(
+                {"id": k, "label": k, "type": "CONCEALED", "value": v}
+                for k, v in values.items()
+                if k not in seen
+            )
             self._op(
                 "item",
                 "edit",
                 str(item["id"]),
                 f"--vault={self._vault}",
-                input=json.dumps(updated_item),
+                input=json.dumps({**item, "fields": fields}),
             )
         return WriteResult(tuple(sorted(changed)))
 
 
-# --------------------------------------------------------------------------- resolver
-
-
 @dataclass(frozen=True)
 class _ReconcileReport:
-    """Store contents checked against the manifest. Carries names only, never values."""
-
     missing: tuple[str, ...] = ()
     empty: tuple[str, ...] = ()
     unclassified: tuple[str, ...] = ()
@@ -412,12 +329,7 @@ class _ReconcileReport:
         return not (self.missing or self.empty or self.unclassified or self.stale)
 
     def to_dict(self) -> dict[str, list[str]]:
-        return {
-            "missing": list(self.missing),
-            "empty": list(self.empty),
-            "unclassified": list(self.unclassified),
-            "stale": list(self.stale),
-        }
+        return {k: list(getattr(self, k)) for k in ("missing", "empty", "unclassified", "stale")}
 
 
 def _reconcile(
@@ -427,23 +339,15 @@ def _reconcile(
     expected: Mapping[str, str] | None = None,
     ignore_prefixes: tuple[str, ...] = ("_",),
 ) -> _ReconcileReport:
-    """Check one secret-store path against the manifest's store-backed fields."""
-    missing: list[str] = []
-    empty: list[str] = []
-    for field in manifest.store_backed:
-        if field.key not in values:
-            if not field.empty_ok:
-                missing.append(field.key)
-            continue
-        if not values[field.key].strip() and not field.empty_ok:
-            empty.append(field.key)
-    declared = {field.key for field in manifest.fields}
-    unclassified = [
-        key for key in values if key not in declared and not key.startswith(ignore_prefixes)
+    missing = [f.key for f in manifest.store_backed if f.key not in values and not f.empty_ok]
+    empty = [
+        f.key
+        for f in manifest.store_backed
+        if f.key in values and not values[f.key].strip() and not f.empty_ok
     ]
-    stale = [
-        key for key, wanted in (expected or {}).items() if key in values and values[key] != wanted
-    ]
+    declared = {f.key for f in manifest.fields}
+    unclassified = [k for k in values if k not in declared and not k.startswith(ignore_prefixes)]
+    stale = [k for k, w in (expected or {}).items() if k in values and values[k] != w]
     return _ReconcileReport(
         tuple(sorted(missing)),
         tuple(sorted(empty)),
@@ -463,21 +367,14 @@ class _SyncReport:
         return not self.missing
 
     def to_dict(self) -> dict[str, list[str]]:
-        return {
-            "changed": list(self.changed),
-            "unchanged": list(self.unchanged),
-            "missing": list(self.missing),
-        }
+        return {k: list(getattr(self, k)) for k in ("changed", "unchanged", "missing")}
 
 
 def _generate_secret(field: EnvironmentField) -> str:
-    """Default runtime-secret generator: 43 URL-safe characters (256 bits)."""
     return _secrets.token_urlsafe(32)
 
 
 class SecretsResolver:
-    """Apply one manifest to one ``project/env/service`` coordinate."""
-
     def __init__(
         self,
         manifest: EnvironmentManifest,
@@ -491,19 +388,12 @@ class SecretsResolver:
         decisions: Mapping[str, str] | None = None,
         generator: Callable[[EnvironmentField], str] = _generate_secret,
     ) -> None:
-        self.manifest = manifest
-        self.project = project
-        self.service = service
-        self.env = env
-        self.store = store
-        self.human = human
-        self.release = dict(release or {})
-        self.decisions = dict(decisions or {})
-        self._generate = generator
+        self.manifest, self.project, self.service, self.env = manifest, project, service, env
+        self.store, self.human, self._generate = store, human, generator
+        self.release, self.decisions = dict(release or {}), dict(decisions or {})
         self.path = vault_path(project, env, service)
         self._items: dict[str, Mapping[str, str]] = {}
 
-    # human store ------------------------------------------------------------------
     def _human_values(self, field: EnvironmentField) -> Mapping[str, str]:
         if self.human is None:
             raise SecretsError("no human backend configured")
@@ -513,110 +403,75 @@ class SecretsResolver:
         return self._items[item]
 
     def human_expected(self) -> dict[str, str]:
-        """Values the human store holds for this service's human-class fields."""
-        expected: dict[str, str] = {}
-        for field in self.manifest.by_source(_FieldSource.HUMAN):
-            if not field.store_backed:
-                continue
-            value = self._human_values(field).get(field.key)
-            if value:
-                expected[field.key] = value
-        return expected
+        return {
+            f.key: v
+            for f in self.manifest.by_source(_FieldSource.HUMAN)
+            if f.store_backed and (v := self._human_values(f).get(f.key))
+        }
 
     def sync_human(self) -> _SyncReport:
-        """Copy human-class values into the store; write only what differs."""
-        expected = self.human_expected()
+        exp = self.human_expected()
         missing = tuple(
             sorted(
-                field.key
-                for field in self.manifest.by_source(_FieldSource.HUMAN)
-                if field.store_backed and field.key not in expected and not field.empty_ok
+                f.key
+                for f in self.manifest.by_source(_FieldSource.HUMAN)
+                if f.store_backed and f.key not in exp and not f.empty_ok
             )
         )
-        return self._apply(expected, missing=missing)
+        return self._apply(exp, missing=missing)
 
-    # runtime ----------------------------------------------------------------------
     def ensure_runtime(self) -> _SyncReport:
-        """Generate runtime-class values that the store does not hold yet.
-
-        ``empty_ok`` runtime values are optional by contract (a feature the deployment
-        may leave off); they are never generated here, only reported as unchanged.
-        """
-        current = self.store.read(self.path)
-        candidates = [
-            field
-            for field in self.manifest.by_source(_FieldSource.RUNTIME)
-            if field.store_backed and not field.empty_ok
-        ]
-        fresh = {
-            field.key: self._generate(field) for field in candidates if not current.get(field.key)
-        }
-        present = tuple(
-            sorted(
-                field.key
-                for field in self.manifest.by_source(_FieldSource.RUNTIME)
-                if field.store_backed and field.key not in fresh
-            )
+        cur = self.store.read(self.path)
+        rt = [f for f in self.manifest.by_source(_FieldSource.RUNTIME) if f.store_backed]
+        fresh = {f.key: self._generate(f) for f in rt if not f.empty_ok and not cur.get(f.key)}
+        present = tuple(sorted(f.key for f in rt if f.key not in fresh))
+        return (
+            _SyncReport(self.store.write(self.path, fresh).changed, present)
+            if fresh
+            else _SyncReport(unchanged=present)
         )
-        if not fresh:
-            return _SyncReport(unchanged=present)
-        result = self.store.write(self.path, fresh)
-        return _SyncReport(changed=result.changed, unchanged=present)
 
     def mirror(self) -> _SyncReport:
-        """Copy runtime values flagged ``mirror_to_1password`` into the human store."""
         if self.human is None:
             raise SecretsError("no human backend configured")
-        current = self.store.read(self.path)
-        changed: list[str] = []
-        unchanged: list[str] = []
-        missing: list[str] = []
-        for field in self.manifest.by_source(_FieldSource.RUNTIME):
-            if not field.mirror_to_1password:
+        cur = self.store.read(self.path)
+        changed, unchanged, missing = [], [], []
+        for f in self.manifest.by_source(_FieldSource.RUNTIME):
+            if not f.mirror_to_1password:
                 continue
-            value = current.get(field.key)
-            if not value:
-                missing.append(field.key)
-                continue
-            item = op_item(self.project, self.env, self.service, scope=field.scope)
-            if self.human.write(item, {field.key: value}).wrote:
-                changed.append(field.key)
+            if not (val := cur.get(f.key)):
+                missing.append(f.key)
             else:
-                unchanged.append(field.key)
+                item = op_item(self.project, self.env, self.service, scope=f.scope)
+                (changed if self.human.write(item, {f.key: val}).wrote else unchanged).append(f.key)
         return _SyncReport(tuple(sorted(changed)), tuple(sorted(unchanged)), tuple(sorted(missing)))
 
-    # deployment -------------------------------------------------------------------
     def compose_env(self) -> dict[str, str]:
-        """Release and decision values for the compose environment; never from the store."""
-        values: dict[str, str] = {}
+        out: dict[str, str] = {}
         missing: list[str] = []
-        for field in self.manifest.by_source(_FieldSource.RELEASE, _FieldSource.DECISION):
-            source = self.release if field.source == _FieldSource.RELEASE else self.decisions
-            value = source.get(field.env, "")
-            if value:
-                values[field.env] = value
-            elif field.required or not field.empty_ok:
-                missing.append(field.env)
+        for f in self.manifest.by_source(_FieldSource.RELEASE, _FieldSource.DECISION):
+            src = self.release if f.source == _FieldSource.RELEASE else self.decisions
+            if val := src.get(f.env, ""):
+                out[f.env] = val
+            elif f.required or not f.empty_ok:
+                missing.append(f.env)
         if missing:
             raise SecretsError(f"release/decision values missing: {', '.join(sorted(missing))}")
-        return values
+        return out
 
     def reconcile(self) -> _ReconcileReport:
-        expected = self.human_expected() if self.human is not None else None
-        return _reconcile(self.manifest, self.store.read(self.path), expected=expected)
+        exp = self.human_expected() if self.human is not None else None
+        return _reconcile(self.manifest, self.store.read(self.path), expected=exp)
 
-    # shared -----------------------------------------------------------------------
     def _apply(self, desired: Mapping[str, str], *, missing: tuple[str, ...]) -> _SyncReport:
-        current = self.store.read(self.path)
-        to_write = {k: v for k, v in desired.items() if current.get(k) != v}
-        unchanged = tuple(sorted(k for k in desired if k not in to_write))
-        if not to_write:
-            return _SyncReport(unchanged=unchanged, missing=missing)
-        result = self.store.write(self.path, to_write)
-        return _SyncReport(result.changed, unchanged, missing)
-
-
-# --------------------------------------------------------------------------- renderers
+        cur = self.store.read(self.path)
+        diff = {k: v for k, v in desired.items() if cur.get(k) != v}
+        unchanged = tuple(sorted(k for k in desired if k not in diff))
+        return (
+            _SyncReport(self.store.write(self.path, diff).changed, unchanged, missing)
+            if diff
+            else _SyncReport(unchanged=unchanged, missing=missing)
+        )
 
 
 def render_agent_template(
@@ -627,47 +482,31 @@ def render_agent_template(
     source_env: str | None = None,
     exclude_groups: Sequence[str] = (),
 ) -> str:
-    """Vault Agent ``secrets.ctmpl`` for a service, derived from its manifest.
-
-    Store-backed, ``provided_by`` and ``composed_from`` fields render (``{env:NAME}`` reads
-    the agent's host environment). An ``empty_ok`` field is omitted when the store holds
-    nothing, so the application sees it unset; a missing required value fails the render
-    instead of hiding behind ``""``.
-    Release, decision, and code fields never appear: the deployment supplies the first two
-    and the settings model owns the third. ``source_env`` pins every path to one environment
-    (preview aliases read staging).
-    """
-
     excluded = set(exclude_groups)
     env_expr = f'"{source_env}"' if source_env else "$env"
-    lines: list[str] = [
+    lines = [
         f"{{{{- /* Generated from {manifest.source} by infra2_sdk.secrets. Do not edit. */ -}}}}",
         '{{- $env := env "ENV" -}}',
     ]
     own: list[EnvironmentField] = []
     providers: dict[str, list[EnvironmentField]] = {}
-    for field in manifest.fields:
-        if field.group in excluded:
+    for f in manifest.fields:
+        if f.group in excluded:
             continue
-        if field.provided_by:
-            providers.setdefault(field.provided_by.split(":", 1)[0], []).append(field)
-        elif field.rendered:
-            own.append(field)
-    for provider, fields in providers.items():
-        provider_project, provider_service = provider.split("/", 1)
-        lines.append(
-            f'{{{{- with secret (printf "secret/data/{provider_project}/%s/{provider_service}" '
-            f"{env_expr}) }}}}"
-        )
-        for field in fields:
-            lines.append(_render_line(field, key=field.provided_by.split(":", 1)[1]))
+        if f.provided_by:
+            providers.setdefault(f.provided_by.split(":", 1)[0], []).append(f)
+        elif f.rendered:
+            own.append(f)
+    for prov, flds in providers.items():
+        pp, ps = prov.split("/", 1)
+        lines.append(f'{{{{- with secret (printf "secret/data/{pp}/%s/{ps}" {env_expr}) }}}}')
+        lines.extend(_render_line(f, key=f.provided_by.split(":", 1)[1]) for f in flds)
         lines.append("{{- end }}")
     if own:
         lines.append(
             f'{{{{- with secret (printf "secret/data/{project}/%s/{service}" {env_expr}) }}}}'
         )
-        for field in own:
-            lines.append(_render_line(field, key=field.key))
+        lines.extend(_render_line(f, key=f.key) for f in own)
         lines.append("{{- end }}")
     return "\n".join(lines) + "\n"
 
@@ -679,76 +518,49 @@ def render_agent_policy(
     service: str,
     source_env: str | None = None,
 ) -> str:
-    """Vault policy granting exactly the reads the template needs. ``{{env}}`` is the
-    placeholder ``vault.setup-approle`` substitutes per environment."""
-
     env = source_env or "{{env}}"
     paths = [f"{project}/{env}/{service}"]
-    for field in manifest.fields:
-        if field.provided_by:
-            provider_project, provider_service = field.provided_by.split(":", 1)[0].split("/", 1)
-            candidate = f"{provider_project}/{env}/{provider_service}"
-            if candidate not in paths:
-                paths.append(candidate)
+    for f in manifest.fields:
+        if f.provided_by:
+            pp, ps = f.provided_by.split(":", 1)[0].split("/", 1)
+            if (cand := f"{pp}/{env}/{ps}") not in paths:
+                paths.append(cand)
     blocks = [f"# Generated from {manifest.source} by infra2_sdk.secrets. Do not edit."]
-    for path in paths:
-        blocks.append(f'path "secret/data/{path}" {{\n  capabilities = ["read"]\n}}')
-        blocks.append(f'path "secret/metadata/{path}" {{\n  capabilities = ["read", "list"]\n}}')
-    # Vault Agent's auto-auth renews its own token through auth/token/renew-self (the
-    # LifetimeWatcher renews at once, then ahead of every TTL). The AppRoles are created
-    # with token_no_default_policy=true, so the token does not carry the `default` policy
-    # and this policy must grant renew-self itself. Without the grant every renewal is a
-    # 403, which Vault Agent 1.15 retries without backoff: infra2 2026-09-08, six sidecars
-    # at ~35 requests/s each through the public Vault route, 0.5-1.9 cores of Traefik and
-    # 0.3 of Vault, until the token expired and the agent re-authenticated into the loop.
+    for p in paths:
+        blocks.append(f'path "secret/data/{p}" {{\n  capabilities = ["read"]\n}}')
+        blocks.append(f'path "secret/metadata/{p}" {{\n  capabilities = ["read", "list"]\n}}')
     blocks.append('path "auth/token/renew-self" {\n  capabilities = ["update"]\n}')
     blocks.append('path "auth/token/lookup-self" {\n  capabilities = ["read"]\n}')
     return "\n\n".join(blocks) + "\n"
 
 
-def _render_line(field: EnvironmentField, *, key: str) -> str:
-    if field.composed_from:
-        fmt = field.composed_from
-        args: list[str] = []
-        for name in field.composed_keys:
-            fmt = fmt.replace(f"{{{name}}}", "%s")
-            args.append(f".Data.data.{name}")
-        for name in field.composed_env:
-            fmt = fmt.replace(f"{{env:{name}}}", "%s")
-            args.append(f'(env "{name}")')
-        return f'{field.env}={{{{ printf "%q" (printf "{fmt}" {" ".join(args)}) }}}}'
-    if field.empty_ok:
-        # Omit the line when the store holds nothing: the application sees the variable
-        # as unset and applies its own default, and nothing ever renders as "".
-        # `index`, not `.Data.data.KEY`: Vault Agent renders with missingkey=error, so a
-        # field access on a key the secret does not hold at all aborts the whole template
-        # ("map has no entry for key"), which is exactly the case empty_ok exists for
-        # (infra2 2026-09-07: production alerting's agent crash-looped on
-        # FEISHU_WEBHOOK_URL, a webhook key absent from a feishu_app secret). `index`
-        # yields nil for an absent key and `with` skips the line.
-        guard = f'{{{{ with index .Data.data "{key}" }}}}'
-        return f'{guard}{field.env}={{{{ printf "%q" . }}}}{{{{ end }}}}'
-    return f'{field.env}={{{{ printf "%q" .Data.data.{key} }}}}'
-
-
-# --------------------------------------------------------------------------- helpers
+def _render_line(f: EnvironmentField, *, key: str) -> str:
+    if f.composed_from:
+        fmt, args = f.composed_from, []
+        for n in f.composed_keys:
+            fmt = fmt.replace(f"{{{n}}}", "%s")
+            args.append(f".Data.data.{n}")
+        for n in f.composed_env:
+            fmt = fmt.replace(f"{{env:{n}}}", "%s")
+            args.append(f'(env "{n}")')
+        return f'{f.env}={{{{ printf "%q" (printf "{fmt}" {" ".join(args)}) }}}}'
+    if f.empty_ok:
+        return (
+            f'{{{{ with index .Data.data "{key}" }}}}{f.env}={{{{ printf "%q" . }}}}{{{{ end }}}}'
+        )
+    return f'{f.env}={{{{ printf "%q" .Data.data.{key} }}}}'
 
 
 def _json(response: HttpResponse) -> dict[str, Any]:
     try:
         parsed = json.loads(response.body.decode("utf-8") or "{}")
-    except ValueError as error:
-        raise SecretsError("backend returned malformed JSON") from error
+    except ValueError as err:
+        raise SecretsError("backend returned malformed JSON") from err
     return parsed if isinstance(parsed, dict) else {}
-
-
-# --------------------------------------------------------------------------- AppRole naming
 
 
 @dataclass(frozen=True)
 class VaultTokenTarget:
-    """Service coordinates used when provisioning per-service Vault AppRoles and policies."""
-
     project: str
     service: str
     service_dir: str
@@ -757,38 +569,41 @@ class VaultTokenTarget:
 
 
 def normalize_selector(value: str | None, *, label: str) -> str | None:
-    """Normalize an optional project or service selector."""
     if value is None:
         return None
-    normalized = value.strip()
-    if not normalized:
+    norm = value.strip()
+    if not norm:
         raise ValueError(f"{label} must not be empty")
-    if "-" in normalized or "/" in normalized:
+    if "-" in norm or "/" in norm:
         raise ValueError(f"{label} must not include '-' or '/'")
-    return normalized
+    return norm
 
 
 def _normalize_policy_env(value: str | None) -> str:
     if not value or not value.strip():
         return "production"
     val = value.strip().lower()
-    if val in ("prod", "production"):
-        return "production"
-    if val in ("stg", "staging"):
-        return "staging"
-    if val in ("preview", "preview_env", "preview-env"):
-        return "preview"
-    if val in ("canary", "canary-preview", "canary_preview"):
-        return "canary_preview"
-    if "/" in val or "\\" in val or " " in val or "\t" in val or "\n" in val:
+    mapped = {
+        "prod": "production",
+        "production": "production",
+        "stg": "staging",
+        "staging": "staging",
+        "preview": "preview",
+        "preview_env": "preview",
+        "preview-env": "preview",
+        "canary": "canary_preview",
+        "canary-preview": "canary_preview",
+        "canary_preview": "canary_preview",
+    }
+    if val in mapped:
+        return mapped[val]
+    if any(ch in val for ch in ("/", "\\", " ", "\t", "\n")):
         raise ValueError("ENV name must not include '/' or whitespace")
     return val.replace("-", "_")
 
 
 def policy_name(project: str, env: str, service: str) -> str:
-    """Return the per-environment Vault policy name for a service AppRole."""
-    env_name = _normalize_policy_env(env)
-    return f"{project}-{env_name}-{service}"
+    return f"{project}-{_normalize_policy_env(env)}-{service}"
 
 
 __all__ = [
