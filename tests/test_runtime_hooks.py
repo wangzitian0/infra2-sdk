@@ -18,11 +18,137 @@ from infra2_sdk import (
     run_hook_slot,
 )
 from infra2_sdk.manifests import (
+    CURRENT_HOOKS_SCHEMA_VERSION,
     FORBIDDEN_HOOK_ENV_NAMES,
     FORBIDDEN_HOOK_ENV_PREFIXES,
+    HOOK_PHASES,
+    LEGACY_V1_HOOK_SLOTS,
+    SLOT_MAX_TIMEOUT_SECONDS,
+    SLOT_PHASE,
+    STAGE_HOOK_PLANS,
+    StageHookPlan,
     build_hook_env,
     main,
+    stage_hook_plan,
 )
+
+
+def _sample_v2_manifest_dict(*, service: str = "finance_report/app") -> dict[str, object]:
+    return {
+        "schema_version": 2,
+        "service": service,
+        "slots": {
+            "smoke": {
+                "run": "python -m scripts.smoke",
+                "timeout_seconds": 60,
+            },
+            "preview_gate": {
+                "run": "pytest -m e2e_preview",
+                "bootstrap": "playwright install chromium",
+                "timeout_seconds": 300,
+                "required_env": ["E2E_USER_EMAIL"],
+                "optional_env": ["E2E_LOCALE"],
+                "artifacts_dir": ".artifacts/preview",
+            },
+            "staging_gate": {
+                "run": "pytest -m staging_canary",
+                "timeout_seconds": 420,
+                "required_env": ["LLM_API_KEY"],
+            },
+            "prod_gate": {
+                "run": "python -m scripts.prod_surface",
+                "timeout_seconds": 180,
+            },
+            "scheduled_audit": {
+                "run": "python -m scripts.audit_replay",
+                "timeout_seconds": 1800,
+            },
+        },
+    }
+
+
+def test_v2_manifest_stage_hook_plans_and_slot_ceilings(tmp_path: Path) -> None:
+    assert CURRENT_HOOKS_SCHEMA_VERSION == 2
+    assert HOOK_PHASES == ("pre", "deploy", "post")
+    assert HOOK_SLOTS == ("smoke", "preview_gate", "staging_gate", "prod_gate", "scheduled_audit")
+    assert LEGACY_V1_HOOK_SLOTS == ("smoke", "preview_gate", "staging_gate", "scheduled_audit")
+    assert SLOT_PHASE == {
+        "smoke": "deploy",
+        "preview_gate": "post",
+        "staging_gate": "post",
+        "prod_gate": "post",
+        "scheduled_audit": "post",
+    }
+    assert SLOT_MAX_TIMEOUT_SECONDS == {
+        "smoke": 120,
+        "preview_gate": 360,
+        "staging_gate": 600,
+        "prod_gate": 300,
+        "scheduled_audit": 3600,
+    }
+    assert stage_hook_plan("preview") == StageHookPlan("preview", "smoke", "preview_gate")
+    assert stage_hook_plan("staging") == StageHookPlan("staging", "smoke", "staging_gate")
+    assert stage_hook_plan("prod") == StageHookPlan("prod", "smoke", "prod_gate")
+    assert stage_hook_plan("production") == STAGE_HOOK_PLANS["prod"]
+    assert stage_hook_plan("schedule") == StageHookPlan("schedule", None, "scheduled_audit")
+    with pytest.raises(ValueError, match="unknown stage"):
+        stage_hook_plan("canary")
+    with pytest.raises(ValueError, match="stage must be a string"):
+        stage_hook_plan(123)  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        SLOT_MAX_TIMEOUT_SECONDS["smoke"] = 999  # type: ignore[index]
+    with pytest.raises(TypeError):
+        STAGE_HOOK_PLANS["prod"] = StageHookPlan("prod", None, None)  # type: ignore[index]
+
+    v2 = RuntimeHooksManifest.from_dict(_sample_v2_manifest_dict())
+    assert v2.schema_version == 2
+    assert tuple(v2.slots) == HOOK_SLOTS
+    with pytest.raises(TypeError):
+        v2.slots["smoke"] = v2.slots["prod_gate"]  # type: ignore[index]
+    assert RuntimeHooksManifest.from_dict(v2.to_dict()) == v2
+
+    # v2 rejects bootstrap on inline smoke
+    bad_smoke = _sample_v2_manifest_dict()
+    bad_smoke["slots"] = {  # type: ignore[index]
+        **bad_smoke["slots"],  # type: ignore[dict-item]
+        "smoke": {"run": "echo ok", "bootstrap": "npm ci", "timeout_seconds": 60},
+    }
+    with pytest.raises(ValueError, match="bootstrap"):
+        RuntimeHooksManifest.from_dict(bad_smoke)
+
+    # v2 enforces per-slot timeout ceiling
+    for slot, ceiling in SLOT_MAX_TIMEOUT_SECONDS.items():
+        if ceiling >= 3600:
+            continue
+        over = _sample_v2_manifest_dict()
+        over["slots"] = {  # type: ignore[index]
+            **over["slots"],  # type: ignore[dict-item]
+            slot: {"run": "echo ok", "timeout_seconds": ceiling + 1},
+        }
+        with pytest.raises(ValueError, match="exceeds"):
+            RuntimeHooksManifest.from_dict(over)
+
+    # Historical v1 manifests still load and synthesize prod_gate from smoke,
+    # while --check-hooks rejects schema_version 1 unless --allow-legacy-schema is passed.
+    v1_path = tmp_path / "v1.manifest.json"
+    v1_path.write_text(json.dumps(_sample_manifest_dict(), indent=2), encoding="utf-8")
+    v1_loaded = load_hooks_manifest("v1.manifest.json", root=tmp_path)
+    assert v1_loaded.schema_version == 1
+    assert v1_loaded.slots["prod_gate"] == v1_loaded.slots["smoke"]
+
+    out_strict: list[str] = []
+    assert main(["--check-hooks", "v1.manifest.json"], root=tmp_path, echo=out_strict.append) == 1
+    assert any("schema_version 2" in line for line in out_strict)
+
+    out_legacy: list[str] = []
+    assert (
+        main(
+            ["--check-hooks", "v1.manifest.json", "--allow-legacy-schema"],
+            root=tmp_path,
+            echo=out_legacy.append,
+        )
+        == 0
+    )
 
 
 def _sample_manifest_dict(*, service: str = "finance_report/app") -> dict[str, object]:
@@ -114,10 +240,16 @@ def test_hook_slot_and_manifest_validation_errors() -> None:
         HookSlotSpec.from_dict({"run": "echo ok", "extra": 1})
 
     base = _sample_manifest_dict()
-    with pytest.raises(ValueError, match="schema_version 1"):
+    with pytest.raises(ValueError, match="missing required slot"):
         RuntimeHooksManifest.from_dict({**base, "schema_version": 2})
-    with pytest.raises(ValueError, match="schema_version 1"):
+    with pytest.raises(ValueError, match="schema_version 1 or 2"):
+        RuntimeHooksManifest.from_dict({**base, "schema_version": 3})
+    with pytest.raises(ValueError, match="schema_version 1 or 2"):
         RuntimeHooksManifest.from_dict({**base, "schema_version": True})
+    with pytest.raises(ValueError, match="cannot declare 'prod_gate'"):
+        RuntimeHooksManifest.from_dict(
+            {**base, "slots": {**base["slots"], "prod_gate": {"run": "echo ok"}}}  # type: ignore[dict-item]
+        )
     with pytest.raises(ValueError, match="unknown runtime hooks manifest field"):
         RuntimeHooksManifest.from_dict({**base, "unexpected": "x"})
 
@@ -395,7 +527,7 @@ def test_run_hook_slot_preserves_both_stdout_and_stderr_when_both_non_empty() ->
 
 def test_cli_check_hooks_and_run_hook(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     manifest_path = tmp_path / "runtime-hooks.manifest.json"
-    raw = _sample_manifest_dict(service="truealpha/app")
+    raw = _sample_v2_manifest_dict(service="truealpha/app")
     raw["slots"]["smoke"] = {  # type: ignore[index]
         "run": 'test "$APP_URL" = "http://127.0.0.1:8000" && test -z "$INFRA2_PAT"',
         "timeout_seconds": 30,
@@ -405,7 +537,7 @@ def test_cli_check_hooks_and_run_hook(tmp_path: Path, monkeypatch: pytest.Monkey
     output: list[str] = []
     rc = main(["--check-hooks", "runtime-hooks.manifest.json"], root=tmp_path, echo=output.append)
     assert rc == 0
-    assert output == ["runtime hooks manifest: ok (truealpha/app, 4 slots)"]
+    assert output == ["runtime hooks manifest: ok (truealpha/app, v2, 5 slots)"]
 
     monkeypatch.setenv("INFRA2_PAT", "must-not-leak-into-hook")
     result_rel = ".artifacts/smoke-result.json"

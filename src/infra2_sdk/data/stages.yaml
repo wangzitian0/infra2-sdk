@@ -1,26 +1,50 @@
-version: 1
+version: 2
 stages:
   local.advisory:
     order: 0
+    phase: pre
+    batch_policy: single_edit
+    wall_clock_budget_seconds: 30
     definition: Developer-local feedback that aids iteration but does not block merge.
   github_ci.merge_authority:
     order: 1
+    phase: pre
+    batch_policy: single_pr
+    wall_clock_budget_seconds: 240
     definition: GitHub CI proof required before code merges or a consumer trusts the SHA.
   preview.runtime:
     order: 2
+    phase: deploy_and_post
+    batch_policy: single_merge
+    wall_clock_budget_seconds: 300
     definition: PR preview runtime proof outside the merge-authority CI job set.
   staging.release_validation:
     order: 3
+    phase: deploy_and_post
+    batch_policy: soak_train_le_4_prs
+    wall_clock_budget_seconds: 360
     definition: Staging validation of a release tag before any production promotion.
   staging.provider_regression:
     order: 4
+    phase: post
+    batch_policy: scheduled_async
+    wall_clock_budget_seconds: 3600
     definition: Staging regression against real external providers.
   prod.release_integrity:
     order: 5
+    phase: deploy_and_post
+    batch_policy: prod_train_ge_15_prs_or_48h
+    wall_clock_budget_seconds: 300
     definition: Production release integrity and post-deploy runtime proof.
   ops.scheduled_cleanup:
     order: 6
+    phase: post
+    batch_policy: scheduled_async
+    wall_clock_budget_seconds: 3600
     definition: Scheduled operational reconcile, cleanup, and drift detection.
   manual.adjudication:
     order: 7
+    phase: manual
+    batch_policy: on_demand
+    wall_clock_budget_seconds: 3600
     definition: Human adjudication or manually triggered evidence gates.

@@ -25,7 +25,7 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.27.0"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.28.0"
 ```
 
 ## Modules
@@ -36,7 +36,7 @@ python -m pip install \
 | `infra2_sdk.ci` | Delivery-stage vocabulary, CI gate inventory validation, workflow step inspection, cron schedule gap analysis, coverage ratchets, and GitHub Actions helpers |
 | `infra2_sdk.deploy` | Deploy lifecycle wire contracts, health poller, wheel version parser, deployed release identity reader, production evidence policies, and CLI at `python -m infra2_sdk.deploy` |
 | `infra2_sdk.fastapi` | `init_service`: /livez, /readyz and /health routes for a FastAPI app, multi-dependency checks, probe noise suppression, and OTLP telemetry bootstrap |
-| `infra2_sdk.manifests` | Settings and runtime verification hooks manifest CLI driver (`--write`, `--check`, `--validate-env`, `--check-hooks`, `--run-hook`), `ManifestSpec`, `RuntimeHooksManifest`, `HookSlotSpec`, `HookRunResult`, `load_hooks_manifest`, `run_hook_slot`, `all_manifests`, `check`, and `load` |
+| `infra2_sdk.manifests` | Settings and runtime verification hooks manifest CLI driver (`--write`, `--check`, `--validate-env`, `--check-hooks`, `--run-hook`), `ManifestSpec`, `RuntimeHooksManifest`, `HookSlotSpec`, `HookRunResult`, `StageHookPlan`, `STAGE_HOOK_PLANS`, `stage_hook_plan`, `SLOT_MAX_TIMEOUT_SECONDS`, `load_hooks_manifest`, `run_hook_slot`, `all_manifests`, `check`, and `load` |
 | `infra2_sdk.observability` | Flap hysteresis trackers, parameterized self-healing GitHub issue trails, and OpenPanel export query & funnel summary primitives |
 | `infra2_sdk.refs` | Git ref resolution, PR heads, patch tag calculation (`next_patch_tag`), registry image digests, remote ref queries, commit ancestry checks, and credential redaction |
 | `infra2_sdk.routing` | Canonical domain and routing SSOT: `CANARY_SLOT`, hostname resolution, and service URL resolution |
@@ -74,10 +74,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.27.0'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.28.0'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.27.0'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.28.0'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -201,7 +201,7 @@ Install the published wheel in a fresh Python 3.11+ environment:
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install \
-  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.27.0/infra2_sdk-3.27.0-py3-none-any.whl'
+  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.28.0/infra2_sdk-3.28.0-py3-none-any.whl'
 ```
 
 For a local connectivity exercise, start this server in another terminal:

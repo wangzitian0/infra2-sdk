@@ -6,6 +6,14 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+## 3.28.0 - 2026-11-11
+
+### Added
+
+- Upgrade `RuntimeHooksManifest` to `schema_version: 2` (`CURRENT_HOOKS_SCHEMA_VERSION = 2`) with 5 slots (`smoke`, `preview_gate`, `staging_gate`, `prod_gate`, `scheduled_audit`), per-slot timeout ceilings (`SLOT_MAX_TIMEOUT_SECONDS`), zero-bootstrap enforcement on inline `smoke`, and historical `schema_version: 1` read compatibility (`prod_gate` synthesized from `smoke`) ([#201](https://github.com/wangzitian0/infra2-sdk/issues/201)).
+- Add `StageHookPlan`, `STAGE_HOOK_PLANS`, and `stage_hook_plan(stage)` in `infra2_sdk.manifests` (`deploy_slot` vs `post_slot` per stage) and enforce `schema_version == 2` in `manifests.main(['--check-hooks', ...])` unless `--allow-legacy-schema` is passed ([#201](https://github.com/wangzitian0/infra2-sdk/issues/201)).
+- Enrich `data/stages.yaml` (`version: 2`) with `phase`, `batch_policy`, and `wall_clock_budget_seconds` across all delivery stages ([#201](https://github.com/wangzitian0/infra2-sdk/issues/201)).
+
 ## 3.27.0 - 2026-11-11
 
 ### Added

@@ -77,7 +77,7 @@ Application processes import these modules directly at runtime:
 | `infra2_sdk.capacity` | Capacity limits, `CapacityReading`, `RateLimitWindow`, `evaluate` thresholds, and Cloudflare analytics collection |
 | `infra2_sdk.ci` | Delivery-stage vocabulary, CI gate inventory validation, workflow step inspection, cron schedule gap analysis (`ScheduleError`, `largest_gap`), and coverage ratchets |
 | `infra2_sdk.deploy` | `DeployRequest` wire contracts, health poller (`poll_until_healthy`), `parse_wheel_version`, deployed release reader, and production evidence verification |
-| `infra2_sdk.manifests` | Settings and runtime hooks manifest CLI driver (`--write`, `--check`, `--validate-env`, `--check-hooks`, `--run-hook`), `ManifestSpec`, `RuntimeHooksManifest`, `HookSlotSpec`, `HookRunResult`, `load_hooks_manifest`, `run_hook_slot`, `all_manifests`, `check`, and `load` |
+| `infra2_sdk.manifests` | Settings and runtime hooks manifest CLI driver (`--write`, `--check`, `--validate-env`, `--check-hooks`, `--run-hook`), `ManifestSpec`, `RuntimeHooksManifest`, `HookSlotSpec`, `HookRunResult`, `StageHookPlan`, `STAGE_HOOK_PLANS`, `stage_hook_plan`, `SLOT_MAX_TIMEOUT_SECONDS`, `load_hooks_manifest`, `run_hook_slot`, `all_manifests`, `check`, and `load` |
 | `infra2_sdk.observability` | Flap hysteresis trackers (`ConsecutiveObservationState`), parameterized self-healing GitHub issue trails (`reconcile_issue_trail`), and OpenPanel query primitives |
 | `infra2_sdk.refs` | Git ref resolution (`resolve_to_sha`, `resolve_pr`, `identifier_kind`, `next_patch_tag`), OCI image digest resolution, and repo URL redaction |
 | `infra2_sdk.routing` | Canonical domain and routing SSOT (`CANARY_SLOT`, `PreviewStackCoordinates`, hostname and service URL resolution) |
