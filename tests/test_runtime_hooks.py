@@ -131,6 +131,29 @@ def test_hook_slot_and_manifest_validation_errors() -> None:
         RuntimeHooksManifest.from_dict({**base, "slots": extra_slot})
 
 
+def test_hook_slot_checkout_lineage() -> None:
+    default_spec = HookSlotSpec(run="echo ok")
+    assert default_spec.checkout_lineage is False
+    assert "checkout_lineage" not in default_spec.to_dict()
+    assert HookSlotSpec.from_dict(default_spec.to_dict()) == default_spec
+
+    explicit_spec = HookSlotSpec(run="echo ok", checkout_lineage=True)
+    assert explicit_spec.checkout_lineage is True
+    assert explicit_spec.to_dict()["checkout_lineage"] is True
+    roundtripped = HookSlotSpec.from_dict(explicit_spec.to_dict())
+    assert roundtripped == explicit_spec
+    assert roundtripped.checkout_lineage is True
+
+    with pytest.raises(ValueError, match="hook slot 'checkout_lineage' must be a bool"):
+        HookSlotSpec(run="echo ok", checkout_lineage=1)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="hook slot 'checkout_lineage' must be a bool"):
+        HookSlotSpec(run="echo ok", checkout_lineage="true")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="hook slot 'checkout_lineage' must be a bool"):
+        HookSlotSpec.from_dict({"run": "echo ok", "checkout_lineage": 1})
+    with pytest.raises(ValueError, match="hook slot 'checkout_lineage' must be a bool"):
+        HookSlotSpec.from_dict({"run": "echo ok", "checkout_lineage": "true"})
+
+
 def test_build_hook_env_strips_ambient_secrets_and_injects_canonical_vars() -> None:
     spec = HookSlotSpec(
         run="pytest",

@@ -246,15 +246,19 @@ class Trail:
         )
 
 
-def title_for(name: str) -> str:
-    return f"{_TITLE_PREFIX}{name}"
+def title_for(name: str, *, title_prefix: str = _TITLE_PREFIX) -> str:
+    if not title_prefix or not title_prefix.strip():
+        raise ValueError("title_prefix must not be empty or whitespace")
+    return f"{title_prefix}{name}"
 
 
-def check_name(title: str) -> str | None:
+def check_name(title: str, *, title_prefix: str = _TITLE_PREFIX) -> str | None:
     """Return the check name a trail title names, or ``None`` for any other issue."""
-    if not title.startswith(_TITLE_PREFIX):
+    if not title_prefix or not title_prefix.strip():
+        raise ValueError("title_prefix must not be empty or whitespace")
+    if not title.startswith(title_prefix):
         return None
-    return title[len(_TITLE_PREFIX) :] or None
+    return title[len(title_prefix) :] or None
 
 
 def scrub(text: str, env: Mapping[str, str]) -> str:
@@ -490,34 +494,39 @@ def _red_body(
     run_url: str,
     context: str,
     env: Mapping[str, str],
+    source: str = "ops-checks watchdog",
 ) -> str:
     labels = " ".join(part for part in (verdict.severity, verdict.failure_domain) if part)
     lines = [
-        f"**`{name}` is red** in the ops-checks watchdog" + (f" ({labels})" if labels else ""),
+        f"**`{name}` is red** in the {source}" + (f" ({labels})" if labels else ""),
         "",
         f"- Run: {run_url or '(no run URL)'}",
         f"- Run kind: {context}",
         f"- Detail: {scrub(verdict.detail, env) or '(none)'}",
         "",
-        "Recorded by the ops-checks watchdog issue trail (`tools/watchdog_issue_trail.py`, "
+        f"Recorded by the {source} issue trail (`tools/watchdog_issue_trail.py`, "
         "truealpha#876) in addition to the Feishu page. One open issue per check: a later "
         "red run comments here, and the next green scheduled run closes it.",
     ]
     return "\n".join(lines)
 
 
-def _green_body(name: str, *, run_url: str, context: str) -> str:
+def _green_body(
+    name: str, *, run_url: str, context: str, source: str = "ops-checks watchdog"
+) -> str:
     return "\n".join(
         [
             f"**`{name}` is green again** in {run_url or 'the latest run'} ({context}).",
             "",
-            "Closed by the ops-checks watchdog issue trail (truealpha#876). "
+            f"Closed by the {source} issue trail (truealpha#876). "
             "A later red run opens a new issue.",
         ]
     )
 
 
-def _retired_body(name: str, *, run_url: str, context: str) -> str:
+def _retired_body(
+    name: str, *, run_url: str, context: str, source: str = "ops-checks watchdog"
+) -> str:
     return "\n".join(
         [
             f"**`{name}` no longer reports to this trail** "
@@ -525,7 +534,7 @@ def _retired_body(name: str, *, run_url: str, context: str) -> str:
             "its paging checks and none recorded this one.",
             "",
             "It is report-only now (#908: its failures go to the daily infra2 report, "
-            "not the pager) or no longer exists. Closed by the ops-checks watchdog "
+            f"not the pager) or no longer exists. Closed by the {source} "
             "issue trail so it is not left open forever.",
         ]
     )
@@ -539,9 +548,14 @@ def reconcile_issue_trail(
     run_url: str = "",
     context: str = "",
     env: Mapping[str, str] | None = None,
+    title_prefix: str = _TITLE_PREFIX,
+    labels: Iterable[str] = _ISSUE_LABELS,
+    source: str = "ops-checks watchdog",
 ) -> int:
     """Open or comment on every red check's issue; close green ones when allowed."""
     env = env or {}
+    if not title_prefix or not title_prefix.strip():
+        raise ValueError("title_prefix must not be empty or whitespace")
     if mode not in (_FULL, _OPEN_ONLY, _OFF):
         print(f"::error::unknown issue-trail mode {mode!r}")
         return 1
@@ -569,15 +583,17 @@ def reconcile_issue_trail(
 
     failed_writes = 0
     for name in sorted(trail.failing):
-        title = title_for(name)
-        body = _red_body(name, trail.failing[name], run_url=run_url, context=context, env=env)
+        title = title_for(name, title_prefix=title_prefix)
+        body = _red_body(
+            name, trail.failing[name], run_url=run_url, context=context, env=env, source=source
+        )
         existing = by_title.get(title)
         try:
             if existing:
                 api.comment(existing[0], body)
                 print(f"issue trail: commented on #{existing[0]} ({title})")
             else:
-                number = api.create(title, body, _ISSUE_LABELS)
+                number = api.create(title, body, tuple(labels))
                 by_title[title] = [number]
                 print(f"issue trail: opened #{number} ({title})")
         except WriteFailed as exc:
@@ -586,13 +602,13 @@ def reconcile_issue_trail(
 
     if mode == _FULL:
         for title in sorted(by_title):
-            name = check_name(title)
+            name = check_name(title, title_prefix=title_prefix)
             if name is None:
                 continue
             if trail.is_green(name):
-                body = _green_body(name, run_url=run_url, context=context)
+                body = _green_body(name, run_url=run_url, context=context, source=source)
             elif trail.is_retired(name):
-                body = _retired_body(name, run_url=run_url, context=context)
+                body = _retired_body(name, run_url=run_url, context=context, source=source)
             else:
                 continue
             for number in by_title[title]:

@@ -6,6 +6,13 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+## 3.26.0 - 2026-11-11
+
+### Added
+
+- Add `checkout_lineage` field to `HookSlotSpec` and allow verification hooks to opt into worktree lineage verification ([#194](https://github.com/wangzitian0/infra2-sdk/issues/194)).
+- Parameterize `title_prefix`, `labels`, and `source` in `reconcile_issue_trail`, `title_for`, and `check_name` ([#194](https://github.com/wangzitian0/infra2-sdk/issues/194)).
+
 ## 3.25.0 - 2026-11-11
 
 ### Added

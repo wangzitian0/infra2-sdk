@@ -445,6 +445,111 @@ def test_observability_issue_trail(tmp_path: Path) -> None:
     assert issubclass(WriteFailed, RuntimeError)
 
 
+def test_reconcile_issue_trail_multi_actor_interleaving() -> None:
+    with pytest.raises(ValueError, match="title_prefix must not be empty or whitespace"):
+        title_for("check", title_prefix="")
+    with pytest.raises(ValueError, match="title_prefix must not be empty or whitespace"):
+        title_for("check", title_prefix="   ")
+    with pytest.raises(ValueError, match="title_prefix must not be empty or whitespace"):
+        check_name("title", title_prefix="")
+    with pytest.raises(ValueError, match="title_prefix must not be empty or whitespace"):
+        check_name("title", title_prefix="   ")
+
+    class FakeIssueApi:
+        def __init__(self) -> None:
+            self.issues: list[dict[str, Any]] = []
+            self.comments: list[tuple[int, str]] = []
+            self.closed: list[int] = []
+
+        def open_issues(self) -> list[dict[str, Any]]:
+            return [i for i in self.issues if i["number"] not in self.closed]
+
+        def create(self, title: str, body: str, labels: Sequence[str]) -> int:
+            num = len(self.issues) + 1
+            self.issues.append(
+                {"number": num, "title": title, "body": body, "labels": tuple(labels)}
+            )
+            return num
+
+        def comment(self, number: int, body: str) -> None:
+            self.comments.append((number, body))
+
+        def close(self, number: int) -> None:
+            self.closed.append(number)
+
+    api = FakeIssueApi()
+
+    # Step 1: Default watchdog run opens an issue for failing "db"
+    watchdog_trail = Trail(
+        failing={"db": CheckVerdict(name="db", ok=False, detail="conn timeout", severity="P1")},
+        complete=False,
+    )
+    rc1 = reconcile_issue_trail(api, watchdog_trail, mode="full")
+    assert rc1 == 0
+    assert len(api.issues) == 1
+    assert api.issues[0]["title"] == "ops-checks watchdog is red: db"
+    assert api.issues[0]["labels"] == ("incident",)
+    assert "**`db` is red** in the ops-checks watchdog" in api.issues[0]["body"]
+
+    # Step 2: Custom app-hook run opens an issue for failing "svc:scheduled_audit:staging"
+    hook_prefix = "app-hook is red: "
+    hook_labels = ("hook", "verification")
+    hook_source = "app runtime hook"
+    hook_trail = Trail(
+        failing={
+            "svc:scheduled_audit:staging": CheckVerdict(
+                name="svc:scheduled_audit:staging", ok=False, detail="audit failed"
+            )
+        },
+        complete=False,
+    )
+    rc2 = reconcile_issue_trail(
+        api,
+        hook_trail,
+        mode="full",
+        title_prefix=hook_prefix,
+        labels=hook_labels,
+        source=hook_source,
+    )
+    assert rc2 == 0
+    assert len(api.issues) == 2
+    assert api.issues[1]["title"] == "app-hook is red: svc:scheduled_audit:staging"
+    assert api.issues[1]["labels"] == ("hook", "verification")
+    expected_hook_red = "**`svc:scheduled_audit:staging` is red** in the app runtime hook"
+    assert expected_hook_red in api.issues[1]["body"]
+    assert "Recorded by the app runtime hook issue trail" in api.issues[1]["body"]
+    assert api.closed == []
+
+    # Step 3: Watchdog runs with complete=True and empty trail.
+    # Proves default title_prefix closes retired watchdog issues while leaving app-hook open!
+    watchdog_retire_trail = Trail(complete=True)
+    rc3 = reconcile_issue_trail(api, watchdog_retire_trail, mode="full")
+    assert rc3 == 0
+    assert api.closed == [1]  # issue #1 ("ops-checks watchdog is red: db") closed
+    assert [i["number"] for i in api.open_issues()] == [2]  # app-hook issue #2 remains OPEN!
+    watchdog_close_comment = [c for num, c in api.comments if num == 1][-1]
+    assert "**`db` no longer reports to this trail**" in watchdog_close_comment
+    assert "Closed by the ops-checks watchdog issue trail" in watchdog_close_comment
+
+    # Step 4: Vice versa: App-hook runs with complete=True and empty trail.
+    # Proves custom title_prefix closes retired hook issues!
+    hook_retire_trail = Trail(complete=True)
+    rc4 = reconcile_issue_trail(
+        api,
+        hook_retire_trail,
+        mode="full",
+        title_prefix=hook_prefix,
+        labels=hook_labels,
+        source=hook_source,
+    )
+    assert rc4 == 0
+    assert api.closed == [1, 2]  # issue #2 is now closed
+    assert api.open_issues() == []
+    hook_close_comment = [c for num, c in api.comments if num == 2][-1]
+    assert "**`svc:scheduled_audit:staging` no longer reports to this trail**" in hook_close_comment
+    assert "Closed by the app runtime hook issue trail" in hook_close_comment
+
+
 def test_secrets_vault_token_target_and_policy_name() -> None:
     target = VaultTokenTarget(
         project="apps",
