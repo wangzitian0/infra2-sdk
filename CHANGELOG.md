@@ -6,6 +6,25 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+## 3.27.0 - 2026-11-11
+
+### Added
+
+- Extend `infra2_sdk.fastapi.init_service` with `checks`, `manifest`, and `suppress_probe_telemetry` (filtering `/livez`, `/readyz`, and `/health` spans via `OtelSettings.suppress_probe_telemetry` and `PROBE_PATHS`, plus `uvicorn.access` probe log suppression) ([#193](https://github.com/wangzitian0/infra2-sdk/issues/193)).
+- Add `LlmClient` and `LlmResponse` in `infra2_sdk.runtime.llm` (`chat`, `achat`, `chat_json`, `achat_json`, `embed`, `aembed`, fallback model chains, markdown fence extraction, and OpenTelemetry `gen_ai.*` span attributes) ([#193](https://github.com/wangzitian0/infra2-sdk/issues/193)).
+- Add `request_with_retry` and `arequest_with_retry` (`Retry-After` seconds and HTTP-date parsing plus exponential backoff) in `infra2_sdk.runtime.http` and `RateLimitWindow` in `infra2_sdk.capacity` ([#193](https://github.com/wangzitian0/infra2-sdk/issues/193)).
+- Add `query: str = "SELECT 1"` on `infra2_sdk.runtime.postgres.probe_postgres` and `put_object_bytes` in `infra2_sdk.runtime.s3` ([#193](https://github.com/wangzitian0/infra2-sdk/issues/193)).
+- Add `parse_wheel_version`, `follow_redirects` on `default_http_get`, and the `python -m infra2_sdk.deploy` CLI in `infra2_sdk.deploy` ([#193](https://github.com/wangzitian0/infra2-sdk/issues/193)).
+- Add pure AST import boundary and dependency-cycle validators (`LayerRule`, `ImportViolation`, `scan_module_imports`, `find_dependency_cycle`, `check_import_boundaries`) in `infra2_sdk.rules.imports` ([#193](https://github.com/wangzitian0/infra2-sdk/issues/193)).
+
+### Changed
+
+- Deduplicate wire parsing (`_wire.parse_bool`), transport helpers, and internal module implementations to shrink `src/infra2_sdk` source size from 302.9 KB to 263.5 KB even with 7 new cross-repository primitives ([#193](https://github.com/wangzitian0/infra2-sdk/issues/193)).
+
+### Removed
+
+- Retire 2 zero-caller public symbols (`runtime.http.create_http_client`, `runtime.postgres.normalize_postgres_dsn`), the unused `python -m infra2_sdk.rules` CLI wrapper, and unread `pipeline_stage_deadlines_ms` entries in `data/stages.yaml` ([#193](https://github.com/wangzitian0/infra2-sdk/issues/193)).
+
 ## 3.26.0 - 2026-11-11
 
 ### Added

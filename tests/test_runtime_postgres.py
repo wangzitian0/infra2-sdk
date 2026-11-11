@@ -3,7 +3,7 @@ import pytest
 from infra2_sdk.runtime.health import DependencyStatus, run_probes
 from infra2_sdk.runtime.postgres import (
     PostgresSettings,
-    normalize_postgres_dsn,
+    _normalize_dsn,
     probe_postgres,
 )
 
@@ -33,7 +33,7 @@ def test_dsn_normalization_and_probe() -> None:
     settings = PostgresSettings("postgresql+asyncpg://user:pass@db/app")
     assert "pass" not in repr(settings)
     assert settings.psycopg_dsn == "postgresql://user:pass@db/app"
-    assert normalize_postgres_dsn("postgres://db/app") == "postgres://db/app"
+    assert _normalize_dsn("postgres://db/app") == "postgres://db/app"
     connection = Connection()
     calls = []
 

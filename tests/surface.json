@@ -89,18 +89,21 @@
     "ensure_bucket": "consumer: finance_report, infra2, truealpha",
     "is_not_found": "consumer: truealpha",
     "probe_s3": "consumer: infra2, truealpha",
+    "put_object_bytes": "documented: README section Core runtime entrypoints",
     "read_object_bytes": "consumer: finance_report, infra2, truealpha",
     "redact_presigned_url": "consumer: finance_report",
     "PostgresSettings": "consumer: finance_report, infra2, truealpha",
-    "normalize_postgres_dsn": "documented: README section Core runtime entrypoints",
     "probe_postgres": "consumer: infra2, truealpha",
     "redact_postgres_error": "consumer: finance_report, truealpha",
     "HttpClientSettings": "consumer: finance_report",
-    "create_http_client": "documented: README section Core runtime entrypoints",
+    "arequest_with_retry": "documented: README section Core runtime entrypoints",
     "probe_http": "consumer: finance_report",
+    "request_with_retry": "documented: README section Core runtime entrypoints",
     "OtelSettings": "consumer: finance_report, truealpha",
     "configure_telemetry": "consumer: truealpha",
     "signal_endpoint": "consumer: finance_report",
+    "LlmClient": "documented: README section Core runtime entrypoints",
+    "LlmResponse": "documented: README section Core runtime entrypoints",
     "LlmSettings": "consumer: finance_report, truealpha"
   }
 }

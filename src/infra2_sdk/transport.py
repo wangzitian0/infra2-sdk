@@ -1,4 +1,4 @@
-"""Minimal injectable HTTP transport shared by the open-protocol adapters."""
+"""Minimal injectable HTTP transport shared by open-protocol adapters."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ GITHUB_ACCEPT = "application/vnd.github+json"
 
 
 def _github_headers(*, token: str = "", user_agent: str, content_type: str = "") -> dict[str, str]:
-    """Build standard GitHub REST API headers with optional Bearer token and Content-Type."""
     headers = {
         "Accept": GITHUB_ACCEPT,
         "User-Agent": user_agent,
@@ -30,7 +29,6 @@ def _github_headers(*, token: str = "", user_agent: str, content_type: str = "")
 
 
 def _github_api_url(path: str) -> str:
-    """Resolve a GitHub API path or full HTTPS URL against ``GITHUB_API_BASE``."""
     return path if path.startswith("https://") else f"{GITHUB_API_BASE}{path}"
 
 
@@ -43,21 +41,15 @@ def _urlopen_json(
     timeout: float = 20.0,
     opener: Callable[..., object] = urllib.request.urlopen,
 ) -> Any:
-    """Send an HTTP request via ``opener`` and decode a JSON response body (or None if empty)."""
-    request = urllib.request.Request(  # noqa: S310
-        url,
-        headers=dict(headers),
-        data=None if payload is None else json.dumps(dict(payload)).encode("utf-8"),
-        method=method,
-    )
-    with opener(request, timeout=timeout) as response:  # type: ignore[attr-defined]
-        raw = response.read()
-    text = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else str(raw)
+    data = None if payload is None else json.dumps(dict(payload)).encode()
+    req = urllib.request.Request(url, headers=dict(headers), data=data, method=method)  # noqa: S310
+    with opener(req, timeout=timeout) as resp:  # type: ignore[attr-defined]
+        raw = resp.read()
+    text = raw.decode() if isinstance(raw, (bytes, bytearray)) else str(raw)
     return json.loads(text) if text.strip() else None
 
 
 def _decode_github_contents(payload: object, *, require_encoding: bool = False) -> bytes:
-    """Extract and base64-decode ``content`` from a GitHub REST repository contents payload."""
     if not isinstance(payload, Mapping):
         raise TypeError("must contain a JSON object")
     content = payload.get("content")
@@ -77,24 +69,24 @@ HttpTransport = Callable[[str, str, Mapping[str, str], bytes | None], HttpRespon
 
 
 def urllib_transport(*, timeout: float = 30.0) -> HttpTransport:
-    """Return a transport over the standard library; error statuses are returned, not raised."""
+    """Return a stdlib HTTP transport that returns error status codes instead of raising."""
 
     def send(method: str, url: str, headers: Mapping[str, str], body: bytes | None) -> HttpResponse:
-        request = urllib.request.Request(url, data=body, headers=dict(headers), method=method)
+        req = urllib.request.Request(url, data=body, headers=dict(headers), method=method)
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-                headers = {k.lower(): v for k, v in response.headers.items()}
-                return HttpResponse(response.status, headers, response.read())
-        except urllib.error.HTTPError as error:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+                return HttpResponse(
+                    resp.status, {k.lower(): v for k, v in resp.headers.items()}, resp.read()
+                )
+        except urllib.error.HTTPError as err:
             try:
-                headers = {k.lower(): v for k, v in error.headers.items()}
-                return HttpResponse(error.code, headers, error.read())
+                return HttpResponse(
+                    err.code, {k.lower(): v for k, v in err.headers.items()}, err.read()
+                )
             finally:
-                error.close()
+                err.close()
 
     return send
 
 
-__all__ = [
-    "urllib_transport",
-]
+__all__ = ["urllib_transport"]

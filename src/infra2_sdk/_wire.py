@@ -13,13 +13,8 @@ _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
 def canonical_json_bytes(payload: Any) -> bytes:
-    """Serialize payload into canonical UTF-8 JSON bytes with sorted keys and ASCII escaping."""
-    return json.dumps(
-        payload,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-    ).encode("utf-8")
+    """Serialize payload into canonical UTF-8 JSON bytes."""
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
 
 
 def canonical_sha256(payload: Any) -> str:
@@ -35,25 +30,14 @@ def require_contract_version(value: Any, expected: int, *, description: str) -> 
     return value
 
 
-def parse_contract_version(
-    raw: Mapping[str, Any],
-    expected: int,
-    *,
-    description: str,
-) -> int:
+def parse_contract_version(raw: Mapping[str, Any], expected: int, *, description: str) -> int:
     return require_contract_version(
-        raw.get("contract_version", 0),
-        expected,
-        description=description,
+        raw.get("contract_version", 0), expected, description=description
     )
 
 
 def parse_string(
-    raw: Mapping[str, Any],
-    key: str,
-    *,
-    required: bool = True,
-    default: str = "",
+    raw: Mapping[str, Any], key: str, *, required: bool = True, default: str = ""
 ) -> str:
     value = raw.get(key)
     if value is None:
@@ -68,40 +52,41 @@ def parse_string(
     return value
 
 
+def parse_bool(raw: Mapping[str, Any], key: str, *, default: bool = False) -> bool:
+    value = raw.get(key, default)
+    if type(value) is not bool:
+        raise ValueError(f"{key} must be a boolean")
+    return value
+
+
 def validate_http_url(
-    value: str,
-    *,
-    label: str,
-    allow_fragment: bool = True,
-    validate_port: bool = False,
+    value: str, *, label: str, allow_fragment: bool = True, validate_port: bool = False
 ) -> None:
     try:
-        endpoint = urlsplit(value)
-        hostname = endpoint.hostname
+        ep = urlsplit(value)
+        host = ep.hostname
         if validate_port:
-            _ = endpoint.port
+            _ = ep.port
     except ValueError:
         raise ValueError(f"{label} must be a valid HTTP URL") from None
     if (
-        endpoint.scheme not in {"http", "https"}
-        or not endpoint.netloc
-        or not hostname
-        or any(char.isspace() for char in endpoint.netloc)
+        ep.scheme not in {"http", "https"}
+        or not ep.netloc
+        or not host
+        or any(c.isspace() for c in ep.netloc)
     ):
         raise ValueError(f"{label} must use http:// or https:// with a host")
-    if endpoint.username is not None or endpoint.password is not None:
+    if ep.username is not None or ep.password is not None:
         raise ValueError(f"{label} must not contain credentials")
-    if not allow_fragment and endpoint.fragment:
+    if not allow_fragment and ep.fragment:
         raise ValueError(f"{label} must not contain a fragment")
 
 
 def _is_loopback_host(host: str) -> bool:
-    """Return True when ``host`` is a loopback address (localhost, 127.0.0.1, ::1)."""
     return host.strip("[]").lower() in _LOOPBACK_HOSTS
 
 
 def parse_iso_utc(value: object, *, allow_naive: bool = False) -> datetime:
-    """Parse an ISO 8601 timestamp string into a timezone-aware UTC ``datetime``."""
     if not isinstance(value, str) or not value.strip():
         raise ValueError("expected non-empty ISO 8601 string")
     parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
@@ -113,7 +98,6 @@ def parse_iso_utc(value: object, *, allow_naive: bool = False) -> datetime:
 
 
 def _yaml() -> Any:
-    """Import PyYAML on demand when a YAML helper runs."""
     import yaml
 
     return yaml
@@ -124,6 +108,7 @@ __all__ = [
     "_yaml",
     "canonical_json_bytes",
     "canonical_sha256",
+    "parse_bool",
     "parse_contract_version",
     "parse_iso_utc",
     "parse_string",

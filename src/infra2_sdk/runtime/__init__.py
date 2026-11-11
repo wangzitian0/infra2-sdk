@@ -42,10 +42,13 @@ from infra2_sdk.runtime.health import (
 )
 from infra2_sdk.runtime.http import (
     HttpClientSettings,
-    create_http_client,
+    arequest_with_retry,
     probe_http,
+    request_with_retry,
 )
 from infra2_sdk.runtime.llm import (
+    LlmClient,
+    LlmResponse,
     LlmSettings,
 )
 from infra2_sdk.runtime.otel import (
@@ -55,7 +58,6 @@ from infra2_sdk.runtime.otel import (
 )
 from infra2_sdk.runtime.postgres import (
     PostgresSettings,
-    normalize_postgres_dsn,
     probe_postgres,
     redact_postgres_error,
 )
@@ -65,12 +67,12 @@ from infra2_sdk.runtime.s3 import (
     ensure_bucket,
     is_not_found,
     probe_s3,
+    put_object_bytes,
     read_object_bytes,
     redact_presigned_url,
 )
 
 __all__ = [
-    # Submodules
     "config_schema",
     "environment",
     "health",
@@ -79,57 +81,49 @@ __all__ = [
     "otel",
     "postgres",
     "s3",
-    # Environment
     "EnvironmentTier",
     "RuntimeEnvironment",
     "environment_from_env",
     "resolve_environment_tier",
     "to_environment_tier",
-    # Environment variables
     "RUNTIME_ENV_CONTRACT_VERSION",
     "RUNTIME_ENV_SPECS",
     "RuntimeEnvKey",
     "resolve_runtime_env",
     "runtime_env_contract",
     "runtime_env_spec",
-    # Config schema
     "EnvironmentField",
     "EnvironmentManifest",
     "environment_manifest_from_model",
     "manifest_config_fingerprint",
-    # Dependency declarations
     "Dependency",
     "DependencyKind",
     "DependencyManifest",
-    # Probes
     "DependencyCheck",
     "DependencyStatus",
     "ProbeResult",
     "probe_orchestrator",
     "run_probes",
-    # Health
     "check_health",
-    # S3
     "S3Settings",
     "create_s3_client",
     "ensure_bucket",
     "is_not_found",
     "probe_s3",
+    "put_object_bytes",
     "read_object_bytes",
     "redact_presigned_url",
-    # Postgres
     "PostgresSettings",
-    "normalize_postgres_dsn",
     "probe_postgres",
     "redact_postgres_error",
-    # HTTP
     "HttpClientSettings",
-    "create_http_client",
+    "arequest_with_retry",
     "probe_http",
-    # OTel
+    "request_with_retry",
     "OtelSettings",
     "configure_telemetry",
     "signal_endpoint",
-    # LLM
+    "LlmClient",
+    "LlmResponse",
     "LlmSettings",
 ]

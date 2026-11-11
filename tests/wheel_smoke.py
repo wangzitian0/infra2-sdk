@@ -85,6 +85,10 @@ REMOVED_NAMES = (
     ("infra2_sdk.refs", "resolve_branch_to_sha"),
     ("infra2_sdk.refs", "redact_repo"),
     ("infra2_sdk.refs", "SHORT_SHA_LENGTH"),
+    # Retired zero-caller public symbols in 3.25.0 (#193).
+    ("infra2_sdk.observability", "PeerVerdict"),
+    ("infra2_sdk.runtime.http", "create_http_client"),
+    ("infra2_sdk.runtime.postgres", "normalize_postgres_dsn"),
 )
 
 # RuntimeEnvKey members removed in 3.4.0 (issue #102, decision 2) and 3.8.2 (#126).
@@ -204,9 +208,9 @@ def smoke_removed_names() -> None:
     import infra2_sdk.runtime
     from infra2_sdk.runtime.environment import RuntimeEnvKey, runtime_env_contract
 
-    assert len(REMOVED_NAMES) == 48 and len(set(REMOVED_NAMES)) == 48, (
+    assert len(REMOVED_NAMES) == 51 and len(set(REMOVED_NAMES)) == 51, (
         f"REMOVED_NAMES has {len(REMOVED_NAMES)} entries ({len(set(REMOVED_NAMES))} unique), "
-        "expected 48"
+        "expected 51"
     )
     for module, dotted in REMOVED_NAMES:
         *parents, leaf = dotted.split(".")
@@ -274,11 +278,14 @@ def smoke_postgres() -> None:
 
 
 def smoke_http() -> None:
-    from infra2_sdk.runtime.http import create_http_client
+    import httpx
 
-    client = create_http_client()
-    assert type(client).__name__ == "Client"
-    client.close()
+    from infra2_sdk.runtime.http import HttpClientSettings, request_with_retry
+
+    settings = HttpClientSettings(timeout_seconds=5.0)
+    assert settings.timeout_seconds == 5.0
+    assert callable(request_with_retry)
+    assert hasattr(httpx, "Client")
     smoke_standalone_app()
 
 

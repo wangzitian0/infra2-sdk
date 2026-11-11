@@ -1,20 +1,4 @@
-"""Framework-agnostic readiness: dependency manifests, probes, and health check runner.
-
-The health check response follows infra2's contract (``ops.observability`` section 5.1):
-
-.. code-block:: json
-
-    {"status": "healthy" | "degraded" | "unhealthy",
-     "checks": {"<name>": {"status": "present" | "absent", "required": true, "detail": "...",
-                           "duration_ms": 1.2}},
-     "reasons": ["<name>: <why it is absent>"]}
-
-A required dependency that is absent, failed, timed out, or was never probed makes the whole
-report ``unhealthy`` with status 503. A failing optional dependency makes it ``degraded``
-(still 200: the service can take traffic). Nothing is reported healthy by default: a probe
-that raises is an absent dependency, and a report with nothing to judge is an error rather
-than a green. Mapping the pair onto a framework response is the caller's one line.
-"""
+"""Framework-agnostic readiness: dependency manifests, probes, and health check runner."""
 
 from __future__ import annotations
 
@@ -30,17 +14,11 @@ from functools import partial
 from threading import Thread
 from typing import Any, Protocol, runtime_checkable
 
-from infra2_sdk._wire import (
-    parse_contract_version,
-    parse_string,
-    require_contract_version,
-)
+from infra2_sdk._wire import parse_contract_version, parse_string, require_contract_version
 from infra2_sdk.runtime.environment import EnvironmentTier, resolve_environment_tier
 
 _DEPENDENCY_MANIFEST_VERSION = 1
-
-_HTTP_OK = 200
-_HTTP_SERVICE_UNAVAILABLE = 503
+_HTTP_OK, _HTTP_SERVICE_UNAVAILABLE = 200, 503
 
 
 class DependencyKind(StrEnum):
@@ -62,9 +40,7 @@ class Dependency:
     def __post_init__(self) -> None:
         object.__setattr__(self, "kind", DependencyKind(self.kind))
         object.__setattr__(
-            self,
-            "required_in",
-            frozenset(resolve_environment_tier(tier) for tier in self.required_in),
+            self, "required_in", frozenset(resolve_environment_tier(t) for t in self.required_in)
         )
         object.__setattr__(self, "env_vars", frozenset(self.env_vars))
         if not self.name or not self.name.replace("_", "").isalnum():
@@ -73,14 +49,14 @@ class Dependency:
             raise ValueError(f"dependency {self.name!r} must be required in at least one tier")
         if not self.env_vars:
             raise ValueError(f"dependency {self.name!r} must declare environment variables")
-        if any(not key or key.upper() != key for key in self.env_vars):
+        if any(not k or k.upper() != k for k in self.env_vars):
             raise ValueError("dependency environment variables must be uppercase")
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "kind": self.kind.value,
-            "required_in": sorted(tier.value for tier in self.required_in),
+            "required_in": sorted(t.value for t in self.required_in),
             "env_vars": sorted(self.env_vars),
             "summary": self.summary,
             "local_backend": self.local_backend,
@@ -89,17 +65,16 @@ class Dependency:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> Dependency:
-        required = raw.get("required_in")
-        env_vars = raw.get("env_vars")
-        if not isinstance(required, list) or not isinstance(env_vars, list):
+        req, ev = raw.get("required_in"), raw.get("env_vars")
+        if not isinstance(req, list) or not isinstance(ev, list):
             raise ValueError("required_in and env_vars must be arrays")
-        if any(not isinstance(value, str) for value in (*required, *env_vars)):
+        if any(not isinstance(v, str) for v in (*req, *ev)):
             raise ValueError("required_in and env_vars must contain strings")
         return cls(
             name=parse_string(raw, "name"),
             kind=DependencyKind(parse_string(raw, "kind")),
-            required_in=frozenset(resolve_environment_tier(value) for value in required),
-            env_vars=frozenset(env_vars),
+            required_in=frozenset(resolve_environment_tier(v) for v in req),
+            env_vars=frozenset(ev),
             summary=parse_string(raw, "summary", required=False),
             local_backend=parse_string(raw, "local_backend", required=False),
             deployed_backend=parse_string(raw, "deployed_backend", required=False),
@@ -119,12 +94,11 @@ class DependencyManifest:
             description="dependency manifest version",
         )
         self.contract_version = contract_version
-        values = tuple(dependencies)
-        names = [dependency.name for dependency in values]
-        if len(names) != len(set(names)):
+        vals = tuple(dependencies)
+        if len(vals) != len({d.name for d in vals}):
             raise ValueError("duplicate dependency name")
-        self._dependencies = values
-        self._by_name = {dependency.name: dependency for dependency in values}
+        self._dependencies = vals
+        self._by_name = {d.name: d for d in vals}
 
     def __iter__(self):
         return iter(self._dependencies)
@@ -145,35 +119,24 @@ class DependencyManifest:
         return frozenset(self._by_name)
 
     def required_for(self, tier: str | EnvironmentTier) -> frozenset[str]:
-        resolved = resolve_environment_tier(tier)
-        return frozenset(
-            dependency.name
-            for dependency in self._dependencies
-            if resolved in dependency.required_in
-        )
+        t = resolve_environment_tier(tier)
+        return frozenset(d.name for d in self._dependencies if t in d.required_in)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "contract_version": self.contract_version,
-            "dependencies": [dependency.to_dict() for dependency in self._dependencies],
+            "dependencies": [d.to_dict() for d in self._dependencies],
         }
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> DependencyManifest:
-        version = parse_contract_version(
-            raw,
-            _DEPENDENCY_MANIFEST_VERSION,
-            description="dependency manifest version",
+        ver = parse_contract_version(
+            raw, _DEPENDENCY_MANIFEST_VERSION, description="dependency manifest version"
         )
-        dependencies = raw.get("dependencies")
-        if not isinstance(dependencies, list):
-            raise ValueError("dependencies must be an array")
-        if any(not isinstance(item, Mapping) for item in dependencies):
+        deps = raw.get("dependencies")
+        if not isinstance(deps, list) or any(not isinstance(i, Mapping) for i in deps):
             raise ValueError("dependencies must be an array of objects")
-        return cls(
-            (Dependency.from_dict(item) for item in dependencies),
-            contract_version=version,
-        )
+        return cls((Dependency.from_dict(i) for i in deps), contract_version=ver)
 
 
 class DependencyStatus(StrEnum):
@@ -200,21 +163,21 @@ class ProbeResult:
         return self.status is DependencyStatus.PRESENT
 
     def to_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-        data["status"] = self.status.value
-        return data
+        d = asdict(self)
+        d["status"] = self.status.value
+        return d
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> ProbeResult:
         try:
-            duration_ms = float(raw.get("duration_ms", 0.0))
+            dur = float(raw.get("duration_ms", 0.0))
         except (TypeError, ValueError):
             raise ValueError("duration_ms must be numeric") from None
         return cls(
-            name=parse_string(raw, "name"),
-            status=DependencyStatus(parse_string(raw, "status")),
-            detail=parse_string(raw, "detail", required=False),
-            duration_ms=duration_ms,
+            parse_string(raw, "name"),
+            DependencyStatus(parse_string(raw, "status")),
+            parse_string(raw, "detail", required=False),
+            dur,
         )
 
 
@@ -226,52 +189,46 @@ class DependencyCheck(Protocol):
 
 
 async def run_probes(
-    checks: Iterable[DependencyCheck],
-    *,
-    timeout_seconds: float = 10.0,
+    checks: Iterable[DependencyCheck], *, timeout_seconds: float = 10.0
 ) -> tuple[ProbeResult, ...]:
-    """Run sync or async checks concurrently and report ordinary failures as absent."""
     if timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive")
-    values = tuple(checks)
-    names = [check.name for check in values]
-    if len(names) != len(set(names)):
+    vals = tuple(checks)
+    if len(vals) != len({c.name for c in vals}):
         raise ValueError("duplicate probe name")
 
-    async def execute(check: DependencyCheck) -> ProbeResult:
+    async def execute(c: DependencyCheck) -> ProbeResult:
         started = time.perf_counter()
         try:
-            if inspect.iscoroutinefunction(check.probe):
-                result = await check.probe()
-            else:
-                result = await _run_sync_probe(check.probe, name=check.name)
-            if inspect.isawaitable(result):
-                result = await result
-            if not isinstance(result, ProbeResult):
+            res = (
+                await c.probe()
+                if inspect.iscoroutinefunction(c.probe)
+                else await _run_sync_probe(c.probe, name=c.name)
+            )
+            if inspect.isawaitable(res):
+                res = await res
+            if not isinstance(res, ProbeResult):
                 raise TypeError("probe must return ProbeResult")
-            if result.name != check.name:
+            if res.name != c.name:
                 raise ValueError("probe result name does not match check name")
-            return result
-        except Exception as exc:  # noqa: BLE001 - a probe converts outages to evidence
+            return res
+        except Exception as exc:  # noqa: BLE001
             return ProbeResult(
-                check.name,
-                DependencyStatus.ABSENT,
-                f"{type(exc).__name__}: {exc}",
-                _elapsed(started),
+                c.name, DependencyStatus.ABSENT, f"{type(exc).__name__}: {exc}", _elapsed(started)
             )
 
-    async def bounded(check: DependencyCheck) -> ProbeResult:
+    async def bounded(c: DependencyCheck) -> ProbeResult:
         try:
-            return await asyncio.wait_for(execute(check), timeout=timeout_seconds)
+            return await asyncio.wait_for(execute(c), timeout=timeout_seconds)
         except TimeoutError:
             return ProbeResult(
-                check.name,
+                c.name,
                 DependencyStatus.ABSENT,
                 f"probe timed out after {timeout_seconds:g}s",
                 timeout_seconds * 1000,
             )
 
-    return tuple(await asyncio.gather(*(bounded(check) for check in values)))
+    return tuple(await asyncio.gather(*(bounded(c) for c in vals)))
 
 
 _MAX_CONCURRENT_SYNC_PROBES = 16
@@ -280,50 +237,41 @@ _SYNC_SEMAPHORES: dict[asyncio.AbstractEventLoop, asyncio.Semaphore] = {}
 
 def _get_sync_probe_semaphore() -> asyncio.Semaphore:
     loop = asyncio.get_running_loop()
-    sem = _SYNC_SEMAPHORES.get(loop)
-    if sem is None:
-        sem = asyncio.Semaphore(_MAX_CONCURRENT_SYNC_PROBES)
-        _SYNC_SEMAPHORES[loop] = sem
+    if (sem := _SYNC_SEMAPHORES.get(loop)) is None:
+        sem = _SYNC_SEMAPHORES[loop] = asyncio.Semaphore(_MAX_CONCURRENT_SYNC_PROBES)
     return sem
 
 
 async def _run_sync_probe(probe, *, name: str):
-    """Run a sync probe without making CLI shutdown wait for timed-out worker threads."""
-    loop = asyncio.get_running_loop()
-    future = loop.create_future()
-    context = copy_context()
+    loop, fut, ctx = (
+        asyncio.get_running_loop(),
+        asyncio.get_running_loop().create_future(),
+        copy_context(),
+    )
 
     def publish(*, result=None, error: BaseException | None = None) -> None:
-        if future.done():
-            return
-        if error is not None:
-            future.set_exception(error)
-        else:
-            future.set_result(result)
+        if not fut.done():
+            fut.set_exception(error) if error is not None else fut.set_result(result)
 
     def worker() -> None:
         try:
-            result = context.run(probe)
-        except (KeyboardInterrupt, SystemExit) as exc:
-            callback = partial(publish, error=exc)
-        except Exception as exc:  # noqa: BLE001 - forwarded to the async runner
-            callback = partial(publish, error=exc)
-        except BaseException as exc:  # pragma: no cover - defensive thread boundary
-            error = RuntimeError(f"sync probe aborted with {type(exc).__name__}")
-            callback = partial(publish, error=error)
-        else:
-            callback = partial(publish, result=result)
+            cb = partial(publish, result=ctx.run(probe))
+        except (KeyboardInterrupt, SystemExit, Exception) as exc:  # noqa: BLE001
+            cb = partial(publish, error=exc)
+        except BaseException as exc:  # pragma: no cover
+            cb = partial(
+                publish, error=RuntimeError(f"sync probe aborted with {type(exc).__name__}")
+            )
         with suppress(RuntimeError):
-            loop.call_soon_threadsafe(callback)
+            loop.call_soon_threadsafe(cb)
 
-    sem = _get_sync_probe_semaphore()
-    async with sem:
+    async with _get_sync_probe_semaphore():
         Thread(target=worker, name=f"infra2-probe-{name}", daemon=True).start()
         try:
-            return await future
+            return await fut
         finally:
-            if not future.done():
-                future.cancel()
+            if not fut.done():
+                fut.cancel()
 
 
 def _elapsed(started: float) -> float:
@@ -337,54 +285,42 @@ class _HealthStatus(StrEnum):
 
 
 def _health_response(
-    results: Iterable[ProbeResult],
-    *,
-    required: Iterable[str],
+    results: Iterable[ProbeResult], *, required: Iterable[str]
 ) -> tuple[int, dict[str, Any]]:
-    """Summarize finished probes as ``(status_code, body)``.
-
-    ``required`` names the dependencies that must be present; one with no result counts as
-    absent. Raises ``ValueError`` for duplicate result names and when there are neither
-    results nor required names.
-    """
-    values = tuple(results)
-    required_names = frozenset(required)
-    names = [result.name for result in values]
+    vals, req = tuple(results), frozenset(required)
+    names = [r.name for r in vals]
     if len(names) != len(set(names)):
         raise ValueError("duplicate probe result name")
-    if not values and not required_names:
+    if not vals and not req:
         raise ValueError("no probe results and no required dependencies: nothing to report on")
-
-    checks: dict[str, dict[str, Any]] = {}
-    for result in values:
-        entry = result.to_dict()
-        entry.pop("name")
-        entry["required"] = result.name in required_names
-        checks[result.name] = entry
-    for name in sorted(required_names - set(names)):
-        checks[name] = {
+    checks = {
+        r.name: {k: v for k, v in r.to_dict().items() if k != "name"} | {"required": r.name in req}
+        for r in vals
+    }
+    for n in sorted(req - set(names)):
+        checks[n] = {
             "status": DependencyStatus.ABSENT.value,
             "detail": "required dependency was not probed",
             "duration_ms": 0.0,
             "required": True,
         }
-
     absent = sorted(
-        (name for name, entry in checks.items() if entry["status"] != DependencyStatus.PRESENT),
-        key=lambda name: (not checks[name]["required"], name),
+        (n for n, e in checks.items() if e["status"] != DependencyStatus.PRESENT),
+        key=lambda n: (not checks[n]["required"], n),
     )
-    if any(checks[name]["required"] for name in absent):
-        status = _HealthStatus.UNHEALTHY
-    elif absent:
-        status = _HealthStatus.DEGRADED
-    else:
-        status = _HealthStatus.HEALTHY
+    st = (
+        _HealthStatus.UNHEALTHY
+        if any(checks[n]["required"] for n in absent)
+        else _HealthStatus.DEGRADED
+        if absent
+        else _HealthStatus.HEALTHY
+    )
     body = {
-        "status": status.value,
+        "status": st.value,
         "checks": dict(sorted(checks.items())),
-        "reasons": [f"{name}: {checks[name]['detail'] or 'absent'}" for name in absent],
+        "reasons": [f"{n}: {checks[n]['detail'] or 'absent'}" for n in absent],
     }
-    return (_HTTP_SERVICE_UNAVAILABLE if status is _HealthStatus.UNHEALTHY else _HTTP_OK), body
+    return (_HTTP_SERVICE_UNAVAILABLE if st is _HealthStatus.UNHEALTHY else _HTTP_OK), body
 
 
 async def check_health(
@@ -395,27 +331,16 @@ async def check_health(
     tier: str | EnvironmentTier | None = None,
     timeout_seconds: float = 10.0,
 ) -> tuple[int, dict[str, Any]]:
-    """Run ``checks`` with ``run_probes`` and return ``(status_code, body)``.
-
-    Which dependencies are required is either ``required`` (names), or ``manifest`` together
-    with ``tier`` (``manifest.required_for(tier)``), or, when neither is given, every check:
-    the fail-closed default. Probe failures never raise out of here, they are reported as
-    absent dependencies; misuse (duplicate names, an unknown tier, ambiguous requirements,
-    nothing to check) raises ``ValueError`` so a broken handler fails instead of reporting 200.
-    """
-    values = tuple(checks)
+    vals = tuple(checks)
     if manifest is not None:
         if required is not None:
             raise ValueError("pass either required or manifest, not both")
         if tier is None:
             raise ValueError("tier is required with a dependency manifest")
-        required_names = manifest.required_for(tier)
-    elif required is not None:
-        required_names = frozenset(required)
+        req = manifest.required_for(tier)
     else:
-        required_names = frozenset(check.name for check in values)
-    results = await run_probes(values, timeout_seconds=timeout_seconds)
-    return _health_response(results, required=required_names)
+        req = frozenset(required) if required is not None else frozenset(c.name for c in vals)
+    return _health_response(await run_probes(vals, timeout_seconds=timeout_seconds), required=req)
 
 
 async def probe_orchestrator(
@@ -425,7 +350,6 @@ async def probe_orchestrator(
     client: Any | None = None,
     settings: Any | None = None,
 ) -> ProbeResult:
-    """Probe an orchestrator endpoint (Prefect, Dagster) for reachability."""
     from infra2_sdk.runtime.http import probe_http
 
     return await probe_http(url, name=name, client=client, settings=settings)

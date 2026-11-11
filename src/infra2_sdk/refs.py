@@ -15,12 +15,23 @@ from infra2_sdk.transport import HttpResponse, HttpTransport, urllib_transport
 _SHA_RE = re.compile(r"\A[0-9a-fA-F]{7,40}\Z")
 _TAG_RE = re.compile(r"\Av\d+\.\d+\.\d+\Z")
 _LS_REMOTE_TIMEOUT_SECONDS = 30
+_SHORT_SHA_LENGTH = 7
+_FULL_SHA_RE = re.compile(r"\A[0-9a-f]{40}\Z")
+_OCI_DIGEST_RE = re.compile(r"\Asha256:[0-9a-f]{64}\Z")
+_REFERENCE_RE = re.compile(r"\A[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\Z")
+_IMAGE_RE = re.compile(r"\A[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+\Z")
+_MANIFEST_ACCEPT = ", ".join(
+    (
+        "application/vnd.oci.image.index.v1+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+        "application/vnd.oci.image.manifest.v1+json",
+        "application/vnd.docker.distribution.manifest.v2+json",
+    )
+)
 
 
 @runtime_checkable
 class _CommandRunner(Protocol):
-    """Callable protocol for command execution (compatible with subprocess.run)."""
-
     def __call__(
         self,
         args: list[str],
@@ -40,121 +51,88 @@ class ResolvedRef:
     form: str
 
 
+class ReleaseError(RuntimeError):
+    pass
+
+
 def classify_ref(ref: str) -> str:
-    cleaned = ref.strip()
-    if not cleaned:
+    c = ref.strip()
+    if not c:
         raise ValueError("deploy ref must be non-empty")
-    if _TAG_RE.match(cleaned):
+    if _TAG_RE.match(c):
         return "tag"
-    if cleaned == "main":
+    if c == "main":
         return "branch"
-    if _SHA_RE.match(cleaned):
+    if _SHA_RE.match(c):
         return "sha"
     raise ValueError(f"unrecognized deploy ref {ref!r}: expected 'main', 'vX.Y.Z', or a commit sha")
 
 
 def identifier_kind(value: str) -> str:
-    """Name the kind of release identifier, for a message a human can act on."""
     if not value or value == "unknown":
         return "unset"
     if _SHA_RE.match(value) and value == value.lower():
         return "commit sha"
-    if _TAG_RE.match(value):
-        return "release tag"
-    return "unrecognised"
+    return "release tag" if _TAG_RE.match(value) else "unrecognised"
 
 
-def resolve_to_sha(
-    ref: str,
-    *,
-    repo: str,
-    runner: _CommandRunner = subprocess.run,
-) -> str:
-    form = classify_ref(ref)
-    cleaned = ref.strip()
+def resolve_to_sha(ref: str, *, repo: str, runner: _CommandRunner = subprocess.run) -> str:
+    form, c = classify_ref(ref), ref.strip()
     if form == "sha":
-        return cleaned.lower()
-    sha = _resolve_remote_sha(repo, form, cleaned, runner=runner)
-    if not sha:
-        raise ValueError(
-            f"deploy ref {ref!r} ({_remote_ref_for(form, cleaned)}) not found in "
-            f"{_redact_repo(repo)}"
-        )
-    return sha
+        return c.lower()
+    if sha := _resolve_remote_sha(repo, form, c, runner=runner):
+        return sha
+    raise ValueError(
+        f"deploy ref {ref!r} ({_remote_ref_for(form, c)}) not found in {_redact_repo(repo)}"
+    )
 
 
 def resolve_image_ref(
-    ref: str,
-    *,
-    repo: str,
-    runner: _CommandRunner = subprocess.run,
+    ref: str, *, repo: str, runner: _CommandRunner = subprocess.run
 ) -> ResolvedRef:
-    form = classify_ref(ref)
-    cleaned = ref.strip()
+    form, c = classify_ref(ref), ref.strip()
     if form == "tag":
-        sha = _resolve_remote_sha(repo, form, cleaned, runner=runner)
-        if not sha:
-            raise ValueError(f"tag {cleaned!r} not found in {_redact_repo(repo)}")
-        return ResolvedRef(sha=sha, image_ref=cleaned, form=form)
+        if not (sha := _resolve_remote_sha(repo, form, c, runner=runner)):
+            raise ValueError(f"tag {c!r} not found in {_redact_repo(repo)}")
+        return ResolvedRef(sha, c, form)
     sha = resolve_to_sha(ref, repo=repo, runner=runner)
-    return ResolvedRef(sha=sha, image_ref=sha[:7], form=form)
+    return ResolvedRef(sha, sha[:_SHORT_SHA_LENGTH], form)
 
 
 def resolve_pr(
-    pr_number: int | str,
-    *,
-    repo: str,
-    runner: _CommandRunner = subprocess.run,
+    pr_number: int | str, *, repo: str, runner: _CommandRunner = subprocess.run
 ) -> ResolvedRef:
-    number = str(pr_number).strip()
-    if not (number.isdigit() and int(number) > 0):
+    num = str(pr_number).strip()
+    if not (num.isdigit() and int(num) > 0):
         raise ValueError(f"PR number must be a positive integer, got {pr_number!r}")
-    remote_ref = f"refs/pull/{number}/head"
-    for sha, name in _ls_remote_rows(repo, remote_ref, runner=runner):
-        if name == remote_ref:
-            return ResolvedRef(sha=sha, image_ref=sha[:_SHORT_SHA_LENGTH], form="pr")
-    raise ValueError(f"PR #{number} head not found in {_redact_repo(repo)}")
+    rref = f"refs/pull/{num}/head"
+    for sha, name in _ls_remote_rows(repo, rref, runner=runner):
+        if name == rref:
+            return ResolvedRef(sha, sha[:_SHORT_SHA_LENGTH], "pr")
+    raise ValueError(f"PR #{num} head not found in {_redact_repo(repo)}")
 
 
 def _remote_ref_for(form: str, cleaned: str) -> str:
-    return {"branch": "refs/heads/main", "tag": f"refs/tags/{cleaned}"}[form]
+    return "refs/heads/main" if form == "branch" else f"refs/tags/{cleaned}"
 
 
 def _resolve_remote_sha(
-    repo: str,
-    form: str,
-    cleaned: str,
-    *,
-    runner: _CommandRunner,
+    repo: str, form: str, cleaned: str, *, runner: _CommandRunner
 ) -> str | None:
-    remote_ref = _remote_ref_for(form, cleaned)
-    peeled = remote_ref + "^{}" if form == "tag" else None
-    query = [remote_ref, peeled] if peeled else [remote_ref]
-    rows = _ls_remote_rows(repo, *query, runner=runner)
-    if peeled:
-        for sha, name in rows:
-            if name == peeled:
-                return sha
-    for sha, name in rows:
-        if name == remote_ref:
-            return sha
-    return None
+    rref = _remote_ref_for(form, cleaned)
+    peeled = f"{rref}^{{}}" if form == "tag" else None
+    rows = dict(
+        (name, sha)
+        for sha, name in _ls_remote_rows(repo, *(r for r in (rref, peeled) if r), runner=runner)
+    )
+    return (rows.get(peeled) if peeled else None) or rows.get(rref)
 
 
 def _ls_remote_rows(
-    repo: str,
-    *remote_refs: str,
-    runner: _CommandRunner = subprocess.run,
+    repo: str, *remote_refs: str, runner: _CommandRunner = subprocess.run
 ) -> list[tuple[str, str]]:
-    """Run ``git ls-remote repo *remote_refs`` and return ``(sha, ref name)`` rows.
-
-    ``runner`` is injectable (any ``subprocess.run``-compatible callable). A failing command,
-    a missing ``git``, or a timeout raises ``ValueError`` whose message has credentials
-    embedded in the repository URL redacted by ``_redact_repo``.
-    """
-
     try:
-        result = runner(
+        res = runner(
             ["git", "ls-remote", repo, *remote_refs],
             capture_output=True,
             text=True,
@@ -166,35 +144,15 @@ def _ls_remote_rows(
             f"git ls-remote failed for {list(remote_refs)!r} in {_redact_repo(repo)}: "
             f"{_redact_repo(str(exc))}"
         ) from None
-    rows: list[tuple[str, str]] = []
-    for line in (result.stdout or "").strip().splitlines():
-        sha, _, name = line.partition("\t")
-        if sha.strip() and name.strip():
-            rows.append((sha.strip(), name.strip()))
-    return rows
+    return [
+        (sha.strip(), name.strip())
+        for line in (res.stdout or "").strip().splitlines()
+        if (sha := line.partition("\t")[0]).strip() and (name := line.partition("\t")[2]).strip()
+    ]
 
 
 def _redact_repo(repo: str) -> str:
-    """Replace credentials embedded in a URL (``scheme://user:token@host``) with ``<redacted>``."""
-
     return re.sub(r"(://)[^/@\s]+@", r"\1<redacted>@", repo)
-
-
-_OCI_DIGEST_RE = re.compile(r"\Asha256:[0-9a-f]{64}\Z")
-_REFERENCE_RE = re.compile(r"\A[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\Z")
-_IMAGE_RE = re.compile(r"\A[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+\Z")
-_MANIFEST_ACCEPT = ", ".join(
-    (
-        "application/vnd.oci.image.index.v1+json",
-        "application/vnd.docker.distribution.manifest.list.v2+json",
-        "application/vnd.oci.image.manifest.v1+json",
-        "application/vnd.docker.distribution.manifest.v2+json",
-    )
-)
-
-
-class ReleaseError(RuntimeError):
-    pass
 
 
 def resolve_image_digest(
@@ -205,7 +163,6 @@ def resolve_image_digest(
     token: str | None = None,
     transport: HttpTransport | None = None,
 ) -> str:
-    """Digest of ``registry/image:reference`` from the registry's manifest endpoint."""
     if _OCI_DIGEST_RE.match(reference):
         return reference
     if not _IMAGE_RE.match(image):
@@ -214,41 +171,38 @@ def resolve_image_digest(
         raise ValueError(f"reference must be a registry tag or a sha256 digest, got {reference!r}")
     send = transport or urllib_transport()
     if token is None and registry == "ghcr.io":
-        response = send("GET", f"https://{registry}/token?scope=repository:{image}:pull", {}, None)
-        if response.status != 200:
-            raise ReleaseError(f"registry token request failed with HTTP {response.status}")
+        r = send("GET", f"https://{registry}/token?scope=repository:{image}:pull", {}, None)
+        if r.status != 200:
+            raise ReleaseError(f"registry token request failed with HTTP {r.status}")
         try:
-            token = str(json.loads(response.body.decode("utf-8")).get("token", ""))
-        except ValueError as error:
-            raise ReleaseError("registry token response is not JSON") from error
+            token = str(json.loads(r.body.decode("utf-8")).get("token", ""))
+        except ValueError as err:
+            raise ReleaseError("registry token response is not JSON") from err
     url = f"https://{registry}/v2/{image}/manifests/{reference}"
 
     def head(bearer: str | None) -> HttpResponse:
-        headers = {"Accept": _MANIFEST_ACCEPT}
+        h = {"Accept": _MANIFEST_ACCEPT}
         if bearer:
-            headers["Authorization"] = f"Bearer {bearer}"
-        return send("HEAD", url, headers, None)
+            h["Authorization"] = f"Bearer {bearer}"
+        return send("HEAD", url, h, None)
 
-    response = head(token)
-    if response.status == 401:
-        response = head(_bearer_token(send, _header(response.headers, "www-authenticate")))
-    if response.status == 404:
+    r = head(token)
+    if r.status == 401:
+        r = head(_bearer_token(send, _header(r.headers, "www-authenticate")))
+    if r.status == 404:
         raise ReleaseError(f"{image}:{reference} does not exist in the registry")
-    if response.status in (401, 403):
-        raise ReleaseError(f"registry refused {image}:{reference} (HTTP {response.status})")
-    if not 200 <= response.status < 300:
-        raise ReleaseError(f"registry answered HTTP {response.status} for {image}:{reference}")
-    digest = _header(response.headers, "docker-content-digest")
+    if r.status in (401, 403):
+        raise ReleaseError(f"registry refused {image}:{reference} (HTTP {r.status})")
+    if not 200 <= r.status < 300:
+        raise ReleaseError(f"registry answered HTTP {r.status} for {image}:{reference}")
+    digest = _header(r.headers, "docker-content-digest")
     if not _OCI_DIGEST_RE.match(digest):
         raise ReleaseError("registry returned no sha256 content digest")
     return digest
 
 
 def _header(headers: Mapping[str, str], name: str) -> str:
-    for key, value in headers.items():
-        if key.lower() == name:
-            return str(value)
-    return ""
+    return next((str(v) for k, v in headers.items() if k.lower() == name), "")
 
 
 def _parse_bearer_challenge(header: str) -> dict[str, str]:
@@ -256,58 +210,47 @@ def _parse_bearer_challenge(header: str) -> dict[str, str]:
     if scheme.lower() != "bearer":
         return {}
     return {
-        key.strip(): value.strip().strip('"')
-        for key, _, value in (part.partition("=") for part in params.split(","))
-        if key.strip()
+        k.strip(): v.strip().strip('"')
+        for k, _, v in (p.partition("=") for p in params.split(","))
+        if k.strip()
     }
 
 
 def _bearer_token(send: HttpTransport, challenge: str) -> str:
     params = _parse_bearer_challenge(challenge)
-    realm = params.get("realm", "")
-    if not realm:
+    if not (realm := params.get("realm", "")):
         raise ReleaseError("registry challenged without a bearer realm")
-    query = urlencode({k: v for k, v in params.items() if k in ("service", "scope")})
-    response = send("GET", f"{realm}?{query}" if query else realm, {}, None)
-    if response.status != 200:
-        raise ReleaseError(f"registry token endpoint answered HTTP {response.status}")
+    q = urlencode({k: v for k, v in params.items() if k in ("service", "scope")})
+    r = send("GET", f"{realm}?{q}" if q else realm, {}, None)
+    if r.status != 200:
+        raise ReleaseError(f"registry token endpoint answered HTTP {r.status}")
     try:
-        body = json.loads(response.body.decode("utf-8"))
-    except ValueError as error:
-        raise ReleaseError("registry token response is not JSON") from error
-    token = str(body.get("token") or body.get("access_token") or "")
-    if not token:
+        body = json.loads(r.body.decode("utf-8"))
+    except ValueError as err:
+        raise ReleaseError("registry token response is not JSON") from err
+    if not (tok := str(body.get("token") or body.get("access_token") or "")):
         raise ReleaseError("registry token endpoint returned no token")
-    return token
-
-
-_SHORT_SHA_LENGTH = 7
-_FULL_SHA_RE = re.compile(r"\A[0-9a-f]{40}\Z")
+    return tok
 
 
 def short_sha(sha: str) -> str:
-    """Return the 7-character short commit SHA after validating a 40-hex commit SHA."""
     if not _FULL_SHA_RE.fullmatch(sha):
         raise ValueError(f"--sha must be the full 40-hex commit sha the tag points at, got {sha!r}")
     return sha[:_SHORT_SHA_LENGTH]
 
 
 def next_patch_tag(tags: Any, *, initial: str = "v0.1.0") -> str:
-    """Return the next ``vX.Y.(Z+1)`` tag from existing tags, or ``initial`` when none match."""
     if not _TAG_RE.match(initial):
         raise ValueError(f"initial must match vX.Y.Z, got {initial!r}")
-    versions: list[tuple[int, int, int]] = []
-    for raw in tags:
-        if not isinstance(raw, str):
-            continue
-        cleaned = raw.strip().removeprefix("refs/tags/")
-        if _TAG_RE.match(cleaned):
-            major, minor, patch = (int(part) for part in cleaned[1:].split("."))
-            versions.append((major, minor, patch))
-    if not versions:
+    vers = [
+        tuple(int(p) for p in c[1:].split("."))
+        for raw in tags
+        if isinstance(raw, str) and _TAG_RE.match(c := raw.strip().removeprefix("refs/tags/"))
+    ]
+    if not vers:
         return initial
-    major, minor, patch = max(versions)
-    return f"v{major}.{minor}.{patch + 1}"
+    maj, min_, pat = max(vers)
+    return f"v{maj}.{min_}.{pat + 1}"
 
 
 def assert_after_on_main(
@@ -317,36 +260,29 @@ def assert_after_on_main(
     base: str = "origin/main",
     runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
 ) -> str:
-    """Fail-closed provenance guard: the promoted tag or ref must be reachable from main."""
-    try:
-        resolved = runner(
-            ["git", "rev-parse", "--verify", f"{after}^{{commit}}"],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            timeout=_LS_REMOTE_TIMEOUT_SECONDS,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise ReleaseError(f"git rev-parse failed for {after!r}: {exc}") from exc
-    if resolved.returncode != 0:
+    def git(subcmd: str, *args: str) -> subprocess.CompletedProcess:
+        try:
+            return runner(
+                ["git", subcmd, *args],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                timeout=_LS_REMOTE_TIMEOUT_SECONDS,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ReleaseError(f"git {subcmd} failed for {after!r}: {exc}") from exc
+
+    res = git("rev-parse", "--verify", f"{after}^{{commit}}")
+    if res.returncode != 0:
         raise SystemExit(
             f"::error::cannot resolve {after!r} to a commit "
-            f"({resolved.stderr.strip() or 'unknown revision'})."
+            f"({res.stderr.strip() or 'unknown revision'})."
         )
-    sha = resolved.stdout.strip()
-    try:
-        ancestor = runner(
-            ["git", "merge-base", "--is-ancestor", sha, base],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            timeout=_LS_REMOTE_TIMEOUT_SECONDS,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise ReleaseError(f"git merge-base failed for {after!r}: {exc}") from exc
-    if ancestor.returncode == 0:
+    sha = res.stdout.strip()
+    anc = git("merge-base", "--is-ancestor", sha, base)
+    if anc.returncode == 0:
         return sha
-    if ancestor.returncode == 1:
+    if anc.returncode == 1:
         raise SystemExit(
             f"::error::refusing to reconcile {after!r} ({sha[:12]}): not reachable from "
             f"{base}. Release tags must be cut on reviewed main (Infra-011 invariant). "
@@ -354,7 +290,7 @@ def assert_after_on_main(
         )
     raise SystemExit(
         f"::error::cannot verify provenance of {after!r}: base ref {base!r} is "
-        f"unresolvable ({ancestor.stderr.strip() or 'git error'}). Ensure it exists, e.g. "
+        f"unresolvable ({anc.stderr.strip() or 'git error'}). Ensure it exists, e.g. "
         f"`git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main`."
     )
 

@@ -46,14 +46,10 @@ class S3Settings:
 
 def create_s3_client(settings: S3Settings, *, session: Any | None = None) -> Any:
     """Create and return the standard boto3 S3 client without performing I/O."""
-
     boto3 = require("boto3", extra="s3")
     botocore_config = require("botocore.config", extra="s3")
-    owner = session or boto3
-    s3_config = (
-        {"addressing_style": settings.addressing_style} if settings.addressing_style else None
-    )
-    return owner.client(
+    s3_cfg = {"addressing_style": settings.addressing_style} if settings.addressing_style else None
+    return (session or boto3).client(
         "s3",
         endpoint_url=settings.endpoint_url,
         aws_access_key_id=settings.access_key_id,
@@ -64,7 +60,7 @@ def create_s3_client(settings: S3Settings, *, session: Any | None = None) -> Any
             signature_version="s3v4",
             connect_timeout=settings.connect_timeout_seconds,
             read_timeout=settings.read_timeout_seconds,
-            s3=s3_config,
+            s3=s3_cfg,
         ),
     )
 
@@ -72,18 +68,14 @@ def create_s3_client(settings: S3Settings, *, session: Any | None = None) -> Any
 def probe_s3(settings: S3Settings, *, client: Any | None = None) -> ProbeResult:
     started = time.perf_counter()
     owned = client is None
-    s3_client = client
+    s3 = client
     try:
-        if s3_client is None:
-            s3_client = create_s3_client(settings)
-        s3_client.head_bucket(Bucket=settings.bucket)
+        s3 = s3 or create_s3_client(settings)
+        s3.head_bucket(Bucket=settings.bucket)
         return ProbeResult(
-            "object_storage",
-            DependencyStatus.PRESENT,
-            "bucket accessible",
-            _elapsed(started),
+            "object_storage", DependencyStatus.PRESENT, "bucket accessible", _elapsed(started)
         )
-    except Exception as exc:  # noqa: BLE001 - a probe reports absence
+    except Exception as exc:  # noqa: BLE001
         return ProbeResult(
             "object_storage",
             DependencyStatus.ABSENT,
@@ -91,29 +83,26 @@ def probe_s3(settings: S3Settings, *, client: Any | None = None) -> ProbeResult:
             _elapsed(started),
         )
     finally:
-        if owned and s3_client is not None and hasattr(s3_client, "close"):
+        if owned and s3 is not None and hasattr(s3, "close"):
             with contextlib.suppress(Exception):
-                s3_client.close()
+                s3.close()
 
 
 def ensure_bucket(
     settings: S3Settings, *, client: Any | None = None, allow_create: bool = False
 ) -> None:
-    """Assert a bucket exists, optionally creating it only when policy explicitly allows."""
+    """Verify bucket existence, creating it only when ``allow_create`` is True."""
     owned = client is None
     s3 = client or create_s3_client(settings)
     try:
         s3.head_bucket(Bucket=settings.bucket)
-        return
-    except Exception as exc:  # noqa: BLE001 - botocore is an optional dependency
+    except Exception as exc:  # noqa: BLE001
         if not allow_create or not is_not_found(exc):
             raise
         kwargs: dict[str, Any] = {"Bucket": settings.bucket}
-        region_name = settings.region_name or getattr(
-            getattr(s3, "meta", None), "region_name", None
-        )
-        if region_name and region_name != "us-east-1":
-            kwargs["CreateBucketConfiguration"] = {"LocationConstraint": region_name}
+        region = settings.region_name or getattr(getattr(s3, "meta", None), "region_name", None)
+        if region and region != "us-east-1":
+            kwargs["CreateBucketConfiguration"] = {"LocationConstraint": region}
         s3.create_bucket(**kwargs)
     finally:
         if owned and hasattr(s3, "close"):
@@ -127,25 +116,40 @@ def read_object_bytes(client: Any, *, bucket: str, key: str) -> bytes:
         return body.read()
 
 
+def put_object_bytes(
+    client: Any,
+    *,
+    bucket: str,
+    key: str,
+    data: bytes,
+    content_type: str = "application/octet-stream",
+) -> None:
+    """Upload raw bytes to ``bucket/key`` with explicit ``ContentType``."""
+    client.put_object(Bucket=bucket, Key=key, Body=data, ContentType=content_type)
+
+
 def is_not_found(exc: Exception) -> bool:
-    response = getattr(exc, "response", None)
-    if not isinstance(response, dict):
-        return False
-    error = response.get("Error", {})
-    return isinstance(error, dict) and str(error.get("Code", "")) in _NOT_FOUND_CODES
+    resp = getattr(exc, "response", None)
+    err = resp.get("Error") if isinstance(resp, dict) else None
+    return isinstance(err, dict) and str(err.get("Code", "")) in _NOT_FOUND_CODES
 
 
 def redact_presigned_url(url: str | None) -> str | None:
-    """Remove bearer credentials from an S3 presigned URL before logging."""
-
     if not url:
         return url
     try:
         parsed = urlsplit(url)
     except ValueError:
         return "<invalid-url>"
-    query = "signature=<redacted>" if parsed.query else ""
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, ""))
+    return urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            "signature=<redacted>" if parsed.query else "",
+            "",
+        )
+    )
 
 
 __all__ = [
@@ -154,6 +158,7 @@ __all__ = [
     "ensure_bucket",
     "is_not_found",
     "probe_s3",
+    "put_object_bytes",
     "read_object_bytes",
     "redact_presigned_url",
 ]

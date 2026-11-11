@@ -2,7 +2,7 @@ import pytest
 
 from infra2_sdk import __version__
 from infra2_sdk.runtime.health import DependencyStatus
-from infra2_sdk.runtime.http import HttpClientSettings, create_http_client, probe_http
+from infra2_sdk.runtime.http import HttpClientSettings, _build_client, probe_http
 
 
 class Response:
@@ -22,7 +22,7 @@ class Client:
 
 
 def test_standard_http_client_sets_the_user_agent_and_extra_headers() -> None:
-    sync_client = create_http_client(headers={"X-Test": "1"})
+    sync_client = _build_client(headers={"X-Test": "1"})
     assert sync_client.headers["user-agent"] == f"infra2-sdk/{__version__}"
     assert sync_client.headers["x-test"] == "1"
     sync_client.close()
@@ -30,7 +30,7 @@ def test_standard_http_client_sets_the_user_agent_and_extra_headers() -> None:
 
 @pytest.mark.asyncio
 async def test_create_async_http_client() -> None:
-    async_client = create_http_client(async_client=True, headers={"X-Async": "1"})
+    async_client = _build_client(async_client=True, headers={"X-Async": "1"})
     assert async_client.headers["x-async"] == "1"
     await async_client.aclose()
 
@@ -70,7 +70,7 @@ def test_http_settings_have_no_environment_reader() -> None:
 
 
 async def test_standard_async_http_client_closes_cleanly() -> None:
-    async_client = create_http_client(async_client=True)
+    async_client = _build_client(async_client=True)
     assert async_client.headers["user-agent"] == f"infra2-sdk/{__version__}"
     await async_client.aclose()
 

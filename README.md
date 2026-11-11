@@ -25,30 +25,31 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.26.0"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.27.0"
 ```
 
 ## Modules
 
 | Module | Ownership |
 |---|---|
-| `infra2_sdk.capacity` | Capacity limits and readings, `evaluate` (a level per item: ok, warn, exceeded or unknown), and the collector for Cloudflare analytics |
+| `infra2_sdk.capacity` | Capacity limits and readings, `RateLimitWindow`, `evaluate` (a level per item: ok, warn, exceeded or unknown), and the collector for Cloudflare analytics |
 | `infra2_sdk.ci` | Delivery-stage vocabulary, CI gate inventory validation, workflow step inspection, cron schedule gap analysis, coverage ratchets, and GitHub Actions helpers |
-| `infra2_sdk.deploy` | Deploy lifecycle wire contracts, health poller, deployed release identity reader, and production evidence policies |
-| `infra2_sdk.fastapi` | `init_service`: /livez, /readyz and /health routes for a FastAPI app, plus OTLP telemetry bootstrap |
+| `infra2_sdk.deploy` | Deploy lifecycle wire contracts, health poller, wheel version parser, deployed release identity reader, production evidence policies, and CLI at `python -m infra2_sdk.deploy` |
+| `infra2_sdk.fastapi` | `init_service`: /livez, /readyz and /health routes for a FastAPI app, multi-dependency checks, probe noise suppression, and OTLP telemetry bootstrap |
 | `infra2_sdk.manifests` | Settings and runtime verification hooks manifest CLI driver (`--write`, `--check`, `--validate-env`, `--check-hooks`, `--run-hook`), `ManifestSpec`, `RuntimeHooksManifest`, `HookSlotSpec`, `HookRunResult`, `load_hooks_manifest`, `run_hook_slot`, `all_manifests`, `check`, and `load` |
-| `infra2_sdk.observability` | Flap hysteresis trackers, scheduled peer workflow liveness evaluation, self-healing GitHub issue trails, and OpenPanel export query & funnel summary primitives |
+| `infra2_sdk.observability` | Flap hysteresis trackers, parameterized self-healing GitHub issue trails, and OpenPanel export query & funnel summary primitives |
 | `infra2_sdk.refs` | Git ref resolution, PR heads, patch tag calculation (`next_patch_tag`), registry image digests, remote ref queries, commit ancestry checks, and credential redaction |
 | `infra2_sdk.routing` | Canonical domain and routing SSOT: `CANARY_SLOT`, hostname resolution, and service URL resolution |
-| `infra2_sdk.rules.compose` | Pure compose-file rules (memory ceilings, bare `:latest` image refs); CLI at `python -m infra2_sdk.rules` |
+| `infra2_sdk.rules.compose` | Pure compose-file rules (memory ceilings, bare `:latest` image refs) |
+| `infra2_sdk.rules.imports` | Pure AST layered import-boundary, dependency-cycle, and `__all__` export validators |
 | `infra2_sdk.runtime.config_schema` | Environment field contracts, injection manifests, startup environment assertions (`assert_environment`), and configuration fingerprints |
 | `infra2_sdk.runtime.environment` | Canonical six-tier environment vocabulary, variable resolution, and contract definitions |
 | `infra2_sdk.runtime.health` | Framework-agnostic readiness checks (`check_health`), probe runners, and dependency declarations |
-| `infra2_sdk.runtime.http` | Standard httpx clients and the HTTP reachability probe |
-| `infra2_sdk.runtime.llm` | Large language model runtime configuration contracts and role-based model defaults |
-| `infra2_sdk.runtime.otel` | Explicit OTLP provider bootstrap and env-configured samplers |
-| `infra2_sdk.runtime.postgres` | PostgreSQL DSN normalization and psycopg reachability probe |
-| `infra2_sdk.runtime.s3` | Standard boto3 S3 client, probe, and safe bucket/object primitives |
+| `infra2_sdk.runtime.http` | Retry-After HTTP request execution (`request_with_retry`, `arequest_with_retry`), `HttpClientSettings`, and the HTTP reachability probe |
+| `infra2_sdk.runtime.llm` | OpenAI-compatible `LlmClient`, `LlmResponse`, `LlmSettings` contracts, fallback model chains, and role-based model defaults |
+| `infra2_sdk.runtime.otel` | Explicit OTLP provider bootstrap, probe span suppression, and env-configured samplers |
+| `infra2_sdk.runtime.postgres` | `PostgresSettings`, credential redaction, and psycopg reachability/write probe (`probe_postgres`) |
+| `infra2_sdk.runtime.s3` | Standard boto3 S3 client, probe, and safe bucket/object primitives (`put_object_bytes`, `read_object_bytes`) |
 | `infra2_sdk.scaffold` | Zero-compromise scaffolding engine producing compose, deployer, and entrypoint assets; CLI at `python -m infra2_sdk.scaffold` |
 | `infra2_sdk.secrets` | Secret-store adapters (Vault KV, 1Password), manifest-driven `SecretsResolver`, Vault template renderers, and AppRole policy naming |
 | `infra2_sdk.transport` | Minimal injectable HTTP transport (`HttpTransport`, `HttpResponse`, `urllib_transport`) |
@@ -59,9 +60,10 @@ python -m pip install \
 |---|---|---|---|
 | Service bootstrap | `init_service` | `infra2_sdk.fastapi` | Mounts `/livez`, `/readyz`, `/health` routes and configures OpenTelemetry providers |
 | Health probes | `check_health`, `run_probes`, `probe_orchestrator` | `infra2_sdk.runtime.health` | Framework-agnostic readiness evaluation across declared dependency probes |
-| HTTP client | `create_http_client`, `probe_http` | `infra2_sdk.runtime.http` | Standard httpx client with connection limits, timeouts, and connect retries, plus a reachability probe |
-| PostgreSQL | `normalize_postgres_dsn`, `probe_postgres` | `infra2_sdk.runtime.postgres` | Psycopg reachability probe with credential redaction and DSN normalization |
-| S3 storage | `create_s3_client`, `probe_s3`, `ensure_bucket` | `infra2_sdk.runtime.s3` | Boto3 client initialization, bucket reachability probe, and idempotent bucket creation |
+| HTTP client | `request_with_retry`, `arequest_with_retry`, `probe_http` | `infra2_sdk.runtime.http` | Standard httpx retry helpers honoring `Retry-After` plus a reachability probe |
+| LLM client | `LlmClient`, `LlmResponse`, `LlmSettings` | `infra2_sdk.runtime.llm` | OpenAI-compatible chat, structured JSON, and embeddings client with OTel `gen_ai.*` spans |
+| PostgreSQL | `probe_postgres`, `redact_postgres_error` | `infra2_sdk.runtime.postgres` | Psycopg reachability/write probe with credential redaction |
+| S3 storage | `create_s3_client`, `probe_s3`, `ensure_bucket`, `put_object_bytes` | `infra2_sdk.runtime.s3` | Boto3 client initialization, bucket reachability probe, bucket creation, and byte writes |
 | Environment & identity | `environment_from_env` | `infra2_sdk.runtime.environment` | Canonical six-tier environment resolution and contract validation |
 | Secret manifests | `render_agent_template`, `render_agent_policy` | `infra2_sdk.secrets` | Manifest-driven Vault Agent Consul template and HCL policy generation |
 
@@ -72,10 +74,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.26.0'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.27.0'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.26.0'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.27.0'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -199,7 +201,7 @@ Install the published wheel in a fresh Python 3.11+ environment:
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install \
-  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.26.0/infra2_sdk-3.26.0-py3-none-any.whl'
+  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.27.0/infra2_sdk-3.27.0-py3-none-any.whl'
 ```
 
 For a local connectivity exercise, start this server in another terminal:

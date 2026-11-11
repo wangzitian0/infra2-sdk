@@ -1,29 +1,4 @@
-"""Environment manifests as a repository maintains them: generate, check, validate.
-
-Every application keeps one ``required-env.generated.json`` per settings model (contract
-v2) and, for services without a Python settings model, a hand-written manifest. The
-platform derives Vault Agent templates, policies and the daily reconciliation from those
-files; the repository's only job is to keep them true. This module is the one driver
-for that job, so no repository re-implements freshness checks, the offline gate, or the
-boot-time environment validation::
-
-    # tools/env_manifest.py (an application repository)
-    from infra2_sdk.manifests import ManifestSpec, main
-
-    SPECS = (
-        ManifestSpec("apps/data-engine/required-env.generated.json",
-                     "data_engine.config:Settings", source="apps/data-engine"),
-    )
-    HAND_WRITTEN = ("apps/app-web/required-env.manifest.json",)
-    raise SystemExit(main(root=ROOT, specs=SPECS, hand_written=HAND_WRITTEN))
-
-    uv run python tools/env_manifest.py --write
-    uv run python tools/env_manifest.py --check                  # CI: fresh + offline gate
-    uv run python tools/env_manifest.py --validate-env apps/x/required-env.generated.json
-
-A model's supply-chain attributes may live in a side table next to it (``overrides``,
-keyed by field name) when its ``Field()`` signatures are frozen by a compatibility gate.
-"""
+"""Environment and runtime-hooks manifest CLI driver."""
 
 from __future__ import annotations
 
@@ -35,7 +10,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from importlib import import_module
 from pathlib import Path
 from typing import Any
@@ -50,13 +25,7 @@ from infra2_sdk.runtime.config_schema import (
 
 HOOK_SLOTS = ("smoke", "preview_gate", "staging_gate", "scheduled_audit")
 FORBIDDEN_HOOK_ENV_NAMES = frozenset(
-    {
-        "INFRA2_PAT",
-        "DOKPLOY_API_KEY",
-        "OP_SERVICE_ACCOUNT_TOKEN",
-        "GITHUB_TOKEN",
-        "GH_TOKEN",
-    }
+    {"INFRA2_PAT", "DOKPLOY_API_KEY", "OP_SERVICE_ACCOUNT_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"}
 )
 FORBIDDEN_HOOK_ENV_PREFIXES = (
     "CLOUDFLARE_",
@@ -100,17 +69,15 @@ _HOOK_STDERR_TAIL_LIMIT = 2000
 def _validate_hook_env_names(names: tuple[str, ...], *, field_name: str) -> None:
     if len(names) != len(set(names)):
         raise ValueError(f"duplicate variable in {field_name}: {names!r}")
-    for name in names:
-        if not isinstance(name, str) or not _HOOK_ENV_NAME_RE.match(name):
-            raise ValueError(f"{field_name} entry {name!r} must match ^[A-Z][A-Z0-9_]*$")
-        if name in FORBIDDEN_HOOK_ENV_NAMES or name.startswith(FORBIDDEN_HOOK_ENV_PREFIXES):
-            raise ValueError(f"{field_name} entry {name!r} is a forbidden platform secret")
+    for n in names:
+        if not isinstance(n, str) or not _HOOK_ENV_NAME_RE.match(n):
+            raise ValueError(f"{field_name} entry {n!r} must match ^[A-Z][A-Z0-9_]*$")
+        if n in FORBIDDEN_HOOK_ENV_NAMES or n.startswith(FORBIDDEN_HOOK_ENV_PREFIXES):
+            raise ValueError(f"{field_name} entry {n!r} is a forbidden platform secret")
 
 
 @dataclass(frozen=True)
 class HookSlotSpec:
-    """Declarative specification for one verification hook slot."""
-
     run: str
     bootstrap: str = ""
     timeout_seconds: int = 300
@@ -141,8 +108,7 @@ class HookSlotSpec:
                 raise ValueError(f"hook slot '{f}' must be a list of strings")
             object.__setattr__(self, f, tuple(val))
             _validate_hook_env_names(getattr(self, f), field_name=f)
-        overlap = sorted(set(self.required_env) & set(self.optional_env))
-        if overlap:
+        if overlap := sorted(set(self.required_env) & set(self.optional_env)):
             raise ValueError(
                 f"variables cannot be in both required_env and optional_env: {overlap}"
             )
@@ -166,18 +132,22 @@ class HookSlotSpec:
     def from_dict(cls, data: Mapping[str, Any]) -> HookSlotSpec:
         if not isinstance(data, Mapping):
             raise ValueError("hook slot spec must be a JSON object")
-        unknown = sorted(set(data) - _HOOK_SLOT_FIELDS)
-        if unknown:
+        if unknown := sorted(set(data) - _HOOK_SLOT_FIELDS):
             raise ValueError(f"unknown hook slot field(s): {unknown}")
         if "run" not in data:
             raise ValueError("hook slot 'run' must be a non-empty string")
         return cls(**data)
 
 
+def _check_slot_keys(slots: Mapping[str, Any]) -> None:
+    if invalid := sorted(set(slots) - set(HOOK_SLOTS)):
+        raise ValueError(f"unknown hook slot(s) {invalid}; allowed slots are {list(HOOK_SLOTS)}")
+    if missing := [s for s in HOOK_SLOTS if s not in slots]:
+        raise ValueError(f"runtime hooks manifest is missing required slot(s): {missing}")
+
+
 @dataclass(frozen=True)
 class RuntimeHooksManifest:
-    """Declarative 4-slot runtime verification hook contract (``runtime-hooks.manifest.json``)."""
-
     service: str
     slots: Mapping[str, HookSlotSpec]
     schema_version: int = 1
@@ -191,62 +161,48 @@ class RuntimeHooksManifest:
             raise ValueError("runtime hooks manifest 'service' must be a non-empty string")
         if not isinstance(self.slots, Mapping):
             raise ValueError("runtime hooks manifest 'slots' must be a mapping")
-        invalid_slots = sorted(set(self.slots) - set(HOOK_SLOTS))
-        if invalid_slots:
-            raise ValueError(
-                f"unknown hook slot(s) {invalid_slots}; allowed slots are {list(HOOK_SLOTS)}"
-            )
-        missing_slots = [slot for slot in HOOK_SLOTS if slot not in self.slots]
-        if missing_slots:
-            raise ValueError(f"runtime hooks manifest is missing required slot(s): {missing_slots}")
-        normalized_slots: dict[str, HookSlotSpec] = {}
-        for slot in HOOK_SLOTS:
-            spec = self.slots[slot]
-            if not isinstance(spec, HookSlotSpec):
-                raise ValueError(f"slot {slot!r} must be a HookSlotSpec")
-            normalized_slots[slot] = spec
-        object.__setattr__(self, "slots", normalized_slots)
+        _check_slot_keys(self.slots)
+        for s in HOOK_SLOTS:
+            if not isinstance(self.slots[s], HookSlotSpec):
+                raise ValueError(f"slot {s!r} must be a HookSlotSpec")
+        object.__setattr__(self, "slots", {s: self.slots[s] for s in HOOK_SLOTS})
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,
             "service": self.service,
-            "slots": {slot: self.slots[slot].to_dict() for slot in HOOK_SLOTS},
+            "slots": {s: self.slots[s].to_dict() for s in HOOK_SLOTS},
         }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> RuntimeHooksManifest:
         if not isinstance(data, Mapping):
             raise ValueError("runtime hooks manifest must be a JSON object")
-        unknown = sorted(set(data) - _HOOK_MANIFEST_FIELDS)
-        if unknown:
+        if unknown := sorted(set(data) - _HOOK_MANIFEST_FIELDS):
             raise ValueError(f"unknown runtime hooks manifest field(s): {unknown}")
         if "schema_version" not in data:
             raise ValueError("runtime hooks manifest requires 'schema_version'")
-        raw_slots = data.get("slots")
-        if not isinstance(raw_slots, Mapping):
+        raw = data.get("slots")
+        if not isinstance(raw, Mapping):
             raise ValueError("runtime hooks manifest 'slots' must be a JSON object")
-        slots = {
-            slot: HookSlotSpec.from_dict(spec) if isinstance(spec, Mapping) else spec
-            for slot, spec in raw_slots.items()
-        }
+        _check_slot_keys(raw)
         return cls(
             schema_version=data["schema_version"],
             service=data.get("service", ""),
-            slots=slots,
+            slots={
+                s: HookSlotSpec.from_dict(raw[s]) if isinstance(raw[s], Mapping) else raw[s]
+                for s in HOOK_SLOTS
+            },
         )
 
 
 def load_hooks_manifest(path: str | Path, *, root: Path | None = None) -> RuntimeHooksManifest:
-    """Read and validate a ``runtime-hooks.manifest.json`` file from disk."""
     target = Path(path) if root is None else root / path
     return RuntimeHooksManifest.from_dict(json.loads(target.read_text(encoding="utf-8")))
 
 
 @dataclass(frozen=True)
 class HookRunResult:
-    """Normalized execution record emitted by a runtime verification hook slot."""
-
     service: str
     slot: str
     environment: str
@@ -268,19 +224,9 @@ class HookRunResult:
             )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "service": self.service,
-            "slot": self.slot,
-            "environment": self.environment,
-            "app_url": self.app_url,
-            "version_ref": self.version_ref,
-            "status": self.status,
-            "exit_code": self.exit_code,
-            "duration_seconds": round(self.duration_seconds, 3),
-            "failed_step": self.failed_step,
-            "summary": self.summary,
-            "stderr_tail": self.stderr_tail,
-        }
+        d = asdict(self)
+        d["duration_seconds"] = round(self.duration_seconds, 3)
+        return d
 
 
 def build_hook_env(
@@ -293,29 +239,19 @@ def build_hook_env(
     artifacts_dir: str,
     ambient_env: Mapping[str, str],
 ) -> dict[str, str]:
-    """Construct a clean-room environment for a hook subprocess without platform secrets."""
-    clean: dict[str, str] = {}
-    for key in ambient_env:
-        if key in _HOOK_PASSTHROUGH_KEYS:
-            value = ambient_env[key]
-            if value:
-                clean[key] = value
+    clean = {
+        k: ambient_env[k] for k in ambient_env if k in _HOOK_PASSTHROUGH_KEYS and ambient_env[k]
+    }
     for env_key, env_val in (("PYTHONPATH", "."),):
         clean[env_key] = env_val
-    missing: list[str] = []
-    for req_key in slot_spec.required_env:
-        val = ambient_env.get(req_key, "")
-        if not val.strip():
-            missing.append(req_key)
-        else:
-            clean[req_key] = val
-    if missing:
+    if missing := [k for k in slot_spec.required_env if not ambient_env.get(k, "").strip()]:
         raise ValueError(f"missing required hook env: {', '.join(missing)}")
-    for opt_key in slot_spec.optional_env:
-        val = ambient_env.get(opt_key, "")
-        if val.strip():
-            clean[opt_key] = val
-    injected = (
+    for k in slot_spec.required_env:
+        clean[k] = ambient_env[k]
+    for k in slot_spec.optional_env:
+        if (v := ambient_env.get(k, "")).strip():
+            clean[k] = v
+    for env_key, env_val in (
         ("APP_URL", app_url),
         ("DEPLOY_BASE_URL", app_url),
         ("STAGING_BASE_URL", app_url),
@@ -325,49 +261,25 @@ def build_hook_env(
         ("EXPECTED_SHA", version_ref),
         ("HOOK_SLOT", slot),
         ("HOOK_ARTIFACTS_DIR", artifacts_dir),
-    )
-    for env_key, env_val in injected:
+    ):
         clean[env_key] = env_val
     return clean
 
 
-def _strip_stream(value: str | bytes | None) -> str:
-    if value is None:
-        return ""
-    text = value.decode("utf-8", "replace") if isinstance(value, bytes) else value
-    return text.strip()
-
-
-def _tail_text(value: str | bytes | None) -> str:
-    return _strip_stream(value)[-_HOOK_STDERR_TAIL_LIMIT:]
+def _strip_stream(v: str | bytes | None) -> str:
+    return (
+        "" if v is None else (v.decode("utf-8", "replace") if isinstance(v, bytes) else v).strip()
+    )
 
 
 def _format_hook_output_tail(
-    stdout: str | bytes | None,
-    stderr: str | bytes | None,
-    fallback: str,
+    stdout: str | bytes | None, stderr: str | bytes | None, fallback: str
 ) -> str:
-    out_text = _strip_stream(stdout)
-    err_text = _strip_stream(stderr)
-    if out_text and err_text:
-        overhead = len("--- stdout ---\n\n--- stderr ---\n")
-        per_stream = (_HOOK_STDERR_TAIL_LIMIT - overhead) // 2
-        return f"--- stdout ---\n{out_text[-per_stream:]}\n--- stderr ---\n{err_text[-per_stream:]}"
-    if err_text:
-        return _tail_text(err_text)
-    if out_text:
-        return _tail_text(out_text)
-    return fallback
-
-
-def _write_hook_result(result: HookRunResult, result_path: Path | None) -> HookRunResult:
-    if result_path is not None:
-        result_path.parent.mkdir(parents=True, exist_ok=True)
-        result_path.write_text(
-            json.dumps(result.to_dict(), indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
-    return result
+    out, err = _strip_stream(stdout), _strip_stream(stderr)
+    if out and err:
+        lim = (_HOOK_STDERR_TAIL_LIMIT - len("--- stdout ---\n\n--- stderr ---\n")) // 2
+        return f"--- stdout ---\n{out[-lim:]}\n--- stderr ---\n{err[-lim:]}"
+    return (err or out)[-_HOOK_STDERR_TAIL_LIMIT:] if (err or out) else fallback
 
 
 def run_hook_slot(
@@ -382,147 +294,104 @@ def run_hook_slot(
     result_path: Path | None = None,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> HookRunResult:
-    """Execute one verification hook slot in a clean-room environment."""
     if slot not in manifest.slots:
         raise ValueError(f"unknown hook slot {slot!r}; available: {list(manifest.slots)}")
     if not app_url or not app_url.strip():
         raise ValueError("app_url must be a non-empty string")
-    slot_spec = manifest.slots[slot]
-    source_env: Mapping[str, str] = os.environ if ambient_env is None else ambient_env
-    start = time.monotonic()
+    spec = manifest.slots[slot]
+    src_env = os.environ if ambient_env is None else ambient_env
+    url, start = app_url.strip(), time.monotonic()
+
+    def finish(st: str, code: int, fstep: str, summary: str, tail: str = "") -> HookRunResult:
+        res = HookRunResult(
+            manifest.service,
+            slot,
+            environment,
+            url,
+            version_ref,
+            st,
+            code,
+            time.monotonic() - start,
+            fstep,
+            summary,
+            tail,
+        )
+        if result_path is not None:
+            result_path.parent.mkdir(parents=True, exist_ok=True)
+            result_path.write_text(
+                json.dumps(res.to_dict(), indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+            )
+        return res
+
     try:
         clean_env = build_hook_env(
-            slot_spec,
+            spec,
             slot=slot,
-            app_url=app_url.strip(),
+            app_url=url,
             environment=environment,
             version_ref=version_ref,
-            artifacts_dir=slot_spec.artifacts_dir,
-            ambient_env=source_env,
+            artifacts_dir=spec.artifacts_dir,
+            ambient_env=src_env,
         )
     except ValueError as err:
-        duration = time.monotonic() - start
-        return _write_hook_result(
-            HookRunResult(
-                service=manifest.service,
-                slot=slot,
-                environment=environment,
-                app_url=app_url.strip(),
-                version_ref=version_ref,
-                status="fail",
-                exit_code=2,
-                duration_seconds=duration,
-                failed_step="env",
-                summary=str(err),
-                stderr_tail=str(err),
-            ),
-            result_path,
-        )
+        return finish("fail", 2, "env", str(err), str(err))
 
-    steps: list[tuple[str, str]] = []
-    if slot_spec.bootstrap.strip():
-        steps.append(("bootstrap", slot_spec.bootstrap))
-    steps.append(("run", slot_spec.run))
-
-    for step_name, command in steps:
+    for step_name, cmd in (
+        *(("bootstrap", spec.bootstrap) for _ in (1,) if spec.bootstrap.strip()),
+        ("run", spec.run),
+    ):
         try:
             proc = runner(
-                ["sh", "-lc", command],
+                ["sh", "-lc", cmd],
                 env=clean_env,
                 cwd=cwd,
                 capture_output=True,
                 text=True,
-                timeout=slot_spec.timeout_seconds,
+                timeout=spec.timeout_seconds,
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
-            duration = time.monotonic() - start
-            summary = f"{step_name} timed out after {slot_spec.timeout_seconds}s"
-            stderr_tail = _format_hook_output_tail(exc.stdout, exc.stderr, summary)
-            return _write_hook_result(
-                HookRunResult(
-                    service=manifest.service,
-                    slot=slot,
-                    environment=environment,
-                    app_url=app_url.strip(),
-                    version_ref=version_ref,
-                    status="fail",
-                    exit_code=124,
-                    duration_seconds=duration,
-                    failed_step="timeout",
-                    summary=summary,
-                    stderr_tail=stderr_tail,
-                ),
-                result_path,
+            msg = f"{step_name} timed out after {spec.timeout_seconds}s"
+            return finish(
+                "fail", 124, "timeout", msg, _format_hook_output_tail(exc.stdout, exc.stderr, msg)
             )
         if proc.returncode != 0:
-            duration = time.monotonic() - start
-            summary = f"{step_name} exited with code {proc.returncode}"
-            stderr_tail = _format_hook_output_tail(proc.stdout, proc.stderr, summary)
-            return _write_hook_result(
-                HookRunResult(
-                    service=manifest.service,
-                    slot=slot,
-                    environment=environment,
-                    app_url=app_url.strip(),
-                    version_ref=version_ref,
-                    status="fail",
-                    exit_code=proc.returncode,
-                    duration_seconds=duration,
-                    failed_step=step_name,
-                    summary=summary,
-                    stderr_tail=stderr_tail,
-                ),
-                result_path,
+            msg = f"{step_name} exited with code {proc.returncode}"
+            return finish(
+                "fail",
+                proc.returncode,
+                step_name,
+                msg,
+                _format_hook_output_tail(proc.stdout, proc.stderr, msg),
             )
-
-    duration = time.monotonic() - start
-    return _write_hook_result(
-        HookRunResult(
-            service=manifest.service,
-            slot=slot,
-            environment=environment,
-            app_url=app_url.strip(),
-            version_ref=version_ref,
-            status="pass",
-            exit_code=0,
-            duration_seconds=duration,
-            failed_step="",
-            summary=f"{slot} passed",
-            stderr_tail="",
-        ),
-        result_path,
-    )
+    return finish("pass", 0, "", f"{slot} passed")
 
 
 @dataclass(frozen=True)
 class ManifestSpec:
-    """One generated manifest: where it lives and which settings model produces it."""
-
     path: str
-    model: str | type  # "package.module:Class" or the class itself
+    model: str | type
     source: str | None = None
     overrides: str | Mapping[str, Mapping[str, object]] | None = None
-    """Side table of supply-chain attributes: ``"package.module:NAME"`` or a mapping."""
 
     def resolve_model(self) -> type:
         if isinstance(self.model, type):
             return self.model
-        module_name, _, attr = self.model.partition(":")
+        mod, _, attr = self.model.partition(":")
         if not attr:
             raise ValueError(f"model must be 'package.module:Class', got {self.model!r}")
-        return getattr(import_module(module_name), attr)
+        return getattr(import_module(mod), attr)
 
     def resolve_overrides(self) -> Mapping[str, Mapping[str, object]] | None:
         if self.overrides is None or isinstance(self.overrides, Mapping):
             return self.overrides
-        module_name, _, attr = self.overrides.partition(":")
+        mod, _, attr = self.overrides.partition(":")
         if not attr:
             raise ValueError(f"overrides must be 'package.module:NAME', got {self.overrides!r}")
-        table = getattr(import_module(module_name), attr, None)
-        if not isinstance(table, Mapping):
+        tbl = getattr(import_module(mod), attr, None)
+        if not isinstance(tbl, Mapping):
             raise ValueError(f"overrides {self.overrides!r} must name an existing mapping")
-        return dict(table)
+        return dict(tbl)
 
     def build(self) -> EnvironmentManifest:
         return environment_manifest_from_model(
@@ -531,7 +400,6 @@ class ManifestSpec:
 
 
 def _render(manifest: EnvironmentManifest) -> str:
-    """The canonical file form: two-space JSON, trailing newline, no extra envelope."""
     return json.dumps(manifest.to_dict(), indent=2, ensure_ascii=False) + "\n"
 
 
@@ -542,24 +410,23 @@ def load(path: str | Path, *, root: Path | None = None) -> EnvironmentManifest:
 def all_manifests(
     *, root: Path, specs: Iterable[ManifestSpec], hand_written: Iterable[str] = ()
 ) -> dict[str, EnvironmentManifest]:
-    manifests = {spec.path: spec.build() for spec in specs}
-    manifests.update({path: load(path, root=root) for path in hand_written})
-    return manifests
+    return {
+        **{s.path: s.build() for s in specs},
+        **{p: load(p, root=root) for p in hand_written},
+    }
 
 
 def check(
     *, root: Path, specs: Iterable[ManifestSpec], hand_written: Iterable[str] = ()
 ) -> list[str]:
-    """Stale generated files plus offline-gate violations, as ``path: problem`` lines."""
     specs = tuple(specs)
-    problems: list[str] = []
-    for spec in specs:
-        expected = _render(spec.build())
-        target = root / spec.path
-        if not target.exists() or target.read_text(encoding="utf-8") != expected:
-            problems.append(f"{spec.path}: stale, regenerate with --write")
-    for path, manifest in all_manifests(root=root, specs=specs, hand_written=hand_written).items():
-        problems.extend(f"{path}: {error}" for error in validate_manifest_offline(manifest))
+    problems = [
+        f"{s.path}: stale, regenerate with --write"
+        for s in specs
+        if not (t := root / s.path).exists() or t.read_text(encoding="utf-8") != _render(s.build())
+    ]
+    for path, mf in all_manifests(root=root, specs=specs, hand_written=hand_written).items():
+        problems.extend(f"{path}: {err}" for err in validate_manifest_offline(mf))
     return problems
 
 
@@ -567,12 +434,12 @@ def _write(
     *, root: Path, specs: Iterable[ManifestSpec], echo: Callable[[str], None] = print
 ) -> list[str]:
     written: list[str] = []
-    for spec in specs:
-        target = root / spec.path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(_render(spec.build()), encoding="utf-8")
-        written.append(spec.path)
-        echo(f"wrote {spec.path}")
+    for s in specs:
+        t = root / s.path
+        t.parent.mkdir(parents=True, exist_ok=True)
+        t.write_text(_render(s.build()), encoding="utf-8")
+        written.append(s.path)
+        echo(f"wrote {s.path}")
     return written
 
 
@@ -585,108 +452,61 @@ def main(
     prog: str = "env_manifest",
     echo: Callable[[str], None] = print,
 ) -> int:
-    """The manifest and runtime-hooks CLI driver; returns the exit code."""
-    resolved_root = Path.cwd() if root is None else root
-    parser = argparse.ArgumentParser(prog=prog, description=__doc__.splitlines()[0])
-    mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--write", action="store_true", help="regenerate every generated manifest")
-    mode.add_argument("--check", action="store_true", help="fresh on disk + offline contract gate")
-    mode.add_argument(
-        "--validate-env", metavar="MANIFEST", help="the process environment satisfies MANIFEST"
-    )
-    mode.add_argument(
-        "--check-hooks",
-        metavar="MANIFEST",
-        help="validate a runtime-hooks.manifest.json file offline",
-    )
-    mode.add_argument(
-        "--run-hook",
-        choices=HOOK_SLOTS,
-        metavar="SLOT",
-        help="execute a verification hook slot in a clean-room environment",
-    )
-    parser.add_argument(
-        "--no-require-injected",
-        action="store_true",
-        help="with --validate-env: tolerate absent deployment-injected values (local runs)",
-    )
-    parser.add_argument(
-        "--hooks-manifest",
-        default="runtime-hooks.manifest.json",
-        help="with --run-hook: path to runtime-hooks.manifest.json",
-    )
-    parser.add_argument(
-        "--app-url",
-        "--base-url",
-        dest="app_url",
-        default="",
-        help="with --run-hook: target application URL (APP_URL / DEPLOY_BASE_URL)",
-    )
-    parser.add_argument(
-        "--env",
-        dest="environment",
-        default="local_dev",
-        help="with --run-hook: target environment tier (default: local_dev)",
-    )
-    parser.add_argument(
-        "--version-ref",
-        default="local",
-        help="with --run-hook: expected application version ref or SHA (default: local)",
-    )
-    parser.add_argument(
-        "--result-file",
-        default="",
-        help="with --run-hook: optional file path to write HookRunResult JSON",
-    )
-    args = parser.parse_args(list(argv) if argv is not None else None)
+    r = Path.cwd() if root is None else root
+    p = argparse.ArgumentParser(prog=prog, description=__doc__.splitlines()[0])
+    m = p.add_mutually_exclusive_group(required=True)
+    for flag in ("--write", "--check"):
+        m.add_argument(flag, action="store_true")
+    for flag in ("--validate-env", "--check-hooks"):
+        m.add_argument(flag)
+    m.add_argument("--run-hook", choices=HOOK_SLOTS)
+    p.add_argument("--no-require-injected", action="store_true")
+    p.add_argument("--hooks-manifest", default="runtime-hooks.manifest.json")
+    p.add_argument("--app-url", "--base-url", dest="app_url", default="")
+    p.add_argument("--env", dest="environment", default="local_dev")
+    p.add_argument("--version-ref", default="local")
+    p.add_argument("--result-file", default="")
+    a = p.parse_args(list(argv) if argv is not None else None)
     specs = tuple(specs)
-    if args.write:
-        _write(root=resolved_root, specs=specs, echo=echo)
+    if a.write:
+        _write(root=r, specs=specs, echo=echo)
         return 0
-    if args.check:
-        problems = check(root=resolved_root, specs=specs, hand_written=hand_written)
-        for problem in problems:
-            echo(problem)
-        echo("env manifests: ok" if not problems else f"env manifests: {len(problems)} problem(s)")
-        return 1 if problems else 0
-    if args.check_hooks:
+    if a.check:
+        probs = check(root=r, specs=specs, hand_written=hand_written)
+        for pr in probs:
+            echo(pr)
+        echo("env manifests: ok" if not probs else f"env manifests: {len(probs)} problem(s)")
+        return 1 if probs else 0
+    if a.check_hooks:
         try:
-            hooks_manifest = load_hooks_manifest(args.check_hooks, root=resolved_root)
+            hm = load_hooks_manifest(a.check_hooks, root=r)
         except (OSError, ValueError) as err:
-            echo(f"{args.check_hooks}: {err}")
+            echo(f"{a.check_hooks}: {err}")
             return 1
-        echo(
-            f"runtime hooks manifest: ok ({hooks_manifest.service}, "
-            f"{len(hooks_manifest.slots)} slots)"
-        )
+        echo(f"runtime hooks manifest: ok ({hm.service}, {len(hm.slots)} slots)")
         return 0
-    if args.run_hook:
-        if not args.app_url.strip():
+    if a.run_hook:
+        if not a.app_url.strip():
             echo("--run-hook requires --app-url")
             return 2
         try:
-            hooks_manifest = load_hooks_manifest(args.hooks_manifest, root=resolved_root)
+            hm = load_hooks_manifest(a.hooks_manifest, root=r)
         except (OSError, ValueError) as err:
-            echo(f"{args.hooks_manifest}: {err}")
+            echo(f"{a.hooks_manifest}: {err}")
             return 2
-        result_path: Path | None = None
-        if args.result_file:
-            candidate = Path(args.result_file)
-            result_path = candidate if candidate.is_absolute() else resolved_root / candidate
-        result = run_hook_slot(
-            hooks_manifest,
-            args.run_hook,
-            app_url=args.app_url,
-            environment=args.environment,
-            version_ref=args.version_ref,
-            cwd=resolved_root,
-            result_path=result_path,
+        rp = (c if (c := Path(a.result_file)).is_absolute() else r / c) if a.result_file else None
+        res = run_hook_slot(
+            hm,
+            a.run_hook,
+            app_url=a.app_url,
+            environment=a.environment,
+            version_ref=a.version_ref,
+            cwd=r,
+            result_path=rp,
         )
-        echo(json.dumps(result.to_dict(), ensure_ascii=False))
-        return 0 if result.status == "pass" else (result.exit_code or 1)
-    missing = _validate_env(
-        args.validate_env, root=resolved_root, require_injected=not args.no_require_injected
-    )
+        echo(json.dumps(res.to_dict(), ensure_ascii=False))
+        return 0 if res.status == "pass" else (res.exit_code or 1)
+    missing = _validate_env(a.validate_env, root=r, require_injected=not a.no_require_injected)
     for name in missing:
         echo(f"missing: {name}")
     echo("environment: ok" if not missing else f"environment: {len(missing)} missing")
@@ -710,5 +530,5 @@ __all__ = [
     "run_hook_slot",
 ]
 
-if __name__ == "__main__":  # pragma: no cover - a repository wraps main() with its specs
+if __name__ == "__main__":  # pragma: no cover
     sys.exit(main(root=Path.cwd(), specs=()))

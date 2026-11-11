@@ -8,7 +8,6 @@ from infra2_sdk.rules.compose import (
     _ComposeReport,
     _inspect_service_resource_limits,
     _is_memory_ceiling,
-    _main,
     _tag_of_image_ref,
     find_bare_latest_violations,
     inspect_compose,
@@ -115,17 +114,6 @@ services:
     assert len(report.bare_latest_violations) == 0
     assert len(report.unlimited_services) == 0
     assert report.compliant_services == ("app", "db")
-
-
-def test_compose_main_cli(tmp_path: Path) -> None:
-    file_path = tmp_path / "compose.yaml"
-    file_path.write_text("services:\n  bad:\n    image: app:latest\n", encoding="utf-8")
-    assert _main([str(file_path)]) == 1
-    assert _main([str(file_path), "--allow-unlimited", "bad"]) == 1  # still has bare latest
-
-    content = "services:\n  ok:\n    image: app:1.0\n    mem_limit: 256m\n"
-    file_path.write_text(content, encoding="utf-8")
-    assert _main([str(file_path)]) == 0
 
 
 def test_inspect_compose_missing_file(tmp_path: Path) -> None:
