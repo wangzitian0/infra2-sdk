@@ -29,13 +29,7 @@ HOOK_PHASES = ("pre", "deploy", "post")
 HOOK_SLOTS = ("smoke", "preview_gate", "staging_gate", "prod_gate", "scheduled_audit")
 LEGACY_V1_HOOK_SLOTS = ("smoke", "preview_gate", "staging_gate", "scheduled_audit")
 SLOT_PHASE: Mapping[str, str] = MappingProxyType(
-    {
-        "smoke": "deploy",
-        "preview_gate": "post",
-        "staging_gate": "post",
-        "prod_gate": "post",
-        "scheduled_audit": "post",
-    }
+    {s: ("deploy" if s == "smoke" else "post") for s in HOOK_SLOTS}
 )
 SLOT_MAX_TIMEOUT_SECONDS: Mapping[str, int] = MappingProxyType(
     {
@@ -57,10 +51,10 @@ class StageHookPlan:
 
 STAGE_HOOK_PLANS: Mapping[str, StageHookPlan] = MappingProxyType(
     {
-        "preview": StageHookPlan("preview", deploy_slot="smoke", post_slot="preview_gate"),
-        "staging": StageHookPlan("staging", deploy_slot="smoke", post_slot="staging_gate"),
-        "prod": StageHookPlan("prod", deploy_slot="smoke", post_slot="prod_gate"),
-        "schedule": StageHookPlan("schedule", deploy_slot=None, post_slot="scheduled_audit"),
+        "preview": StageHookPlan("preview", "smoke", "preview_gate"),
+        "staging": StageHookPlan("staging", "smoke", "staging_gate"),
+        "prod": StageHookPlan("prod", "smoke", "prod_gate"),
+        "schedule": StageHookPlan("schedule", None, "scheduled_audit"),
     }
 )
 
@@ -192,16 +186,19 @@ class HookSlotSpec:
 
 
 def _check_slot_keys(slots: Mapping[str, Any], *, schema_version: int) -> None:
-    allowed = HOOK_SLOTS
-    required = (
-        HOOK_SLOTS if schema_version == CURRENT_HOOKS_SCHEMA_VERSION else LEGACY_V1_HOOK_SLOTS
-    )
-    if invalid := sorted(set(slots) - set(allowed)):
-        raise ValueError(f"unknown hook slot(s) {invalid}; allowed slots are {list(allowed)}")
+    req = HOOK_SLOTS if schema_version == CURRENT_HOOKS_SCHEMA_VERSION else LEGACY_V1_HOOK_SLOTS
+    if invalid := sorted(set(slots) - set(HOOK_SLOTS)):
+        raise ValueError(f"unknown hook slot(s) {invalid}; allowed slots are {list(HOOK_SLOTS)}")
     if schema_version == 1 and "prod_gate" in slots:
         raise ValueError("schema_version 1 cannot declare 'prod_gate'; upgrade to schema_version 2")
-    if missing := [s for s in required if s not in slots]:
+    if missing := [s for s in req if s not in slots]:
         raise ValueError(f"runtime hooks manifest is missing required slot(s): {missing}")
+
+
+def _check_schema_version(sv: Any) -> int:
+    if isinstance(sv, bool) or sv not in (1, CURRENT_HOOKS_SCHEMA_VERSION):
+        raise ValueError(f"runtime hooks manifest requires schema_version 1 or 2, got {sv!r}")
+    return sv
 
 
 @dataclass(frozen=True)
@@ -211,43 +208,30 @@ class RuntimeHooksManifest:
     schema_version: int = CURRENT_HOOKS_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
-        if isinstance(self.schema_version, bool) or self.schema_version not in (
-            1,
-            CURRENT_HOOKS_SCHEMA_VERSION,
-        ):
-            raise ValueError(
-                "runtime hooks manifest requires schema_version 1 or "
-                f"{CURRENT_HOOKS_SCHEMA_VERSION}, got {self.schema_version!r}"
-            )
+        _check_schema_version(self.schema_version)
         if not isinstance(self.service, str) or not self.service.strip():
             raise ValueError("runtime hooks manifest 'service' must be a non-empty string")
         if not isinstance(self.slots, Mapping):
             raise ValueError("runtime hooks manifest 'slots' must be a mapping")
-        normalized = dict(self.slots)
-        if self.schema_version == 1 and "prod_gate" not in normalized and "smoke" in normalized:
-            _check_slot_keys(normalized, schema_version=1)
-            normalized["prod_gate"] = normalized["smoke"]
-        else:
-            _check_slot_keys(normalized, schema_version=self.schema_version)
+        norm = dict(self.slots)
+        _check_slot_keys(norm, schema_version=self.schema_version)
+        if self.schema_version == 1:
+            norm["prod_gate"] = norm["smoke"]
         for s in HOOK_SLOTS:
-            spec = normalized[s]
+            spec = norm[s]
             if not isinstance(spec, HookSlotSpec):
                 raise ValueError(f"slot {s!r} must be a HookSlotSpec")
             if self.schema_version == CURRENT_HOOKS_SCHEMA_VERSION:
-                ceiling = SLOT_MAX_TIMEOUT_SECONDS[s]
-                if spec.timeout_seconds > ceiling:
+                if spec.timeout_seconds > (lim := SLOT_MAX_TIMEOUT_SECONDS[s]):
                     raise ValueError(
-                        f"slot {s!r} timeout_seconds {spec.timeout_seconds} exceeds "
-                        f"schema_version 2 ceiling {ceiling}"
+                        f"slot {s!r} timeout_seconds {spec.timeout_seconds} exceeds {lim}"
                     )
                 if s == "smoke" and spec.bootstrap.strip():
-                    raise ValueError(
-                        "slot 'smoke' cannot declare non-empty bootstrap in schema_version 2"
-                    )
-        object.__setattr__(self, "slots", MappingProxyType({s: normalized[s] for s in HOOK_SLOTS}))
+                    raise ValueError("slot 'smoke' cannot declare bootstrap in schema_version 2")
+        object.__setattr__(self, "slots", MappingProxyType({s: norm[s] for s in HOOK_SLOTS}))
 
     def to_dict(self) -> dict[str, Any]:
-        slot_order = (
+        keys = (
             HOOK_SLOTS
             if self.schema_version == CURRENT_HOOKS_SCHEMA_VERSION
             else LEGACY_V1_HOOK_SLOTS
@@ -255,7 +239,7 @@ class RuntimeHooksManifest:
         return {
             "schema_version": self.schema_version,
             "service": self.service,
-            "slots": {s: self.slots[s].to_dict() for s in slot_order},
+            "slots": {s: self.slots[s].to_dict() for s in keys},
         }
 
     @classmethod
@@ -266,23 +250,18 @@ class RuntimeHooksManifest:
             raise ValueError(f"unknown runtime hooks manifest field(s): {unknown}")
         if "schema_version" not in data:
             raise ValueError("runtime hooks manifest requires 'schema_version'")
-        sv = data["schema_version"]
-        if isinstance(sv, bool) or sv not in (1, CURRENT_HOOKS_SCHEMA_VERSION):
-            raise ValueError(
-                "runtime hooks manifest requires schema_version 1 or "
-                f"{CURRENT_HOOKS_SCHEMA_VERSION}, got {sv!r}"
-            )
+        sv = _check_schema_version(data["schema_version"])
         raw = data.get("slots")
         if not isinstance(raw, Mapping):
             raise ValueError("runtime hooks manifest 'slots' must be a JSON object")
         _check_slot_keys(raw, schema_version=sv)
-        slot_keys = HOOK_SLOTS if sv == CURRENT_HOOKS_SCHEMA_VERSION else LEGACY_V1_HOOK_SLOTS
+        keys = HOOK_SLOTS if sv == CURRENT_HOOKS_SCHEMA_VERSION else LEGACY_V1_HOOK_SLOTS
         return cls(
             schema_version=sv,
             service=data.get("service", ""),
             slots={
                 s: HookSlotSpec.from_dict(raw[s]) if isinstance(raw[s], Mapping) else raw[s]
-                for s in slot_keys
+                for s in keys
             },
         )
 
