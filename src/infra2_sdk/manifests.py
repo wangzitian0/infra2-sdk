@@ -35,7 +35,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib import import_module
 from pathlib import Path
 from typing import Any
@@ -89,6 +89,7 @@ _HOOK_SLOT_FIELDS = frozenset(
         "required_env",
         "optional_env",
         "artifacts_dir",
+        "checkout_lineage",
     }
 )
 _HOOK_MANIFEST_FIELDS = frozenset({"schema_version", "service", "slots"})
@@ -116,10 +117,11 @@ class HookSlotSpec:
     required_env: tuple[str, ...] = ()
     optional_env: tuple[str, ...] = ()
     artifacts_dir: str = ".artifacts/hooks"
+    checkout_lineage: bool = field(default=False, kw_only=True)
 
     def __post_init__(self) -> None:
         if not isinstance(self.run, str) or not self.run.strip():
-            raise ValueError("hook slot 'run' must be a non-empty command string")
+            raise ValueError("hook slot 'run' must be a non-empty string")
         if not isinstance(self.bootstrap, str):
             raise ValueError("hook slot 'bootstrap' must be a string")
         if (
@@ -131,10 +133,14 @@ class HookSlotSpec:
                 "hook slot 'timeout_seconds' must be an int in 1..3600, "
                 f"got {self.timeout_seconds!r}"
             )
-        object.__setattr__(self, "required_env", tuple(self.required_env))
-        object.__setattr__(self, "optional_env", tuple(self.optional_env))
-        _validate_hook_env_names(self.required_env, field_name="required_env")
-        _validate_hook_env_names(self.optional_env, field_name="optional_env")
+        if not isinstance(self.checkout_lineage, bool):
+            raise ValueError("hook slot 'checkout_lineage' must be a bool")
+        for f in ("required_env", "optional_env"):
+            val = getattr(self, f)
+            if not isinstance(val, (list, tuple)) or any(not isinstance(i, str) for i in val):
+                raise ValueError(f"hook slot '{f}' must be a list of strings")
+            object.__setattr__(self, f, tuple(val))
+            _validate_hook_env_names(getattr(self, f), field_name=f)
         overlap = sorted(set(self.required_env) & set(self.optional_env))
         if overlap:
             raise ValueError(
@@ -144,7 +150,7 @@ class HookSlotSpec:
             raise ValueError("hook slot 'artifacts_dir' must be a non-empty string")
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "run": self.run,
             "bootstrap": self.bootstrap,
             "timeout_seconds": self.timeout_seconds,
@@ -152,6 +158,9 @@ class HookSlotSpec:
             "optional_env": list(self.optional_env),
             "artifacts_dir": self.artifacts_dir,
         }
+        if self.checkout_lineage:
+            out["checkout_lineage"] = True
+        return out
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> HookSlotSpec:
@@ -160,34 +169,9 @@ class HookSlotSpec:
         unknown = sorted(set(data) - _HOOK_SLOT_FIELDS)
         if unknown:
             raise ValueError(f"unknown hook slot field(s): {unknown}")
-        run = data.get("run")
-        if not isinstance(run, str) or not run.strip():
+        if "run" not in data:
             raise ValueError("hook slot 'run' must be a non-empty string")
-        bootstrap = data.get("bootstrap", "")
-        if not isinstance(bootstrap, str):
-            raise ValueError("hook slot 'bootstrap' must be a string")
-        timeout_seconds = data.get("timeout_seconds", 300)
-        required_env_raw = data.get("required_env", ())
-        optional_env_raw = data.get("optional_env", ())
-        if not isinstance(required_env_raw, (list, tuple)) or any(
-            not isinstance(item, str) for item in required_env_raw
-        ):
-            raise ValueError("hook slot 'required_env' must be a list of strings")
-        if not isinstance(optional_env_raw, (list, tuple)) or any(
-            not isinstance(item, str) for item in optional_env_raw
-        ):
-            raise ValueError("hook slot 'optional_env' must be a list of strings")
-        artifacts_dir = data.get("artifacts_dir", ".artifacts/hooks")
-        if not isinstance(artifacts_dir, str) or not artifacts_dir.strip():
-            raise ValueError("hook slot 'artifacts_dir' must be a non-empty string")
-        return cls(
-            run=run,
-            bootstrap=bootstrap,
-            timeout_seconds=timeout_seconds,
-            required_env=tuple(required_env_raw),
-            optional_env=tuple(optional_env_raw),
-            artifacts_dir=artifacts_dir,
-        )
+        return cls(**data)
 
 
 @dataclass(frozen=True)
@@ -242,15 +226,10 @@ class RuntimeHooksManifest:
         raw_slots = data.get("slots")
         if not isinstance(raw_slots, Mapping):
             raise ValueError("runtime hooks manifest 'slots' must be a JSON object")
-        invalid_slots = sorted(set(raw_slots) - set(HOOK_SLOTS))
-        if invalid_slots:
-            raise ValueError(
-                f"unknown hook slot(s) {invalid_slots}; allowed slots are {list(HOOK_SLOTS)}"
-            )
-        missing_slots = [slot for slot in HOOK_SLOTS if slot not in raw_slots]
-        if missing_slots:
-            raise ValueError(f"runtime hooks manifest is missing required slot(s): {missing_slots}")
-        slots = {slot: HookSlotSpec.from_dict(raw_slots[slot]) for slot in HOOK_SLOTS}
+        slots = {
+            slot: HookSlotSpec.from_dict(spec) if isinstance(spec, Mapping) else spec
+            for slot, spec in raw_slots.items()
+        }
         return cls(
             schema_version=data["schema_version"],
             service=data.get("service", ""),
@@ -261,8 +240,7 @@ class RuntimeHooksManifest:
 def load_hooks_manifest(path: str | Path, *, root: Path | None = None) -> RuntimeHooksManifest:
     """Read and validate a ``runtime-hooks.manifest.json`` file from disk."""
     target = Path(path) if root is None else root / path
-    raw = json.loads(target.read_text(encoding="utf-8"))
-    return RuntimeHooksManifest.from_dict(raw)
+    return RuntimeHooksManifest.from_dict(json.loads(target.read_text(encoding="utf-8")))
 
 
 @dataclass(frozen=True)
