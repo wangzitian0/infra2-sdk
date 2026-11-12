@@ -16,7 +16,12 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from infra2_sdk._wire import _is_loopback_host, parse_iso_utc
-from infra2_sdk.transport import _github_api_url, _github_headers, _urlopen_json
+from infra2_sdk.transport import (
+    _github_api_url,
+    _github_headers,
+    _github_json_fetcher,
+    _urlopen_json,
+)
 
 
 def is_recently_flapping(
@@ -85,19 +90,12 @@ class PeerReadError(RuntimeError):
 def github_getter(
     token: str = "", *, timeout: float = _API_TIMEOUT_SECONDS, opener=urlopen
 ) -> Callable[[str], object]:
-    headers = _github_headers(token=token, user_agent="infra2-scheduler-peer-liveness/1.0")
-
-    def get(path: str) -> object:
-        try:
-            return _urlopen_json(
-                _github_api_url(path), headers=headers, timeout=timeout, opener=opener
-            )
-        except HTTPError as exc:
-            raise PeerReadError(f"GET {path} answered HTTP {exc.code}") from exc
-        except (OSError, URLError, ValueError) as exc:
-            raise PeerReadError(f"GET {path} failed: {exc}") from exc
-
-    return get
+    return _github_json_fetcher(
+        headers=_github_headers(token=token, user_agent="infra2-scheduler-peer-liveness/1.0"),
+        timeout=timeout,
+        error_cls=PeerReadError,
+        opener=opener,
+    )
 
 
 def bound_for(gap: timedelta) -> timedelta:

@@ -49,6 +49,34 @@ def _urlopen_json(
     return json.loads(text) if text.strip() else None
 
 
+def _github_json_fetcher(
+    *,
+    headers: Mapping[str, str],
+    timeout: float,
+    error_cls: type[Exception],
+    opener: Callable[..., object] | None = None,
+    http_message: str = "GET {path} answered HTTP {code}",
+    error_message: str = "GET {path} failed: {error}",
+    error_text: Callable[[Exception], str] = str,
+) -> Callable[[str], Any]:
+    """Build one path-to-JSON getter over the GitHub API with one error policy."""
+
+    def fetch(path: str) -> Any:
+        try:
+            return _urlopen_json(
+                _github_api_url(path),
+                headers=headers,
+                timeout=timeout,
+                opener=opener if opener is not None else urllib.request.urlopen,
+            )
+        except urllib.error.HTTPError as exc:
+            raise error_cls(http_message.format(path=path, code=exc.code)) from exc
+        except (OSError, ValueError) as exc:
+            raise error_cls(error_message.format(path=path, error=error_text(exc))) from exc
+
+    return fetch
+
+
 def _decode_github_contents(payload: object, *, require_encoding: bool = False) -> bytes:
     if not isinstance(payload, Mapping):
         raise TypeError("must contain a JSON object")
