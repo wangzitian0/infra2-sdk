@@ -184,10 +184,27 @@ REASON_PREFIXES = ("consumer:", "documented:", "held:")
 CONSUMER_REPOSITORIES = frozenset({"infra2", "finance_report", "truealpha"})
 # A hold is a recorded decision: name -> exact reason. A new hold needs a new line here and a
 # review of that decision. surface.json and this table must agree on the names and the reasons.
+_ADOPTION_HELD = (
+    "held: pending adoption by truealpha#1652 Wave 2 "
+    "(sources/{llm,gateway}.py retry plumbing -> infra2_sdk.runtime.http) "
+    "and finance_report#2936 llm transport delegation"
+)
+
 HELD = {
-    "RUNTIME_ENV_CONTRACT_VERSION": "held: issue #102 decision 7 (adopt, do not delete)",
-    "RUNTIME_ENV_SPECS": "held: issue #102 decision 7 (adopt, do not delete)",
     "runtime_env_contract": "held: issue #102 decision 7 (adopt, do not delete)",
+    "LlmClient": (
+        "held: pending adoption by truealpha#1652 Wave 2 "
+        "(sources/llm.py -> infra2_sdk.runtime.llm) "
+        "and finance_report#2936 llm transport delegation"
+    ),
+    "arequest_with_retry": _ADOPTION_HELD,
+    "request_with_retry": _ADOPTION_HELD,
+    "probe_orchestrator": (
+        "held: production callers finance_report "
+        "apps/backend/src/runtime/extension/adapters.py:168 and truealpha "
+        "common/runtime/src/truealpha_runtime/checks.py:136; "
+        "census reach scan omits these paths (scope mismatch with missing_imports)"
+    ),
 }
 
 

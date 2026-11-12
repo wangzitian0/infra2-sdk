@@ -61,12 +61,12 @@ Application processes import these modules directly at runtime:
 | `infra2_sdk.runtime.config_schema` | `EnvironmentField`, `EnvironmentManifest`, `assert_environment`, and manifest config fingerprints |
 | `infra2_sdk.runtime.health` | Framework-agnostic readiness probes (`check_health`, `run_probes`, `probe_orchestrator`) and dependency status contracts |
 | `infra2_sdk.runtime.http` | `HttpClientSettings`, Retry-After retry helpers (`request_with_retry`, `arequest_with_retry`), and `probe_http` |
-| `infra2_sdk.runtime.llm` | `LlmSettings`, `LlmClient`, `LlmResponse`, capability roles (`large`, `small`, `multimodal`), and role-based model defaults |
+| `infra2_sdk.runtime.llm` | `LlmSettings`, `LlmClient`, capability roles (`large`, `small`, `multimodal`), and role-based model defaults |
 | `infra2_sdk.runtime.otel` | Explicit OTLP/HTTP trace, metric, and log provider bootstrap (`OtelSettings`, `PROBE_PATHS`, `configure_telemetry`) |
 | `infra2_sdk.runtime.postgres` | `PostgresSettings`, `redact_postgres_error`, and `probe_postgres` |
 | `infra2_sdk.runtime.s3` | `S3Settings`, `boto3` S3 client initialization, bucket reachability probe (`probe_s3`), `ensure_bucket`, and `put_object_bytes` |
 | `infra2_sdk.fastapi` | `init_service` turnkey bootstrap mounting `/livez`, `/readyz`, and `/health` routes with OTLP lifecycle management |
-| `infra2_sdk.transport` | Injectable `HttpTransport`, `HttpResponse`, and `urllib_transport` |
+| `infra2_sdk.transport` | Injectable `HttpTransport` and `urllib_transport` |
 
 ### Control-Plane and Delivery Contract Layer
 
@@ -77,7 +77,7 @@ Application processes import these modules directly at runtime:
 | `infra2_sdk.capacity` | Capacity limits, `CapacityReading`, `RateLimitWindow`, `evaluate` thresholds, and Cloudflare analytics collection |
 | `infra2_sdk.ci` | Delivery-stage vocabulary, CI gate inventory validation, workflow step inspection, cron schedule gap analysis (`ScheduleError`, `largest_gap`), and coverage ratchets |
 | `infra2_sdk.deploy` | `DeployRequest` wire contracts, health poller (`poll_until_healthy`), `parse_wheel_version`, deployed release reader, and production evidence verification |
-| `infra2_sdk.manifests` | Settings and runtime hooks manifest CLI driver (`--write`, `--check`, `--validate-env`, `--check-hooks`, `--run-hook`), `ManifestSpec`, `RuntimeHooksManifest`, `HookSlotSpec`, `HookRunResult`, `StageHookPlan`, `STAGE_HOOK_PLANS`, `stage_hook_plan`, `SLOT_MAX_TIMEOUT_SECONDS`, `load_hooks_manifest`, `run_hook_slot`, `all_manifests`, `check`, and `load` |
+| `infra2_sdk.manifests` | Settings and runtime hooks manifest CLI driver (`--write`, `--check`, `--validate-env`, `--check-hooks`, `--run-hook`), `ManifestSpec`, `RuntimeHooksManifest`, `HookSlotSpec`, `HookRunResult`, `StageHookPlan`, `STAGE_HOOK_PLANS`, `stage_hook_plan`, `load_hooks_manifest`, `run_hook_slot`, `all_manifests`, `check`, and `load` |
 | `infra2_sdk.observability` | Flap hysteresis trackers (`ConsecutiveObservationState`), parameterized self-healing GitHub issue trails (`reconcile_issue_trail`), and OpenPanel query primitives |
 | `infra2_sdk.refs` | Git ref resolution (`resolve_to_sha`, `resolve_pr`, `identifier_kind`, `next_patch_tag`), OCI image digest resolution, and repo URL redaction |
 | `infra2_sdk.routing` | Canonical domain and routing SSOT (`CANARY_SLOT`, `PreviewStackCoordinates`, hostname and service URL resolution) |

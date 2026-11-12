@@ -36,7 +36,7 @@ python -m pip install \
 | `infra2_sdk.ci` | Delivery-stage vocabulary, CI gate inventory validation, workflow step inspection, cron schedule gap analysis, coverage ratchets, and GitHub Actions helpers |
 | `infra2_sdk.deploy` | Deploy lifecycle wire contracts, health poller, wheel version parser, deployed release identity reader, production evidence policies, and CLI at `python -m infra2_sdk.deploy` |
 | `infra2_sdk.fastapi` | `init_service`: /livez, /readyz and /health routes for a FastAPI app, multi-dependency checks, probe noise suppression, and OTLP telemetry bootstrap |
-| `infra2_sdk.manifests` | Settings and runtime verification hooks manifest CLI driver (`--write`, `--check`, `--validate-env`, `--check-hooks`, `--run-hook`), `ManifestSpec`, `RuntimeHooksManifest`, `HookSlotSpec`, `HookRunResult`, `StageHookPlan`, `STAGE_HOOK_PLANS`, `stage_hook_plan`, `SLOT_MAX_TIMEOUT_SECONDS`, `load_hooks_manifest`, `run_hook_slot`, `all_manifests`, `check`, and `load` |
+| `infra2_sdk.manifests` | Settings and runtime verification hooks manifest CLI driver (`--write`, `--check`, `--validate-env`, `--check-hooks`, `--run-hook`), `ManifestSpec`, `RuntimeHooksManifest`, `HookSlotSpec`, `HookRunResult`, `StageHookPlan`, `STAGE_HOOK_PLANS`, `stage_hook_plan`, `load_hooks_manifest`, `run_hook_slot`, `all_manifests`, `check`, and `load` |
 | `infra2_sdk.observability` | Flap hysteresis trackers, parameterized self-healing GitHub issue trails, and OpenPanel export query & funnel summary primitives |
 | `infra2_sdk.refs` | Git ref resolution, PR heads, patch tag calculation (`next_patch_tag`), registry image digests, remote ref queries, commit ancestry checks, and credential redaction |
 | `infra2_sdk.routing` | Canonical domain and routing SSOT: `CANARY_SLOT`, hostname resolution, and service URL resolution |
@@ -46,13 +46,13 @@ python -m pip install \
 | `infra2_sdk.runtime.environment` | Canonical six-tier environment vocabulary, variable resolution, and contract definitions |
 | `infra2_sdk.runtime.health` | Framework-agnostic readiness checks (`check_health`), probe runners, and dependency declarations |
 | `infra2_sdk.runtime.http` | Retry-After HTTP request execution (`request_with_retry`, `arequest_with_retry`), `HttpClientSettings`, and the HTTP reachability probe |
-| `infra2_sdk.runtime.llm` | OpenAI-compatible `LlmClient`, `LlmResponse`, `LlmSettings` contracts, fallback model chains, and role-based model defaults |
+| `infra2_sdk.runtime.llm` | OpenAI-compatible `LlmClient` and `LlmSettings` contracts, fallback model chains, and role-based model defaults |
 | `infra2_sdk.runtime.otel` | Explicit OTLP provider bootstrap, probe span suppression, and env-configured samplers |
 | `infra2_sdk.runtime.postgres` | `PostgresSettings`, credential redaction, and psycopg reachability/write probe (`probe_postgres`) |
 | `infra2_sdk.runtime.s3` | Standard boto3 S3 client, probe, and safe bucket/object primitives (`put_object_bytes`, `read_object_bytes`) |
 | `infra2_sdk.scaffold` | Zero-compromise scaffolding engine producing compose, deployer, and entrypoint assets; CLI at `python -m infra2_sdk.scaffold` |
 | `infra2_sdk.secrets` | Secret-store adapters (Vault KV, 1Password), manifest-driven `SecretsResolver`, Vault template renderers, and AppRole policy naming |
-| `infra2_sdk.transport` | Minimal injectable HTTP transport (`HttpTransport`, `HttpResponse`, `urllib_transport`) |
+| `infra2_sdk.transport` | Minimal injectable HTTP transport (`HttpTransport`, `urllib_transport`) |
 
 ### Core runtime entrypoints
 
@@ -64,7 +64,6 @@ python -m pip install \
 | LLM client | `LlmClient`, `LlmResponse`, `LlmSettings` | `infra2_sdk.runtime.llm` | OpenAI-compatible chat, structured JSON, and embeddings client with OTel `gen_ai.*` spans |
 | PostgreSQL | `probe_postgres`, `redact_postgres_error` | `infra2_sdk.runtime.postgres` | Psycopg reachability/write probe with credential redaction |
 | S3 storage | `create_s3_client`, `probe_s3`, `ensure_bucket`, `put_object_bytes` | `infra2_sdk.runtime.s3` | Boto3 client initialization, bucket reachability probe, bucket creation, and byte writes |
-| Environment & identity | `environment_from_env` | `infra2_sdk.runtime.environment` | Canonical six-tier environment resolution and contract validation |
 | Secret manifests | `render_agent_template`, `render_agent_policy` | `infra2_sdk.secrets` | Manifest-driven Vault Agent Consul template and HCL policy generation |
 
 ## Runtime extras
@@ -135,7 +134,7 @@ from infra2_sdk.runtime import ProbeResult, check_health
 from infra2_sdk.runtime.http import probe_http
 
 
-class CatalogCheck:  # a DependencyCheck: a `name` and a `probe()` that returns a ProbeResult
+class CatalogCheck:  # a dependency check: a `name` and a `probe()` that returns a ProbeResult
     name = "catalog"
 
     async def probe(self) -> ProbeResult:
@@ -143,7 +142,7 @@ class CatalogCheck:  # a DependencyCheck: a `name` and a `probe()` that returns 
 
 
 # In a readiness handler (async, any framework); DEPENDENCIES is your DependencyManifest and
-# `environment` comes from environment_from_env(). A required dependency down is 503 with the
+# `environment` is resolved by the runtime. A required dependency down is 503 with the
 # reasons; an optional one down is 200 "degraded"; a raising probe is reported, never a 200.
 status_code, body = await check_health(
     [CatalogCheck()], manifest=DEPENDENCIES, tier=environment.tier
@@ -164,12 +163,10 @@ its own provider chain. That chain reads variables such as `AWS_ACCESS_KEY_ID`,
 ```python
 import os
 
-from infra2_sdk.runtime import environment_from_env
 from infra2_sdk.runtime.otel import OtelSettings
 from infra2_sdk.runtime.postgres import PostgresSettings
 from infra2_sdk.runtime.s3 import S3Settings, create_s3_client
 
-runtime = environment_from_env()  # reads os.environ only when called
 telemetry = OtelSettings.from_env()  # no network or platform lookup
 database = PostgresSettings(dsn=os.environ["DATABASE_URL"])
 s3 = create_s3_client(S3Settings(bucket="my-bucket", endpoint_url=os.environ["S3_ENDPOINT"]))
@@ -178,7 +175,6 @@ s3 = create_s3_client(S3Settings(bucket="my-bucket", endpoint_url=os.environ["S3
 Deployed conformance checks opt into fail-closed loading instead of inheriting local defaults:
 
 ```python
-runtime = environment_from_env(required=True)
 telemetry = OtelSettings.from_env(strict=True, require_issued_identity=True)
 ```
 
@@ -342,17 +338,17 @@ contract is sensitive today. The `sensitive` field stays for the wire shape, and
 configuration disables telemetry without affecting application startup.
 `OTEL_SDK_DISABLED=true` takes precedence over the endpoint and ignores it completely.
 
-The table lists the variables that `environment_from_env` and `OtelSettings.from_env` resolve
+The table lists the variables that the runtime environment resolver and `OtelSettings.from_env` resolve
 through `RuntimeEnvKey`. The settings of the S3, PostgreSQL and HTTP adapters take explicit values,
 so no row of the table belongs to them. Ten more fixed names exist outside the table.
-`environment_from_env` reads `GITHUB_ACTIONS`. `OtelSettings.from_env` reads `INSTANCE_ID`,
+The runtime environment resolver reads `GITHUB_ACTIONS`. `OtelSettings.from_env` reads `INSTANCE_ID`,
 `OTEL_SDK_DISABLED`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_TRACES_SAMPLER` and
 `OTEL_TRACES_SAMPLER_ARG`. `VaultKvBackend.from_environ` reads `VAULT_ADDR`, `VAULT_TOKEN`,
 `VAULT_ROLE_ID` and `VAULT_SECRET_ID` from the mapping you pass. Other names come from the caller:
 the manifest that you pass to `validate_env`, and the token variable that a CLI option names.
 
-`ENVIRONMENT` has two dimensions. `RuntimeEnvironment.tier` controls behavior using the six
-portable tiers. `RuntimeEnvironment.name` preserves the deployment display identity. Therefore
+`ENVIRONMENT` has two dimensions. The resolved tier controls behavior using the six
+portable tiers. The resolved name preserves the deployment display identity. Therefore
 deploy_v2 aliases such as `pr-42`, `branch-main`, `commit-1ab32d5`, and `tag-v1-2-3` all resolve
 to tier `preview` as compatibility inputs. New producers set `ENVIRONMENT=preview` and carry an
 arbitrary display identity through the standard
@@ -450,7 +446,7 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
     case-sensitively, so pass lower-case keys or a case-insensitive mapping such as the Starlette
     `request.headers`. The removed helper lowercased the keys);
   - `runtime.postgres.PostgresCheck` and `runtime.s3.S3Check` (wrap `probe_postgres` or
-    `probe_s3` in your own `DependencyCheck`):
+    `probe_s3` in your own dependency check):
 
     ```python
     from infra2_sdk.runtime import probe_postgres, probe_s3
@@ -494,7 +490,7 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
     `S3_ADDRESSING_STYLE`;
   - database: `DATABASE_URL`, `DATABASE_CONNECT_TIMEOUT_SECONDS`,
     `DATABASE_STATEMENT_TIMEOUT_SECONDS`.
-- In v3.4.0, `runtime_env_contract()["contract_version"]` (`RUNTIME_ENV_CONTRACT_VERSION`) is 2,
+- In v3.4.0, `runtime_env_contract()["contract_version"]` is 2,
   not 1, because the document lost the 21 variables removed in 3.4.0 and 3.8.2. Version 2 lists 9
   variables. The field layout is the same. A receiver that requires version 1 rejects version 2, as
   the rule above says, so change it to require version 2.
@@ -505,7 +501,7 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   - when both variables are set, the SDK uses `OTEL_SERVICE_NAME` and reports no conflict.
     Before 3.4.0, two different values raised `EnvironmentConflictError`.
 - In v3.4.0, a string lookup of a removed variable raises `ValueError`:
-  `resolve_runtime_env(env, "DATABASE_URL")`, `runtime_env_spec("S3_BUCKET")` and
+  `resolve_runtime_env(env, "DATABASE_URL")` and
   `RuntimeEnvKey("AWS_REGION")`. Before 3.4.0, each of them returned a value.
 - In v3.4.0, `init_service` is strict by default (`strict_otel=True`). Before, the default was
   `False`. A service without a known tier, or with an invalid `OTEL_*` value that the SDK reads,
@@ -573,7 +569,6 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   and poll health explicitly.
 - `tests/surface.json` records the reason for each name in `__all__`: a consumer imports it, the
   README documents it, or a recorded decision holds it.
-- `to_environment_tier` maps `DeployType` values to `EnvironmentTier`.
 - `CommandRunner` protocol is exported from `infra2_sdk.refs` for subprocess runner injection.
 
 ## Development

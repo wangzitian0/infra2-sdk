@@ -153,7 +153,8 @@ REMOVED_ENV_NAMES = (
 
 def smoke_core() -> None:
     from infra2_sdk.refs import classify_ref
-    from infra2_sdk.runtime import environment_from_env, runtime_env_contract
+    from infra2_sdk.runtime import runtime_env_contract
+    from infra2_sdk.runtime.environment import environment_from_env
 
     assert classify_ref("v1.2.3") == "tag"
     assert environment_from_env({}).name == "local_dev"

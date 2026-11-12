@@ -8,13 +8,12 @@ import os
 
 from infra2_sdk.runtime import (
     Dependency,
-    DependencyCheck,
     DependencyKind,
     DependencyManifest,
     EnvironmentTier,
     ProbeResult,
     check_health,
-    environment_from_env,
+    resolve_environment_tier,
 )
 from infra2_sdk.runtime.http import probe_http
 from infra2_sdk.runtime.otel import OtelSettings
@@ -34,7 +33,7 @@ DEPENDENCIES = DependencyManifest(
 
 
 class CatalogCheck:
-    """A DependencyCheck: a name and a probe() that returns a ProbeResult."""
+    """A readiness check: a name and an async probe() returning a ProbeResult."""
 
     name = "catalog"
 
@@ -47,12 +46,12 @@ class CatalogCheck:
 
 async def main() -> int:
     try:
-        environment = environment_from_env(required=True)
+        tier = resolve_environment_tier(os.environ.get("ENVIRONMENT", ""))
         settings = OtelSettings.from_env(strict=True)
         url = os.environ.get("CATALOG_HEALTH_URL", "")
-        checks: list[DependencyCheck] = [CatalogCheck(url)] if url else []
+        checks: list[CatalogCheck] = [CatalogCheck(url)] if url else []
         status_code, report = await check_health(
-            checks, manifest=DEPENDENCIES, tier=environment.tier, timeout_seconds=5
+            checks, manifest=DEPENDENCIES, tier=tier, timeout_seconds=5
         )
     except ValueError as exc:
         print(json.dumps({"ready": False, "error": str(exc)}))

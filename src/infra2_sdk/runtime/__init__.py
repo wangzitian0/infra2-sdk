@@ -17,21 +17,14 @@ from infra2_sdk.runtime.config_schema import (
     manifest_config_fingerprint,
 )
 from infra2_sdk.runtime.environment import (
-    RUNTIME_ENV_CONTRACT_VERSION,
-    RUNTIME_ENV_SPECS,
     EnvironmentTier,
-    RuntimeEnvironment,
     RuntimeEnvKey,
-    environment_from_env,
     resolve_environment_tier,
     resolve_runtime_env,
     runtime_env_contract,
-    runtime_env_spec,
-    to_environment_tier,
 )
 from infra2_sdk.runtime.health import (
     Dependency,
-    DependencyCheck,
     DependencyKind,
     DependencyManifest,
     DependencyStatus,
@@ -42,14 +35,13 @@ from infra2_sdk.runtime.health import (
 )
 from infra2_sdk.runtime.http import (
     HttpClientSettings,
-    arequest_with_retry,
     probe_http,
     request_with_retry,
 )
 from infra2_sdk.runtime.llm import (
     LlmClient,
-    LlmResponse,
     LlmSettings,
+    arequest_with_retry,
 )
 from infra2_sdk.runtime.otel import (
     OtelSettings,
@@ -82,16 +74,10 @@ __all__ = [
     "postgres",
     "s3",
     "EnvironmentTier",
-    "RuntimeEnvironment",
-    "environment_from_env",
     "resolve_environment_tier",
-    "to_environment_tier",
-    "RUNTIME_ENV_CONTRACT_VERSION",
-    "RUNTIME_ENV_SPECS",
     "RuntimeEnvKey",
     "resolve_runtime_env",
     "runtime_env_contract",
-    "runtime_env_spec",
     "EnvironmentField",
     "EnvironmentManifest",
     "environment_manifest_from_model",
@@ -99,10 +85,8 @@ __all__ = [
     "Dependency",
     "DependencyKind",
     "DependencyManifest",
-    "DependencyCheck",
     "DependencyStatus",
     "ProbeResult",
-    "probe_orchestrator",
     "run_probes",
     "check_health",
     "S3Settings",
@@ -117,13 +101,13 @@ __all__ = [
     "probe_postgres",
     "redact_postgres_error",
     "HttpClientSettings",
-    "arequest_with_retry",
     "probe_http",
     "request_with_retry",
     "OtelSettings",
     "configure_telemetry",
     "signal_endpoint",
     "LlmClient",
-    "LlmResponse",
+    "probe_orchestrator",
+    "arequest_with_retry",
     "LlmSettings",
 ]
