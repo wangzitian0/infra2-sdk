@@ -36,7 +36,6 @@ from infra2_sdk.deploy import (
 from infra2_sdk.manifests import (
     CURRENT_HOOKS_SCHEMA_VERSION,
     HOOK_SLOTS,
-    SLOT_MAX_TIMEOUT_SECONDS,
     STAGE_HOOK_PLANS,
     HookRunResult,
     HookSlotSpec,
@@ -69,7 +68,7 @@ from infra2_sdk.secrets import (
     VaultKvBackend,
     vault_token_status,
 )
-from infra2_sdk.transport import HttpResponse, HttpTransport, urllib_transport
+from infra2_sdk.transport import HttpTransport, urllib_transport
 
 __all__ = [
     "capacity",
@@ -96,7 +95,6 @@ __all__ = [
     "poll_until_healthy",
     "CURRENT_HOOKS_SCHEMA_VERSION",
     "HOOK_SLOTS",
-    "SLOT_MAX_TIMEOUT_SECONDS",
     "STAGE_HOOK_PLANS",
     "HookRunResult",
     "HookSlotSpec",
@@ -122,7 +120,6 @@ __all__ = [
     "SecretsResolver",
     "VaultKvBackend",
     "vault_token_status",
-    "HttpResponse",
     "HttpTransport",
     "urllib_transport",
     "fastapi",

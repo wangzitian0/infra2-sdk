@@ -606,7 +606,6 @@ __all__ = [
     "LEGACY_V1_HOOK_SLOTS",
     "ManifestSpec",
     "RuntimeHooksManifest",
-    "SLOT_MAX_TIMEOUT_SECONDS",
     "SLOT_PHASE",
     "STAGE_HOOK_PLANS",
     "StageHookPlan",
