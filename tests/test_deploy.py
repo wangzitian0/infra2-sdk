@@ -703,7 +703,7 @@ def test_default_github_json_fetcher(monkeypatch) -> None:
             return self._data
 
     monkeypatch.setattr(
-        "infra2_sdk.deploy.urlopen",
+        "urllib.request.urlopen",
         lambda req, timeout=10.0: FakeResponse(b'{"key": "value"}'),
     )
 
@@ -715,7 +715,7 @@ def test_default_github_json_fetcher(monkeypatch) -> None:
     def raise_http_error(req, timeout=10.0):
         raise HTTPError("url", 404, "Not Found", {}, None)
 
-    monkeypatch.setattr("infra2_sdk.deploy.urlopen", raise_http_error)
+    monkeypatch.setattr("urllib.request.urlopen", raise_http_error)
     with pytest.raises(ValueError, match="HTTP 404"):
         fetcher("/test/path")
 
@@ -723,13 +723,13 @@ def test_default_github_json_fetcher(monkeypatch) -> None:
     def raise_url_error(req, timeout=10.0):
         raise URLError("Connection refused")
 
-    monkeypatch.setattr("infra2_sdk.deploy.urlopen", raise_url_error)
+    monkeypatch.setattr("urllib.request.urlopen", raise_url_error)
     with pytest.raises(ValueError, match="URLError"):
         fetcher("/test/path")
 
     # 4. JSONDecodeError
     monkeypatch.setattr(
-        "infra2_sdk.deploy.urlopen",
+        "urllib.request.urlopen",
         lambda req, timeout=10.0: FakeResponse(b"not-valid-json"),
     )
     with pytest.raises(ValueError, match="JSONDecodeError"):

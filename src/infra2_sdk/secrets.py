@@ -213,6 +213,11 @@ def vault_token_status(
     return _TokenStatus(True, ttl, ren)
 
 
+def _stderr_note(stderr: str | None) -> str:
+    lines = (stderr or "").strip().splitlines()
+    return lines[-1][:160] if lines else "no stderr"
+
+
 class OnePasswordBackend:
     def __init__(
         self,
@@ -237,8 +242,7 @@ class OnePasswordBackend:
         except subprocess.TimeoutExpired as exc:
             raise SecretsError(f"op {args[0]} {args[1]} timed out after {self._timeout}s") from exc
         if check and res.returncode != 0:
-            tail = (res.stderr or "").strip().splitlines()[-1:] or ["no stderr"]
-            raise SecretsError(f"op {args[0]} {args[1]} failed: {tail[0][:160]}")
+            raise SecretsError(f"op {args[0]} {args[1]} failed: {_stderr_note(res.stderr)}")
         return res
 
     def _item(self, title: str) -> dict[str, Any] | None:
@@ -247,8 +251,7 @@ class OnePasswordBackend:
             err = res.stderr or ""
             if "isn't an item" in err or "not found" in err.lower():
                 return None
-            tail = err.strip().splitlines()[-1:] or ["no stderr"]
-            raise SecretsError(f"op item get failed: {tail[0][:160]}")
+            raise SecretsError(f"op item get failed: {_stderr_note(err)}")
         return json.loads(res.stdout)
 
     def read(self, path: str) -> Mapping[str, str]:

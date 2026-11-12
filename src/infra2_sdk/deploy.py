@@ -14,9 +14,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import urlopen
 
 from infra2_sdk._wire import (
     canonical_json_bytes,
@@ -27,9 +25,8 @@ from infra2_sdk._wire import (
 )
 from infra2_sdk.transport import (
     _decode_github_contents,
-    _github_api_url,
     _github_headers,
-    _urlopen_json,
+    _github_json_fetcher,
 )
 
 CONTRACT_VERSION = 1
@@ -270,23 +267,14 @@ def _default_github_json_fetcher(
     user_agent: str = "infra2-sdk",
     timeout: float = 10.0,
 ) -> Callable[[str], Any]:
-    headers = _github_headers(token=token or os.getenv(token_env, ""), user_agent=user_agent)
-
-    def fetch(path: str) -> Any:
-        try:
-            return _urlopen_json(
-                _github_api_url(path), headers=headers, timeout=timeout, opener=urlopen
-            )
-        except HTTPError as exc:
-            raise ValueError(
-                f"GitHub evidence request failed for {path}: HTTP {exc.code}"
-            ) from None
-        except (URLError, json.JSONDecodeError) as exc:
-            raise ValueError(
-                f"GitHub evidence request failed for {path}: {type(exc).__name__}"
-            ) from None
-
-    return fetch
+    return _github_json_fetcher(
+        headers=_github_headers(token=token or os.getenv(token_env, ""), user_agent=user_agent),
+        timeout=timeout,
+        error_cls=ValueError,
+        http_message="GitHub evidence request failed for {path}: HTTP {code}",
+        error_message="GitHub evidence request failed for {path}: {error}",
+        error_text=lambda exc: type(exc).__name__,
+    )
 
 
 def _require_github_path(url: str, *, prefix: str, field: str) -> None:
