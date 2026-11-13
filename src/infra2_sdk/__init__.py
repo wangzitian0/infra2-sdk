@@ -37,6 +37,7 @@ from infra2_sdk.manifests import (
     CURRENT_HOOKS_SCHEMA_VERSION,
     HOOK_SLOTS,
     STAGE_HOOK_PLANS,
+    CheckSpec,
     HookRunResult,
     HookSlotSpec,
     ManifestSpec,
@@ -68,6 +69,7 @@ from infra2_sdk.secrets import (
     VaultKvBackend,
     vault_token_status,
 )
+from infra2_sdk.stage_record import StageRecord
 from infra2_sdk.transport import HttpTransport, urllib_transport
 
 __all__ = [
@@ -96,11 +98,13 @@ __all__ = [
     "CURRENT_HOOKS_SCHEMA_VERSION",
     "HOOK_SLOTS",
     "STAGE_HOOK_PLANS",
+    "CheckSpec",
     "HookRunResult",
     "HookSlotSpec",
     "ManifestSpec",
     "RuntimeHooksManifest",
     "StageHookPlan",
+    "StageRecord",
     "load_hooks_manifest",
     "run_hook_slot",
     "stage_hook_plan",

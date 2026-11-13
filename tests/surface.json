@@ -25,6 +25,8 @@
     "CURRENT_HOOKS_SCHEMA_VERSION": "consumer: finance_report",
     "HOOK_SLOTS": "consumer: finance_report, infra2",
     "STAGE_HOOK_PLANS": "consumer: infra2",
+    "CheckSpec": "consumer: finance_report, infra2, truealpha",
+    "StageRecord": "consumer: infra2",
     "HookRunResult": "consumer: infra2",
     "HookSlotSpec": "consumer: infra2",
     "ManifestSpec": "consumer: truealpha",

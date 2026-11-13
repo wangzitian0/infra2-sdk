@@ -7,20 +7,8 @@ def test_packaged_stage_vocabulary_is_available() -> None:
     stages = load_delivery_stages()
     assert stages["github_ci.merge_authority"]["order"] == 1
     assert stages["prod.release_integrity"]["order"] == 5
-    expected_budgets = {
-        "local.advisory": 30,
-        "github_ci.merge_authority": 240,
-        "preview.runtime": 300,
-        "staging.release_validation": 360,
-        "staging.provider_regression": 3600,
-        "prod.release_integrity": 300,
-        "ops.scheduled_cleanup": 3600,
-    }
-    for stage_id, budget in expected_budgets.items():
-        entry = stages[stage_id]
-        assert entry["wall_clock_budget_seconds"] == budget
-        assert isinstance(entry["phase"], str) and entry["phase"]
-        assert isinstance(entry["batch_policy"], str) and entry["batch_policy"]
+    for entry in stages.values():
+        assert not {"phase", "batch_policy", "wall_clock_budget_seconds"} & set(entry)
 
 
 def test_inventory_rejects_unknown_and_duplicate_gates() -> None:
