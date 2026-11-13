@@ -15,6 +15,7 @@ backfill from the merged pull requests.
 ### Removed
 
 - Remove the open-only issue-trail mode. `reconcile_issue_trail(mode="open-only")` raises `ValueError`; a later release removes that check ([#212](https://github.com/wangzitian0/infra2-sdk/issues/212)).
+- Remove `infra2_sdk.scaffold` (`main`, `scaffold_service`): the service scaffolder relocated verbatim to infra2 `tools/scaffold.py` (wangzitian0/infra2#1683); the onboarding SOP and the truealpha start-period standard read it there ([#193](https://github.com/wangzitian0/infra2-sdk/issues/193)).
 
 ## 3.29.0 - 2026-11-13
 
