@@ -455,6 +455,7 @@ def reconcile_issue_trail(
     record: StageRecord | None = None,
     history: Sequence[StageRecord] = (),
     runbooks: Mapping[str, str] | None = None,
+    close: bool = True,
 ) -> int:
     env = env or {}
     if not title_prefix or not title_prefix.strip():
@@ -507,8 +508,10 @@ def reconcile_issue_trail(
             failed += 1
             print(f"::error::issue trail: could not record {title!r}: {exc}")
 
-    if record is not None and not (record.ref == _MAIN_REF or record.ref.startswith(_TAG_REFS)):
-        print(f"issue trail: record ref {record.ref!r} is not main or a tag; no issue is closed")
+    if not close or (
+        record is not None and not (record.ref == _MAIN_REF or record.ref.startswith(_TAG_REFS))
+    ):
+        print("issue trail: this run closes no issue")
         return 1 if failed else 0
     for title in sorted(by_title):
         name = check_name(title, title_prefix=title_prefix)

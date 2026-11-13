@@ -674,6 +674,43 @@ def test_feature_branch_record_cannot_close() -> None:
             assert api.comments == [], f"a record of {ref} must not comment on a closed-out issue"
 
 
+def test_close_false_keeps_issues_open_and_still_opens_and_comments() -> None:
+    main_record = _stage_record("tag:v3.1.6", ok=True, ref="refs/heads/main", event="dispatch")
+    tag_record = _stage_record("tag:v3.1.6", ok=True, ref="refs/tags/v3.1.6", event="tag")
+    # A drill is a dispatch on main: its record passes the provenance check, so only `close`
+    # can stop it. Each case is a (trail, record) pair that closes an issue when `close` is True.
+    cases = [
+        (Trail(green={_HOOK_KEY}), None),
+        (Trail(green={_HOOK_KEY}), main_record),
+        (Trail(green={_HOOK_KEY}), tag_record),
+        (Trail(complete=True), None),
+        (Trail(complete=True), main_record),
+    ]
+    for trail, record in cases:
+        kwargs: dict[str, Any] = {"mode": "full", "title_prefix": _HOOK_PREFIX, "record": record}
+        closes = _TrailApi(_HOOK_PREFIX + _HOOK_KEY)
+        assert reconcile_issue_trail(closes, trail, **kwargs) == 0
+        assert closes.closed == [100], "the default close=True must close"
+        keeps = _TrailApi(_HOOK_PREFIX + _HOOK_KEY)
+        assert reconcile_issue_trail(keeps, trail, close=False, **kwargs) == 0
+        assert keeps.closed == [], "close=False must leave the issue open"
+        assert keeps.comments == [], "close=False must not post a close comment"
+
+    red = Trail(failing={_HOOK_KEY: CheckVerdict(_HOOK_KEY, False, "boom")})
+    api = _TrailApi(_HOOK_PREFIX + "other:key")
+    for _ in range(2):  # the first call opens an issue, the second comments on it
+        rc = reconcile_issue_trail(
+            api, red, mode="full", title_prefix=_HOOK_PREFIX, record=main_record, close=False
+        )
+        assert rc == 0
+    assert list(api.issues.values()) == [
+        _HOOK_PREFIX + "other:key",
+        _HOOK_PREFIX + _HOOK_KEY,
+    ]
+    assert [n for n, _ in api.comments] == [101, 101], "red results still open and comment"
+    assert api.closed == []
+
+
 def test_open_only_mode_is_removed() -> None:
     api = _TrailApi(_HOOK_PREFIX + _HOOK_KEY)
     with pytest.raises(ValueError, match="open-only.*removed"):
