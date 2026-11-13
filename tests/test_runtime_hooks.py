@@ -6,6 +6,7 @@ import json
 import subprocess
 import warnings
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -92,7 +93,7 @@ def test_v2_manifest_stage_hook_plans_and_slot_ceilings(tmp_path: Path) -> None:
     with pytest.raises(TypeError):
         SLOT_MAX_TIMEOUT_SECONDS["smoke"] = 999  # type: ignore[index]
     with pytest.raises(TypeError):
-        STAGE_HOOK_PLANS["prod"] = StageHookPlan("prod", (), None, None)  # type: ignore[index]
+        STAGE_HOOK_PLANS["prod"] = StageHookPlan("prod", (), None, None, stage_id="x")  # type: ignore[index]
 
     v2 = RuntimeHooksManifest.from_dict(_sample_v2_manifest_dict())
     assert v2.schema_version == 2
@@ -612,9 +613,11 @@ def test_stage_hook_plan_phases() -> None:
     )
     assert stage_hook_plan("prod").pre_checks == release
     assert stage_hook_plan("preview") == StageHookPlan(
-        "preview", ("contract",), "smoke", "preview_gate"
+        "preview", ("contract",), "smoke", "preview_gate", stage_id="preview.runtime"
     )
-    assert stage_hook_plan("schedule") == StageHookPlan("schedule", (), None, "scheduled_audit")
+    assert stage_hook_plan("schedule") == StageHookPlan(
+        "schedule", (), None, "scheduled_audit", stage_id="staging.provider_regression"
+    )
     with pytest.warns(DeprecationWarning, match="v3.31.0"):
         assert plan.deploy_slot == plan.operation_slot
     with warnings.catch_warnings():
@@ -628,7 +631,7 @@ def test_hook_slot_checks_and_run_are_exclusive() -> None:
         HookSlotSpec(run="echo ok", checks=(check,))
     with pytest.raises(ValueError, match="not both"):
         HookSlotSpec()
-    with pytest.raises(ValueError, match="unique"):
+    with pytest.raises(ValueError, match="duplicate"):
         HookSlotSpec(checks=(check, check))
     with pytest.raises(ValueError, match="argv"):
         CheckSpec("a", ())
@@ -684,17 +687,57 @@ def test_run_hook_slot_runs_each_check_and_records_it(tmp_path: Path) -> None:
     assert "a" not in load_trail(file, expected_sources=["smoke"]).green
 
 
-def test_run_hook_slot_raising_runner_still_writes_the_check_file(tmp_path: Path) -> None:
+@pytest.mark.parametrize("exc", [FileNotFoundError, KeyboardInterrupt])
+def test_run_hook_slot_raising_runner_still_writes_the_check_file(
+    tmp_path: Path, exc: type[BaseException]
+) -> None:
     def boom(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
         if cmd[0] == "b":
-            raise FileNotFoundError("no such binary: b")
+            raise exc("no such binary: b")
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
     m = _checks_manifest(checks=[{"id": "a", "argv": ["a"]}, {"id": "b", "argv": ["b"]}])
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(exc):
         run_hook_slot(
             m, "smoke", app_url="https://x.example.com", cwd=tmp_path, ambient_env={}, runner=boom
         )
     trail = load_trail(tmp_path / ".artifacts/hooks/checks.jsonl", expected_sources=["smoke"])
     assert trail.is_green("a")
     assert "no such binary" in trail.failing["b"].detail
+
+
+def test_checks_of_one_slot_share_one_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = [0.0]
+    timeouts: list[float] = []
+
+    def slow(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        timeouts.append(kw["timeout"])  # type: ignore[arg-type]
+        now[0] += 0.4  # each check needs more than a third of the 1 s slot budget
+        if kw["timeout"] < 0.4:  # type: ignore[operator]
+            raise subprocess.TimeoutExpired(cmd, kw["timeout"])  # type: ignore[arg-type]
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(
+        "infra2_sdk.manifests.time", SimpleNamespace(monotonic=lambda: now[0]), raising=True
+    )
+    m = _checks_manifest(
+        timeout_seconds=1, checks=[{"id": i, "argv": [i]} for i in ("a", "b", "c")]
+    )
+    res = run_hook_slot(m, "smoke", app_url="https://x.example.com", ambient_env={}, runner=slow)
+    assert timeouts == pytest.approx([1.0, 0.6, 0.2])
+    assert (res.status, res.exit_code, res.failed_step) == ("fail", 124, "timeout")
+    assert [(c.name, c.ok) for c in res.checks] == [("a", True), ("b", True), ("c", False)]
+
+
+def test_run_hook_slot_detail_is_the_first_stderr_line_else_stdout() -> None:
+    def make(out: str, err: str):
+        return lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, out, err)
+
+    kw = {"app_url": "https://x.example.com", "ambient_env": {}}
+    m = _checks_manifest(run="x")
+    both = run_hook_slot(
+        m, "smoke", runner=make("collected 10\n.F", "\nAssertionError: boom"), **kw
+    )
+    assert both.checks[0].detail == "AssertionError: boom"
+    only_out = run_hook_slot(m, "smoke", runner=make("only out\nmore", ""), **kw)
+    assert only_out.checks[0].detail == "only out"

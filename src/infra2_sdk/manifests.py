@@ -41,7 +41,7 @@ SLOT_MAX_TIMEOUT_SECONDS: Mapping[str, int] = MappingProxyType(
 )
 
 
-_RELEASE_PRE_CHECKS = ("contract", "provenance", "env", "upstream_post")
+_PRE = ("contract", "provenance", "env", "upstream_post")
 
 
 @dataclass(frozen=True)
@@ -50,23 +50,23 @@ class StageHookPlan:
     pre_checks: tuple[str, ...]
     operation_slot: str | None
     post_slot: str | None
+    stage_id: str = field(kw_only=True)
 
     @property
     def deploy_slot(self) -> str | None:
-        warnings.warn(
-            "StageHookPlan.deploy_slot is removed in v3.31.0; use operation_slot",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        warnings.warn("deploy_slot is removed in v3.31.0", DeprecationWarning, stacklevel=2)
         return self.operation_slot
 
 
 STAGE_HOOK_PLANS: Mapping[str, StageHookPlan] = MappingProxyType(
     {
-        "preview": StageHookPlan("preview", ("contract",), "smoke", "preview_gate"),
-        "staging": StageHookPlan("staging", _RELEASE_PRE_CHECKS, "smoke", "staging_gate"),
-        "prod": StageHookPlan("prod", _RELEASE_PRE_CHECKS, "smoke", "prod_gate"),
-        "schedule": StageHookPlan("schedule", (), None, "scheduled_audit"),
+        name: StageHookPlan(name, pre, op, post, stage_id=sid)
+        for name, pre, op, post, sid in (
+            ("preview", ("contract",), "smoke", "preview_gate", "preview.runtime"),
+            ("staging", _PRE, "smoke", "staging_gate", "staging.release_validation"),
+            ("prod", _PRE, "smoke", "prod_gate", "prod.release_integrity"),
+            ("schedule", (), None, "scheduled_audit", "staging.provider_regression"),
+        )
     }
 )
 
@@ -142,18 +142,14 @@ class CheckSpec:
     argv: tuple[str, ...]
 
     def __post_init__(self) -> None:
-        if not isinstance(self.id, str) or not self.id.strip():
-            raise ValueError("hook check 'id' must be a non-empty string")
-        if not isinstance(self.argv, (list, tuple)) or not self.argv:
-            raise ValueError(f"hook check {self.id!r} 'argv' must be a non-empty list")
-        if any(not isinstance(a, str) or not a for a in self.argv):
-            raise ValueError(f"hook check {self.id!r} 'argv' must hold non-empty strings")
-        object.__setattr__(self, "argv", tuple(self.argv))
+        a = self.argv
+        argv_ok = isinstance(a, (list, tuple)) and a and all(isinstance(x, str) and x for x in a)
+        if not (isinstance(self.id, str) and self.id.strip() and argv_ok):
+            raise ValueError(f"hook check {self.id!r} needs an id and a non-empty argv of strings")
+        object.__setattr__(self, "argv", tuple(a))
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> CheckSpec:
-        if not isinstance(data, Mapping):
-            raise ValueError("hook check must be a JSON object")
         reject_unknown(data, {"id", "argv"}, "hook check")
         return cls(data.get("id", ""), data.get("argv", ()))
 
@@ -171,13 +167,9 @@ class HookSlotSpec:
 
     def __post_init__(self) -> None:
         if not isinstance(self.run, str) or bool(self.run.strip()) == bool(self.checks):
-            raise ValueError("hook slot needs 'run' as a non-empty string or 'checks', not both")
-        checks = tuple(
-            c if isinstance(c, CheckSpec) else CheckSpec.from_dict(c) for c in self.checks
-        )
-        if len({c.id for c in checks}) != len(checks):
-            raise ValueError("hook slot 'checks' ids must be unique")
-        object.__setattr__(self, "checks", checks)
+            raise ValueError("hook slot needs a non-empty 'run' or 'checks', not both")
+        if len({c.id for c in self.checks}) != len(self.checks):
+            raise ValueError("duplicate hook check id")
         if not isinstance(self.bootstrap, str):
             raise ValueError("hook slot 'bootstrap' must be a string")
         if (
@@ -216,7 +208,7 @@ class HookSlotSpec:
         if self.checkout_lineage:
             out["checkout_lineage"] = True
         if self.checks:
-            out["checks"] = [{"id": c.id, "argv": list(c.argv)} for c in self.checks]
+            out["checks"] = [asdict(c) for c in self.checks]
         return out
 
     @classmethod
@@ -224,7 +216,8 @@ class HookSlotSpec:
         if not isinstance(data, Mapping):
             raise ValueError("hook slot spec must be a JSON object")
         reject_unknown(data, _HOOK_SLOT_FIELDS, "hook slot")
-        return cls(**data)
+        checks = tuple(CheckSpec.from_dict(c) for c in data.get("checks", ()))
+        return cls(**{**data, "checks": checks})
 
 
 def _check_slot_keys(slots: Mapping[str, Any], *, schema_version: int) -> None:
@@ -325,7 +318,7 @@ class HookRunResult:
     failed_step: str = ""
     summary: str = ""
     stderr_tail: str = ""
-    checks: tuple[CheckVerdict, ...] = ()
+    checks: tuple[CheckVerdict, ...] = field(default=(), kw_only=True)
 
     def __post_init__(self) -> None:
         if self.status not in ("pass", "fail"):
@@ -426,7 +419,7 @@ def run_hook_slot(
 
     def finish(st: str, code: int, fstep: str, summary: str, tail: str = "") -> HookRunResult:
         if st == "fail" and all(c.ok for c in done):
-            done.append(CheckVerdict(slot, False, summary))
+            bad(slot, summary, start)
         res = HookRunResult(
             manifest.service,
             slot,
@@ -439,7 +432,7 @@ def run_hook_slot(
             fstep,
             summary,
             tail,
-            tuple(done),
+            checks=tuple(done),
         )
         flush()
         if result_path is not None:
@@ -462,6 +455,7 @@ def run_hook_slot(
     except ValueError as err:
         return finish("fail", 2, "env", str(err), str(err))
 
+    end = time.monotonic() + spec.timeout_seconds
     steps = [(c.id, list(c.argv)) for c in spec.checks] or [(slot, ["sh", "-lc", spec.run])]
     if spec.bootstrap.strip():
         steps.insert(0, ("", ["sh", "-lc", spec.bootstrap]))
@@ -475,7 +469,7 @@ def run_hook_slot(
                 cwd=cwd,
                 capture_output=True,
                 text=True,
-                timeout=spec.timeout_seconds,
+                timeout=max(end - time.monotonic(), 0.001),
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
@@ -484,17 +478,15 @@ def run_hook_slot(
             return finish(
                 "fail", 124, "timeout", msg, _format_hook_output_tail(exc.stdout, exc.stderr, msg)
             )
-        except Exception as exc:
+        except BaseException as exc:
             bad(check_id, scrub(str(exc), clean_env), t0)
             flush()
             raise
         if proc.returncode != 0:
             msg = f"{step_name} exited with code {proc.returncode}"
             tail = _format_hook_output_tail(proc.stdout, proc.stderr, msg)
-            first = next(
-                (ln for ln in tail.splitlines() if ln.strip() and not ln.startswith("--- std")), msg
-            )
-            bad(check_id, scrub(first.strip(), clean_env), t0)
+            first = (proc.stderr or "").strip() or (proc.stdout or "").strip() or msg
+            bad(check_id, scrub(first.splitlines()[0], clean_env), t0)
             return finish("fail", proc.returncode, step_name, msg, tail)
         if check_id:
             done.append(CheckVerdict(check_id, True, seconds=time.monotonic() - t0))
