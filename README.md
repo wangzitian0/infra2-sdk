@@ -51,7 +51,6 @@ python -m pip install \
 | `infra2_sdk.runtime.otel` | Explicit OTLP provider bootstrap, probe span suppression, and env-configured samplers |
 | `infra2_sdk.runtime.postgres` | `PostgresSettings`, credential redaction, and psycopg reachability/write probe (`probe_postgres`) |
 | `infra2_sdk.runtime.s3` | Standard boto3 S3 client, probe, and safe bucket/object primitives (`put_object_bytes`, `read_object_bytes`) |
-| `infra2_sdk.scaffold` | Zero-compromise scaffolding engine producing compose, deployer, and entrypoint assets; CLI at `python -m infra2_sdk.scaffold` |
 | `infra2_sdk.secrets` | Secret-store adapters (Vault KV, 1Password), manifest-driven `SecretsResolver`, Vault template renderers, and AppRole policy naming |
 | `infra2_sdk.transport` | Minimal injectable HTTP transport (`HttpTransport`, `urllib_transport`) |
 
@@ -287,27 +286,7 @@ With `strict_otel=False`, a telemetry problem never stops the service. A missing
 
 Before OpenTelemetry attaches its logging handler, `init_service` calls `logging.basicConfig(level=log_level)` (default `INFO`). The call changes nothing when the root logger already has a handler. Pass `log_level=None` to skip it. The SDK serves no `/metrics` endpoint.
 
-## Microservice scaffolder
 
-Generate standard microservice skeletons with a single command:
-
-```bash
-# Generate pure 12-factor standalone service (.env, compose without Vault)
-python -m infra2_sdk.scaffold my-service --profile standalone --db postgres --port 8000
-
-# Or generate Dokploy/Vault sidecar service for the infra2 cluster
-python -m infra2_sdk.scaffold my-service --profile infra2 --project apps --db postgres --port 8000
-```
-
-Generated assets include:
-- `compose.yaml`: Hardened Docker Compose declaration with explicit memory ceilings and health check intervals.
-- `app.py`: FastAPI application with `init_service` and database probe wiring.
-- `entrypoint.sh`: Container bootstrap script applying migrations safely.
-- `requirements.txt`: Curated dependencies with exact runtime extras (`infra2-sdk[fastapi,otel,postgres]`). The `infra2-sdk` lower bound is the `major.minor.patch` release of the SDK that generated the file.
-- `Dockerfile`: Minimal container image recipe.
-- `.env.example` (in standalone profile) or `deploy.py` and the Vault assets (in infra2 profile): `secrets.ctmpl` and `vault-policy.hcl` are rendered by `infra2_sdk.secrets` from one manifest, `vault-agent.hcl` configures the sidecar.
-
-The generated `app.py` of a project with a database reads `DATABASE_URL`. It stops at import with `RuntimeError: DATABASE_URL is required` when the variable is unset, empty or blank. The generated compose file passes an empty string when the shell sets none.
 
 ## Environment contract
 

@@ -53,8 +53,7 @@
     "vault_token_status": "consumer: infra2",
     "HttpTransport": "consumer: infra2, truealpha",
     "urllib_transport": "consumer: infra2",
-    "fastapi": "consumer: infra2",
-    "scaffold": "documented: README section Modules"
+    "fastapi": "consumer: infra2"
   },
   "infra2_sdk.runtime": {
     "config_schema": "consumer: finance_report, infra2, truealpha",

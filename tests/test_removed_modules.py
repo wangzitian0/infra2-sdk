@@ -29,17 +29,18 @@ EXPECTED_REMOVED_MODULES = frozenset(
         "infra2_sdk.runtime.probes",
         "infra2_sdk.snapshot",
         "infra2_sdk.delivery",
+        "infra2_sdk.scaffold",
     }
 )
 
 
-def test_removed_module_list_has_ten_unique_names() -> None:
-    assert len(REMOVED_MODULES) == 10
-    assert len(set(REMOVED_MODULES)) == 10
+def test_removed_module_list_has_eleven_unique_names() -> None:
+    assert len(REMOVED_MODULES) == 11
+    assert len(set(REMOVED_MODULES)) == 11
 
 
 def test_removed_module_list_equals_the_independent_literal_set() -> None:
-    assert len(EXPECTED_REMOVED_MODULES) == 10
+    assert len(EXPECTED_REMOVED_MODULES) == 11
     assert set(REMOVED_MODULES) == EXPECTED_REMOVED_MODULES
 
 

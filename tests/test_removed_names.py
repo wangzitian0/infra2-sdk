@@ -343,7 +343,7 @@ def test_removed_environment_name_is_not_in_the_contract(name: str) -> None:
 @pytest.mark.parametrize(
     ("smoke", "attribute", "expected"),
     [
-        ("smoke_package_data", "REMOVED_MODULES", 10),
+        ("smoke_package_data", "REMOVED_MODULES", 11),
         ("smoke_removed_names", "REMOVED_NAMES", 57),
         ("smoke_removed_names", "REMOVED_ENV_MEMBERS", 21),
         ("smoke_removed_names", "REMOVED_ENV_NAMES", 29),

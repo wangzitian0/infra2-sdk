@@ -19,7 +19,6 @@ from infra2_sdk import (
     routing,
     rules,
     runtime,
-    scaffold,
     secrets,
     transport,
 )
@@ -127,5 +126,4 @@ __all__ = [
     "HttpTransport",
     "urllib_transport",
     "fastapi",
-    "scaffold",
 ]
