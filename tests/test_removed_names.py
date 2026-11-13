@@ -87,6 +87,10 @@ EXPECTED_REMOVED_NAMES = frozenset(
         "infra2_sdk.observability:PeerVerdict",
         "infra2_sdk.runtime.http:create_http_client",
         "infra2_sdk.runtime.postgres:normalize_postgres_dsn",
+        "infra2_sdk.observability:_OPEN_ONLY",
+        "infra2_sdk.observability:_BOUND_CAP_ENV",
+        "infra2_sdk.observability:_GH_EVENT_NAME_KEY",
+        "infra2_sdk.observability:_GH_REF_KEY",
     ]
 )
 EXPECTED_REMOVED_ENV_MEMBERS = frozenset(
@@ -163,7 +167,7 @@ _LIVE_OWNER = [pair for pair in REMOVED_NAMES if pair[0] not in REMOVED_MODULES]
 
 
 def test_removed_name_lists_have_unique_entries() -> None:
-    assert len(REMOVED_NAMES) == len(set(REMOVED_NAMES)) == 53
+    assert len(REMOVED_NAMES) == len(set(REMOVED_NAMES)) == 57
     assert len(REMOVED_ENV_MEMBERS) == len(set(REMOVED_ENV_MEMBERS)) == 21
     assert len(REMOVED_ENV_NAMES) == len(set(REMOVED_ENV_NAMES)) == 29
 
@@ -302,7 +306,7 @@ def test_the_stale_reuse_check_reports_each_kind_of_problem() -> None:
 def test_the_removed_simple_names_are_the_undotted_entries() -> None:
     assert _REMOVED_SIMPLE_NAMES, "no removed simple name: the module check would check nothing"
     assert all("." not in name for name in _REMOVED_SIMPLE_NAMES)
-    assert len(_REMOVED_SIMPLE_NAMES) == 50
+    assert len(_REMOVED_SIMPLE_NAMES) == 54
 
 
 def _strings(value: object):
@@ -340,7 +344,7 @@ def test_removed_environment_name_is_not_in_the_contract(name: str) -> None:
     ("smoke", "attribute", "expected"),
     [
         ("smoke_package_data", "REMOVED_MODULES", 10),
-        ("smoke_removed_names", "REMOVED_NAMES", 53),
+        ("smoke_removed_names", "REMOVED_NAMES", 57),
         ("smoke_removed_names", "REMOVED_ENV_MEMBERS", 21),
         ("smoke_removed_names", "REMOVED_ENV_NAMES", 29),
     ],

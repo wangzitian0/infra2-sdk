@@ -83,6 +83,7 @@ from infra2_sdk.secrets import (
     normalize_selector,
     policy_name,
 )
+from infra2_sdk.stage_record import StageRecord
 
 
 def test_short_sha_and_manifest_accept() -> None:
@@ -550,6 +551,148 @@ def test_reconcile_issue_trail_multi_actor_interleaving() -> None:
     assert "Closed by the app runtime hook issue trail" in hook_close_comment
 
 
+_HOOK_PREFIX = "app-hook is red: "
+_HOOK_KEY = "svc:smoke:staging"
+
+
+class _TrailApi:
+    """A fake IssueApi: `open_issues` lists the numbers that `close` has not closed."""
+
+    def __init__(self, *titles: str) -> None:
+        self.issues = {100 + i: t for i, t in enumerate(titles)}
+        self.comments: list[tuple[int, str]] = []
+        self.closed: list[int] = []
+
+    def open_issues(self) -> list[dict[str, Any]]:
+        return [{"number": n, "title": t} for n, t in self.issues.items() if n not in self.closed]
+
+    def create(self, title: str, body: str, labels: Sequence[str]) -> int:
+        num = 100 + len(self.issues)
+        self.issues[num] = title
+        self.comments.append((num, body))
+        return num
+
+    def comment(self, number: int, body: str) -> None:
+        self.comments.append((number, body))
+
+    def close(self, number: int) -> None:
+        self.closed.append(number)
+
+
+def _stage_record(
+    subject: str, *, ok: bool, ref: str, event: str, key: str = _HOOK_KEY
+) -> StageRecord:
+    return StageRecord(
+        env="staging.release_validation",
+        phase="post",
+        subject=subject,
+        ref=ref,
+        event=event,
+        run_url=f"https://github.com/o/r/actions/runs/{subject.rpartition('.')[2]}",
+        started_at="2026-11-12T03:10:13Z",
+        finished_at="2026-11-12T03:11:47Z",
+        checks=(CheckVerdict(key, ok, seconds=2.0), CheckVerdict("other", True, seconds=1.0)),
+    )
+
+
+def test_red_body_carries_context() -> None:
+    tag, main = "refs/tags/v3.1.4", "refs/heads/main"
+    history = [
+        _stage_record("tag:v3.1.1", ok=False, ref=main, event="schedule"),
+        _stage_record("tag:v3.1.2", ok=True, ref=main, event="schedule"),
+        _stage_record("tag:v3.1.3", ok=False, ref=main, event="schedule"),
+        _stage_record("tag:v3.1.4", ok=False, ref=tag, event="tag"),
+    ]
+    red = Trail(failing={_HOOK_KEY: CheckVerdict(_HOOK_KEY, False, "boom", "high", "app")})
+    api = _TrailApi()
+    rc = reconcile_issue_trail(
+        api,
+        red,
+        mode="full",
+        run_url="https://github.com/o/r/actions/runs/99",
+        title_prefix=_HOOK_PREFIX,
+        record=history[-1],
+        history=history,
+        runbooks={_HOOK_KEY: "https://example.test/runbook/smoke"},
+    )
+    assert rc == 0
+    lines = api.comments[0][1].splitlines()
+    assert "- Run: https://github.com/o/r/actions/runs/99" in lines
+    assert "- Env: staging.release_validation" in lines
+    assert "- Subject: tag:v3.1.4" in lines
+    assert "- Record: https://github.com/o/r/actions/runs/4" in lines  # not the run URL above
+    # The newest three verdicts of the key, oldest first: the first record is dropped.
+    assert "- Last verdicts: green tag:v3.1.2, red tag:v3.1.3, red tag:v3.1.4" in lines
+    assert "- Runbook: https://example.test/runbook/smoke" in lines
+    assert "- Detail: boom" in lines
+
+    bare = _TrailApi()
+    reconcile_issue_trail(bare, red, mode="full", title_prefix=_HOOK_PREFIX)
+    lines = bare.comments[0][1].splitlines()
+    for label in ("Env", "Subject", "Record", "Last verdicts", "Runbook"):
+        assert f"- {label}: (none)" in lines, label
+
+
+def test_green_record_closes_issue_for_every_event_type() -> None:
+    cases = [  # (record event, record ref, GITHUB_EVENT_NAME of the run)
+        ("tag", "refs/tags/v3.1.5", "push"),
+        ("schedule", "refs/heads/main", "schedule"),
+        ("dispatch", "refs/heads/main", "workflow_dispatch"),
+    ]
+    for event, ref, github_event in cases:
+        record = _stage_record("tag:v3.1.5", ok=True, ref=ref, event=event)
+        env = {"GITHUB_EVENT_NAME": github_event, "GITHUB_REF": ref}
+        api = _TrailApi(_HOOK_PREFIX + _HOOK_KEY, _HOOK_PREFIX + "other:key")
+        rc = reconcile_issue_trail(
+            api,
+            Trail(green={_HOOK_KEY}),
+            mode=issue_trail_mode(env),
+            env=env,
+            title_prefix=_HOOK_PREFIX,
+            record=record,
+            history=[record],
+        )
+        assert rc == 0, event
+        assert api.closed == [100], f"a green {event} record must close the issue of its key"
+        assert "is green again" in api.comments[0][1], event
+
+
+def test_feature_branch_record_cannot_close() -> None:
+    for ref, event in [
+        ("refs/heads/feat/x", "dispatch"),
+        ("refs/pull/9/merge", "pull_request"),
+        ("main", "dispatch"),
+    ]:
+        record = _stage_record("sha:" + "a" * 40, ok=True, ref=ref, event=event)
+        for trail in (Trail(green={_HOOK_KEY}), Trail(complete=True)):  # green, then retired
+            api = _TrailApi(_HOOK_PREFIX + _HOOK_KEY)
+            rc = reconcile_issue_trail(
+                api, trail, mode="full", title_prefix=_HOOK_PREFIX, record=record
+            )
+            assert rc == 0
+            assert api.closed == [], f"a record of {ref} must not close an issue"
+            assert api.comments == [], f"a record of {ref} must not comment on a closed-out issue"
+
+
+def test_open_only_mode_is_removed() -> None:
+    api = _TrailApi(_HOOK_PREFIX + _HOOK_KEY)
+    with pytest.raises(ValueError, match="open-only.*removed"):
+        reconcile_issue_trail(api, Trail(green={_HOOK_KEY}), mode="open-only")
+    assert api.closed == []
+    assert reconcile_issue_trail(api, Trail(), mode="unknown") == 1
+    # The mode does not read the event name, the ref or the bound cap: only a dry run or an SSH
+    # override turns the trail off.
+    for env in (
+        {},
+        {"GITHUB_EVENT_NAME": "push"},
+        {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/feat"},
+        {"GITHUB_EVENT_NAME": "schedule", "INFRA2_PEER_LIVENESS_BOUND_CAP_HOURS": "2"},
+    ):
+        assert issue_trail_mode(env) == "full", env
+    assert issue_trail_mode({"WATCHDOG_DRY_RUN": "1"}) == "off"
+    assert issue_trail_mode({"INFRA2_WATCHDOG_SSH_TARGETS_OVERRIDDEN": "1"}) == "off"
+
+
 def test_secrets_vault_token_target_and_policy_name() -> None:
     target = VaultTokenTarget(
         project="apps",
@@ -931,19 +1074,6 @@ def test_observability_github_and_trail_branches(
     assert "iac-runner-health" in loaded.failing
 
     assert issue_trail_mode({"WATCHDOG_DRY_RUN": "1"}) == "off"
-    assert issue_trail_mode({"GITHUB_EVENT_NAME": "push"}) == "off"
-    assert (
-        issue_trail_mode(
-            {"GITHUB_EVENT_NAME": "schedule", "INFRA2_PEER_LIVENESS_BOUND_CAP_HOURS": "2"}
-        )
-        == "open-only"
-    )
-    assert (
-        issue_trail_mode(
-            {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/feat"}
-        )
-        == "open-only"
-    )
 
     calls: list[tuple[str, str]] = []
 
@@ -1014,7 +1144,6 @@ def test_observability_github_and_trail_branches(
             pass
 
     assert reconcile_issue_trail(_FakeIssueApi(), trail_run, mode="full", run_url="https://x") == 0
-    assert reconcile_issue_trail(_FakeIssueApi(), trail_run, mode="open-only") == 0
 
 
 def test_issue154_function_placement_ssot_invariants() -> None:
