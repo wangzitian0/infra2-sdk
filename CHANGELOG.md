@@ -6,6 +6,16 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+### Changed
+
+- `issue_trail_mode` returns `full` or `off`. Only `WATCHDOG_DRY_RUN` and `INFRA2_WATCHDOG_SSH_TARGETS_OVERRIDDEN` select `off`. It no longer reads `GITHUB_EVENT_NAME`, `GITHUB_REF` or the bound-cap variable, so a push, a pull request and a branch dispatch now give `full` ([#212](https://github.com/wangzitian0/infra2-sdk/issues/212)).
+- `reconcile_issue_trail` takes the keyword-only parameters `record` (a `StageRecord`), `history` (validated records, oldest first) and `runbooks` (check name to URL). The close loop always runs. A `record` whose `ref` is not `refs/heads/main` or `refs/tags/*` closes no issue. A call without `record` keeps the old behavior. The keyword-only `close` (default `True`) set to `False` keeps every issue open while the call still opens and comments: a caller passes `False` for a drill, a branch dispatch, a pull-request run or a local run ([#212](https://github.com/wangzitian0/infra2-sdk/issues/212)).
+- The red issue body adds the lines Env, Subject, Record, Last verdicts (the newest three verdicts of the check) and Runbook. A missing value prints `(none)` ([#212](https://github.com/wangzitian0/infra2-sdk/issues/212)).
+
+### Removed
+
+- Remove the open-only issue-trail mode. `reconcile_issue_trail(mode="open-only")` raises `ValueError`; a later release removes that check ([#212](https://github.com/wangzitian0/infra2-sdk/issues/212)).
+
 ## 3.29.0 - 2026-11-13
 
 ### Added

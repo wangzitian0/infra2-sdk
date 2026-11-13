@@ -80,13 +80,7 @@ DYNAMIC_READS: dict[tuple[str, str], frozenset[str]] = {
     ("ci.py", "write_github_output"): frozenset({"GITHUB_OUTPUT"}),
     ("deploy.py", "_default_github_json_fetcher"): frozenset({"GITHUB_TOKEN"}),
     ("observability.py", "issue_trail_mode"): frozenset(
-        {
-            "GITHUB_EVENT_NAME",
-            "GITHUB_REF",
-            "INFRA2_PEER_LIVENESS_BOUND_CAP_HOURS",
-            "INFRA2_WATCHDOG_SSH_TARGETS_OVERRIDDEN",
-            "WATCHDOG_DRY_RUN",
-        }
+        {"INFRA2_WATCHDOG_SSH_TARGETS_OVERRIDDEN", "WATCHDOG_DRY_RUN"}
     ),
     ("observability.py", "resolve_openpanel_api_url"): frozenset({"OPENPANEL_API_URL"}),
     ("observability.py", "resolve_openpanel_api_key"): frozenset({"OPENPANEL_API_KEY"}),
@@ -483,7 +477,7 @@ def test_dynamic_environment_read_sites_are_locked_in_dynamic_reads() -> None:
             actual[(relative, fn)] = names
     assert actual == DYNAMIC_READS
     all_dynamic_names = {name for names in actual.values() for name in names}
-    assert len(all_dynamic_names) == 9
+    assert len(all_dynamic_names) == 6
     assert not (all_dynamic_names & set(REMOVED_ENV_NAMES))
 
 

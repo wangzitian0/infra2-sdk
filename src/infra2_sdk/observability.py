@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import urlopen
@@ -22,6 +22,9 @@ from infra2_sdk.transport import (
     _github_json_fetcher,
     _urlopen_json,
 )
+
+if TYPE_CHECKING:
+    from infra2_sdk.stage_record import StageRecord
 
 
 def is_recently_flapping(
@@ -75,7 +78,6 @@ def evaluate_consecutive_hysteresis(
     return "resolve"
 
 
-_BOUND_CAP_ENV = "_".join(("INFRA2", "PEER", "LIVENESS", "BOUND", "CAP", "HOURS"))
 MISSED_TICKS_TOLERATED = 2
 DELAY_ALLOWANCE = timedelta(hours=1)
 _STARTED = ("in_progress", "completed")
@@ -139,10 +141,9 @@ _TITLE_PREFIX = "ops-checks watchdog is red: "
 _ISSUE_LABELS = ("incident",)
 _SSH_OVERRIDE_ENV = "_".join(("INFRA2", "WATCHDOG", "SSH", "TARGETS", "OVERRIDDEN"))
 _DRY_RUN_ENV = "_".join(("WATCHDOG", "DRY", "RUN"))
-_GH_EVENT_NAME_KEY = "_".join(("GITHUB", "EVENT", "NAME"))
-_GH_REF_KEY = "_".join(("GITHUB", "REF"))
 _EXPECTED_SOURCES = ("out-of-band-watchdog", "iac-runner-health")
-_FULL, _OPEN_ONLY, _OFF = "full", "open-only", "off"
+_FULL, _OFF = "full", "off"
+_MAIN_REF, _TAG_REFS = "refs/heads/main", "refs/tags/"
 _PER_PAGE, _MAX_PAGES, _MAX_DETAIL_CHARS, _MIN_SCRUBBED_VALUE = 100, 10, 1000, 4
 _SECRET_ENV_NAME = re.compile(
     r"^(?:INFRA2_|DOKPLOY_|CF_|FEISHU_|OP_|VAULT_)\w*"
@@ -283,14 +284,7 @@ def load_trail(path: str | Path, expected_sources: Iterable[str] = _EXPECTED_SOU
 
 
 def issue_trail_mode(env: Mapping[str, str]) -> str:
-    if env.get(_DRY_RUN_ENV) == "1" or env.get(_SSH_OVERRIDE_ENV) == "1":
-        return _OFF
-    ev = env.get(_GH_EVENT_NAME_KEY, "")
-    if ev not in ("schedule", "workflow_dispatch"):
-        return _OFF
-    if (env.get(_BOUND_CAP_ENV) or "").strip():
-        return _OPEN_ONLY
-    return _FULL if ev == "schedule" or env.get(_GH_REF_KEY) == "refs/heads/main" else _OPEN_ONLY
+    return _OFF if env.get(_DRY_RUN_ENV) == "1" or env.get(_SSH_OVERRIDE_ENV) == "1" else _FULL
 
 
 class ListingFailed(RuntimeError):
@@ -398,14 +392,29 @@ def _red_body(
     context: str,
     env: Mapping[str, str],
     source: str = "ops-checks watchdog",
+    record: StageRecord | None = None,
+    history: Sequence[StageRecord] = (),
+    runbook: str = "",
 ) -> str:
     lbls = " ".join(p for p in (verdict.severity, verdict.failure_domain) if p)
+    stage, subject, url = (record.env, record.subject, record.run_url) if record else ("",) * 3
+    last = [
+        f"{'green' if c.ok else 'red'} {r.subject}"
+        for r in history
+        for c in r.checks
+        if c.name == name
+    ]
     return "\n".join(
         [
             f"**`{name}` is red** in the {source}" + (f" ({lbls})" if lbls else ""),
             "",
             f"- Run: {run_url or '(no run URL)'}",
             f"- Run kind: {context}",
+            f"- Env: {stage or '(none)'}",
+            f"- Subject: {subject or '(none)'}",
+            f"- Record: {url or '(none)'}",
+            f"- Last verdicts: {', '.join(last[-3:]) or '(none)'}",
+            f"- Runbook: {runbook or '(none)'}",
             f"- Detail: {scrub(verdict.detail, env) or '(none)'}",
             "",
             f"Recorded by the {source} issue trail (`tools/watchdog_issue_trail.py`, "
@@ -443,11 +452,17 @@ def reconcile_issue_trail(
     title_prefix: str = _TITLE_PREFIX,
     labels: Iterable[str] = _ISSUE_LABELS,
     source: str = "ops-checks watchdog",
+    record: StageRecord | None = None,
+    history: Sequence[StageRecord] = (),
+    runbooks: Mapping[str, str] | None = None,
+    close: bool = True,
 ) -> int:
     env = env or {}
     if not title_prefix or not title_prefix.strip():
         raise ValueError("title_prefix must not be empty or whitespace")
-    if mode not in (_FULL, _OPEN_ONLY, _OFF):
+    if mode not in (_FULL, _OFF):
+        if mode == "open-only":
+            raise ValueError("issue-trail mode 'open-only' was removed; pass 'full' or 'off'")
         print(f"::error::unknown issue-trail mode {mode!r}")
         return 1
     if mode == _OFF:
@@ -470,7 +485,15 @@ def reconcile_issue_trail(
     for name in sorted(trail.failing):
         title = title_for(name, title_prefix=title_prefix)
         body = _red_body(
-            name, trail.failing[name], run_url=run_url, context=context, env=env, source=source
+            name,
+            trail.failing[name],
+            run_url=run_url,
+            context=context,
+            env=env,
+            source=source,
+            record=record,
+            history=history,
+            runbook=(runbooks or {}).get(name, ""),
         )
         existing = by_title.get(title)
         try:
@@ -485,27 +508,29 @@ def reconcile_issue_trail(
             failed += 1
             print(f"::error::issue trail: could not record {title!r}: {exc}")
 
-    if mode == _FULL:
-        for title in sorted(by_title):
-            name = check_name(title, title_prefix=title_prefix)
-            if name is None:
-                continue
-            if trail.is_green(name):
-                body = _green_body(name, run_url=run_url, context=context, source=source)
-            elif trail.is_retired(name):
-                body = _retired_body(name, run_url=run_url, context=context, source=source)
-            else:
-                continue
-            for num in by_title[title]:
-                try:
-                    api.comment(num, body)
-                    api.close(num)
-                    print(f"issue trail: closed #{num} ({title})")
-                except WriteFailed as exc:
-                    failed += 1
-                    print(f"::error::issue trail: could not close #{num}: {exc}")
-    else:
-        print("issue trail: open-only run; no issue is closed")
+    if not close or (
+        record is not None and not (record.ref == _MAIN_REF or record.ref.startswith(_TAG_REFS))
+    ):
+        print("issue trail: this run closes no issue")
+        return 1 if failed else 0
+    for title in sorted(by_title):
+        name = check_name(title, title_prefix=title_prefix)
+        if name is None:
+            continue
+        if trail.is_green(name):
+            body = _green_body(name, run_url=run_url, context=context, source=source)
+        elif trail.is_retired(name):
+            body = _retired_body(name, run_url=run_url, context=context, source=source)
+        else:
+            continue
+        for num in by_title[title]:
+            try:
+                api.comment(num, body)
+                api.close(num)
+                print(f"issue trail: closed #{num} ({title})")
+            except WriteFailed as exc:
+                failed += 1
+                print(f"::error::issue trail: could not close #{num}: {exc}")
     return 1 if failed else 0
 
 

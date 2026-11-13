@@ -91,6 +91,11 @@ REMOVED_NAMES = (
     ("infra2_sdk.observability", "PeerVerdict"),
     ("infra2_sdk.runtime.http", "create_http_client"),
     ("infra2_sdk.runtime.postgres", "normalize_postgres_dsn"),
+    # The open-only issue-trail mode and the environment reads that selected it (#212).
+    ("infra2_sdk.observability", "_OPEN_ONLY"),
+    ("infra2_sdk.observability", "_BOUND_CAP_ENV"),
+    ("infra2_sdk.observability", "_GH_EVENT_NAME_KEY"),
+    ("infra2_sdk.observability", "_GH_REF_KEY"),
 )
 
 # RuntimeEnvKey members removed in 3.4.0 (issue #102, decision 2) and 3.8.2 (#126).
@@ -211,9 +216,9 @@ def smoke_removed_names() -> None:
     import infra2_sdk.runtime
     from infra2_sdk.runtime.environment import RuntimeEnvKey, runtime_env_contract
 
-    assert len(REMOVED_NAMES) == 53 and len(set(REMOVED_NAMES)) == 53, (
+    assert len(REMOVED_NAMES) == 57 and len(set(REMOVED_NAMES)) == 57, (
         f"REMOVED_NAMES has {len(REMOVED_NAMES)} entries ({len(set(REMOVED_NAMES))} unique), "
-        "expected 53"
+        "expected 57"
     )
     for module, dotted in REMOVED_NAMES:
         *parents, leaf = dotted.split(".")
