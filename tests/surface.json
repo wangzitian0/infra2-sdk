@@ -25,8 +25,8 @@
     "CURRENT_HOOKS_SCHEMA_VERSION": "consumer: finance_report",
     "HOOK_SLOTS": "consumer: finance_report, infra2",
     "STAGE_HOOK_PLANS": "consumer: infra2",
-    "CheckSpec": "consumer: finance_report, infra2, truealpha",
-    "StageRecord": "consumer: infra2",
+    "CheckSpec": "documented: README section Modules",
+    "StageRecord": "documented: README section Modules",
     "HookRunResult": "consumer: infra2",
     "HookSlotSpec": "consumer: infra2",
     "ManifestSpec": "consumer: truealpha",
@@ -53,8 +53,7 @@
     "vault_token_status": "consumer: infra2",
     "HttpTransport": "consumer: infra2, truealpha",
     "urllib_transport": "consumer: infra2",
-    "fastapi": "consumer: infra2",
-    "scaffold": "documented: README section Modules"
+    "fastapi": "consumer: infra2"
   },
   "infra2_sdk.runtime": {
     "config_schema": "consumer: finance_report, infra2, truealpha",

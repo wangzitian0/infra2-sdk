@@ -27,7 +27,7 @@ Across 170+ issues and 45 releases (`v0.1.0` through `v3.23.0`), consumer requir
 ### P2 — One Source per Fact and the Manifest v2 Supply Chain (`#16`, `#38`, `#115`, `#137`)
 
 - Every environment variable in an application manifest (`EnvironmentManifest`) declares one `source` class (`bootstrap`, `human`, `runtime`, `release`, `decision`, `code`). The source class defines who produces the value, where truth lives, and how the value reaches the container (`#16`, `#38`).
-- Shared cross-repository mechanisms (`capacity`, `ci`, `deploy`, `fastapi`, `manifests`, `observability`, `refs`, `routing`, `rules`, `runtime`, `scaffold`, `secrets`, `transport`) live in `infra2-sdk` (`v3.7.0`, `#115`). Extracting these modules from `infra2` and consumer applications ensures that all repositories share one tested implementation.
+- Shared cross-repository mechanisms (`capacity`, `ci`, `deploy`, `fastapi`, `manifests`, `observability`, `refs`, `routing`, `rules`, `runtime`, `secrets`, `transport`) live in `infra2-sdk` (`v3.7.0`, `#115`). Extracting these modules from `infra2` and consumer applications ensures that all repositories share one tested implementation.
 - `LlmSettings` (`src/infra2_sdk/runtime/llm.py`, `#137`) owns default models and reasoning efforts across three capability roles (`large`, `small`, `multimodal`). Consumer applications map per-role environment overrides (`LLM_LARGE_MODELS`, `LLM_SMALL_MODELS`, `LLM_MULTIMODAL_MODELS`) onto this single contract.
 
 ### P3 — 100% Consumer-Reachable Public Surface (`#102`, `#108`, `#121`, `#126`)
@@ -84,7 +84,6 @@ Application processes import these modules directly at runtime:
 | `infra2_sdk.routing` | Canonical domain and routing SSOT (`CANARY_SLOT`, `PreviewStackCoordinates`, hostname and service URL resolution) |
 | `infra2_sdk.rules.compose` | Pure Docker Compose file rules (`inspect_compose`) enforcing memory ceilings and rejecting bare `:latest` image references |
 | `infra2_sdk.rules.imports` | Pure AST import-boundary and dependency-cycle validators (`LayerRule`, `ImportViolation`, `check_import_boundaries`, `find_dependency_cycle`) |
-| `infra2_sdk.scaffold` | Microservice scaffolding engine (`python -m infra2_sdk.scaffold`) for `standalone` and `infra2` profiles |
 | `infra2_sdk.secrets` | Vault KV v2 and 1Password CLI adapters, manifest-driven `SecretsResolver`, and Vault Agent template/policy renderers |
 
 ## 3. Relationship Between init.md, AGENTS.md, README.md, and CONTRIBUTING.md

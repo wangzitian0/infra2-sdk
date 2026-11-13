@@ -35,7 +35,6 @@ def test_infra2_sdk_submodules_accessible_from_root() -> None:
         "routing",
         "rules",
         "runtime",
-        "scaffold",
         "secrets",
         "transport",
     ]
