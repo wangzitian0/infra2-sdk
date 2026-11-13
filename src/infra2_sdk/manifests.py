@@ -417,6 +417,13 @@ def run_hook_slot(
     checks_file.unlink(missing_ok=True)
     done: list[CheckVerdict] = []
 
+    def flush() -> None:
+        checks_file.parent.mkdir(parents=True, exist_ok=True)
+        record_verdicts(checks_file, source=slot, checks=done)
+
+    def bad(check_id: str, detail: str, t0: float) -> None:
+        done.append(CheckVerdict(check_id or slot, False, detail, seconds=time.monotonic() - t0))
+
     def finish(st: str, code: int, fstep: str, summary: str, tail: str = "") -> HookRunResult:
         if st == "fail" and all(c.ok for c in done):
             done.append(CheckVerdict(slot, False, summary))
@@ -434,8 +441,7 @@ def run_hook_slot(
             tail,
             tuple(done),
         )
-        checks_file.parent.mkdir(parents=True, exist_ok=True)
-        record_verdicts(checks_file, source=slot, checks=done)
+        flush()
         if result_path is not None:
             result_path.parent.mkdir(parents=True, exist_ok=True)
             result_path.write_text(
@@ -474,24 +480,21 @@ def run_hook_slot(
             )
         except subprocess.TimeoutExpired as exc:
             msg = f"{step_name} timed out after {spec.timeout_seconds}s"
-            done.append(CheckVerdict(check_id or slot, False, msg, seconds=time.monotonic() - t0))
+            bad(check_id, msg, t0)
             return finish(
                 "fail", 124, "timeout", msg, _format_hook_output_tail(exc.stdout, exc.stderr, msg)
             )
+        except Exception as exc:
+            bad(check_id, scrub(str(exc), clean_env), t0)
+            flush()
+            raise
         if proc.returncode != 0:
             msg = f"{step_name} exited with code {proc.returncode}"
             tail = _format_hook_output_tail(proc.stdout, proc.stderr, msg)
             first = next(
                 (ln for ln in tail.splitlines() if ln.strip() and not ln.startswith("--- std")), msg
             )
-            done.append(
-                CheckVerdict(
-                    check_id or slot,
-                    False,
-                    scrub(first.strip(), clean_env),
-                    seconds=time.monotonic() - t0,
-                )
-            )
+            bad(check_id, scrub(first.strip(), clean_env), t0)
             return finish("fail", proc.returncode, step_name, msg, tail)
         if check_id:
             done.append(CheckVerdict(check_id, True, seconds=time.monotonic() - t0))

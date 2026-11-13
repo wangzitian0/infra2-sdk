@@ -34,6 +34,11 @@ from infra2_sdk.manifests import (
 from infra2_sdk.observability import CheckVerdict, load_trail
 
 
+@pytest.fixture(autouse=True)
+def _run_in_tmp_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)  # run_hook_slot writes <cwd>/.artifacts/hooks/checks.jsonl
+
+
 def _sample_v2_manifest_dict(*, service: str = "finance_report/app") -> dict[str, object]:
     return {
         "schema_version": 2,
@@ -677,3 +682,19 @@ def test_run_hook_slot_runs_each_check_and_records_it(tmp_path: Path) -> None:
     assert [(c.name, c.ok) for c in res.checks] == [("smoke", True)]
     assert load_trail(file, expected_sources=["smoke"]).is_green("smoke")
     assert "a" not in load_trail(file, expected_sources=["smoke"]).green
+
+
+def test_run_hook_slot_raising_runner_still_writes_the_check_file(tmp_path: Path) -> None:
+    def boom(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        if cmd[0] == "b":
+            raise FileNotFoundError("no such binary: b")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    m = _checks_manifest(checks=[{"id": "a", "argv": ["a"]}, {"id": "b", "argv": ["b"]}])
+    with pytest.raises(FileNotFoundError):
+        run_hook_slot(
+            m, "smoke", app_url="https://x.example.com", cwd=tmp_path, ambient_env={}, runner=boom
+        )
+    trail = load_trail(tmp_path / ".artifacts/hooks/checks.jsonl", expected_sources=["smoke"])
+    assert trail.is_green("a")
+    assert "no such binary" in trail.failing["b"].detail
