@@ -36,7 +36,8 @@ python -m pip install \
 | `infra2_sdk.ci` | Delivery-stage vocabulary, CI gate inventory validation, workflow step inspection, cron schedule gap analysis, coverage ratchets, and GitHub Actions helpers |
 | `infra2_sdk.deploy` | Deploy lifecycle wire contracts, health poller, wheel version parser, deployed release identity reader, production evidence policies, and CLI at `python -m infra2_sdk.deploy` |
 | `infra2_sdk.fastapi` | `init_service`: /livez, /readyz and /health routes for a FastAPI app, multi-dependency checks, probe noise suppression, and OTLP telemetry bootstrap |
-| `infra2_sdk.manifests` | Settings and runtime verification hooks manifest CLI driver (`--write`, `--check`, `--validate-env`, `--check-hooks`, `--run-hook`), `ManifestSpec`, `RuntimeHooksManifest`, `HookSlotSpec`, `HookRunResult`, `StageHookPlan`, `STAGE_HOOK_PLANS`, `stage_hook_plan`, `load_hooks_manifest`, `run_hook_slot`, `all_manifests`, `check`, and `load` |
+| `infra2_sdk.manifests` | Settings and runtime verification hooks manifest CLI driver (`--write`, `--check`, `--validate-env`, `--check-hooks`, `--run-hook`), `ManifestSpec`, `RuntimeHooksManifest`, `HookSlotSpec`, `CheckSpec`, `HookRunResult`, `StageHookPlan`, `STAGE_HOOK_PLANS`, `stage_hook_plan`, `load_hooks_manifest`, `run_hook_slot`, `all_manifests`, `check`, and `load` |
+| `infra2_sdk.stage_record` | `StageRecord`: one phase record of a stage task (checks, units, uncovered, verdict) |
 | `infra2_sdk.observability` | Flap hysteresis trackers, parameterized self-healing GitHub issue trails, and OpenPanel export query & funnel summary primitives |
 | `infra2_sdk.refs` | Git ref resolution, PR heads, patch tag calculation (`next_patch_tag`), registry image digests, remote ref queries, commit ancestry checks, and credential redaction |
 | `infra2_sdk.routing` | Canonical domain and routing SSOT: `CANARY_SLOT`, hostname resolution, and service URL resolution |

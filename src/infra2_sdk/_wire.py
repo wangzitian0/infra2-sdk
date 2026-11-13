@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
@@ -50,6 +50,11 @@ def parse_string(
     if required and not value:
         raise ValueError(f"{key} is required")
     return value
+
+
+def reject_unknown(data: Mapping[str, Any], allowed: Iterable[str], label: str) -> None:
+    if unknown := sorted(set(data) - set(allowed)):
+        raise ValueError(f"unknown {label} field(s): {unknown}")
 
 
 def parse_bool(raw: Mapping[str, Any], key: str, *, default: bool = False) -> bool:

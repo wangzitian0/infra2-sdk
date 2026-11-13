@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import time
+import warnings
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from importlib import import_module
@@ -16,7 +17,9 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from infra2_sdk._wire import reject_unknown
 from infra2_sdk.ci import validate_manifest_offline
+from infra2_sdk.observability import CheckVerdict, record_verdicts, scrub
 from infra2_sdk.runtime.config_schema import (
     EnvironmentManifest,
     _load_manifest,
@@ -25,12 +28,8 @@ from infra2_sdk.runtime.config_schema import (
 )
 
 CURRENT_HOOKS_SCHEMA_VERSION = 2
-HOOK_PHASES = ("pre", "deploy", "post")
 HOOK_SLOTS = ("smoke", "preview_gate", "staging_gate", "prod_gate", "scheduled_audit")
 LEGACY_V1_HOOK_SLOTS = ("smoke", "preview_gate", "staging_gate", "scheduled_audit")
-SLOT_PHASE: Mapping[str, str] = MappingProxyType(
-    {s: ("deploy" if s == "smoke" else "post") for s in HOOK_SLOTS}
-)
 SLOT_MAX_TIMEOUT_SECONDS: Mapping[str, int] = MappingProxyType(
     {
         "smoke": 120,
@@ -42,19 +41,32 @@ SLOT_MAX_TIMEOUT_SECONDS: Mapping[str, int] = MappingProxyType(
 )
 
 
+_RELEASE_PRE_CHECKS = ("contract", "provenance", "env", "upstream_post")
+
+
 @dataclass(frozen=True)
 class StageHookPlan:
     stage: str
-    deploy_slot: str | None
+    pre_checks: tuple[str, ...]
+    operation_slot: str | None
     post_slot: str | None
+
+    @property
+    def deploy_slot(self) -> str | None:
+        warnings.warn(
+            "StageHookPlan.deploy_slot is removed in v3.31.0; use operation_slot",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.operation_slot
 
 
 STAGE_HOOK_PLANS: Mapping[str, StageHookPlan] = MappingProxyType(
     {
-        "preview": StageHookPlan("preview", "smoke", "preview_gate"),
-        "staging": StageHookPlan("staging", "smoke", "staging_gate"),
-        "prod": StageHookPlan("prod", "smoke", "prod_gate"),
-        "schedule": StageHookPlan("schedule", None, "scheduled_audit"),
+        "preview": StageHookPlan("preview", ("contract",), "smoke", "preview_gate"),
+        "staging": StageHookPlan("staging", _RELEASE_PRE_CHECKS, "smoke", "staging_gate"),
+        "prod": StageHookPlan("prod", _RELEASE_PRE_CHECKS, "smoke", "prod_gate"),
+        "schedule": StageHookPlan("schedule", (), None, "scheduled_audit"),
     }
 )
 
@@ -105,11 +117,13 @@ _HOOK_SLOT_FIELDS = frozenset(
         "optional_env",
         "artifacts_dir",
         "checkout_lineage",
+        "checks",
     }
 )
 _HOOK_MANIFEST_FIELDS = frozenset({"schema_version", "service", "slots"})
 _HOOK_FAILED_STEPS = frozenset({"", "env", "bootstrap", "run", "timeout"})
 _HOOK_STDERR_TAIL_LIMIT = 2000
+HOOK_CHECKS_FILE = "checks.jsonl"
 
 
 def _validate_hook_env_names(names: tuple[str, ...], *, field_name: str) -> None:
@@ -123,18 +137,47 @@ def _validate_hook_env_names(names: tuple[str, ...], *, field_name: str) -> None
 
 
 @dataclass(frozen=True)
+class CheckSpec:
+    id: str
+    argv: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.id, str) or not self.id.strip():
+            raise ValueError("hook check 'id' must be a non-empty string")
+        if not isinstance(self.argv, (list, tuple)) or not self.argv:
+            raise ValueError(f"hook check {self.id!r} 'argv' must be a non-empty list")
+        if any(not isinstance(a, str) or not a for a in self.argv):
+            raise ValueError(f"hook check {self.id!r} 'argv' must hold non-empty strings")
+        object.__setattr__(self, "argv", tuple(self.argv))
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> CheckSpec:
+        if not isinstance(data, Mapping):
+            raise ValueError("hook check must be a JSON object")
+        reject_unknown(data, {"id", "argv"}, "hook check")
+        return cls(data.get("id", ""), data.get("argv", ()))
+
+
+@dataclass(frozen=True)
 class HookSlotSpec:
-    run: str
+    run: str = ""
     bootstrap: str = ""
     timeout_seconds: int = 300
     required_env: tuple[str, ...] = ()
     optional_env: tuple[str, ...] = ()
     artifacts_dir: str = ".artifacts/hooks"
     checkout_lineage: bool = field(default=False, kw_only=True)
+    checks: tuple[CheckSpec, ...] = field(default=(), kw_only=True)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.run, str) or not self.run.strip():
-            raise ValueError("hook slot 'run' must be a non-empty string")
+        if not isinstance(self.run, str) or bool(self.run.strip()) == bool(self.checks):
+            raise ValueError("hook slot needs 'run' as a non-empty string or 'checks', not both")
+        checks = tuple(
+            c if isinstance(c, CheckSpec) else CheckSpec.from_dict(c) for c in self.checks
+        )
+        if len({c.id for c in checks}) != len(checks):
+            raise ValueError("hook slot 'checks' ids must be unique")
+        object.__setattr__(self, "checks", checks)
         if not isinstance(self.bootstrap, str):
             raise ValueError("hook slot 'bootstrap' must be a string")
         if (
@@ -172,16 +215,15 @@ class HookSlotSpec:
         }
         if self.checkout_lineage:
             out["checkout_lineage"] = True
+        if self.checks:
+            out["checks"] = [{"id": c.id, "argv": list(c.argv)} for c in self.checks]
         return out
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> HookSlotSpec:
         if not isinstance(data, Mapping):
             raise ValueError("hook slot spec must be a JSON object")
-        if unknown := sorted(set(data) - _HOOK_SLOT_FIELDS):
-            raise ValueError(f"unknown hook slot field(s): {unknown}")
-        if "run" not in data:
-            raise ValueError("hook slot 'run' must be a non-empty string")
+        reject_unknown(data, _HOOK_SLOT_FIELDS, "hook slot")
         return cls(**data)
 
 
@@ -246,8 +288,7 @@ class RuntimeHooksManifest:
     def from_dict(cls, data: Mapping[str, Any]) -> RuntimeHooksManifest:
         if not isinstance(data, Mapping):
             raise ValueError("runtime hooks manifest must be a JSON object")
-        if unknown := sorted(set(data) - _HOOK_MANIFEST_FIELDS):
-            raise ValueError(f"unknown runtime hooks manifest field(s): {unknown}")
+        reject_unknown(data, _HOOK_MANIFEST_FIELDS, "runtime hooks manifest")
         if "schema_version" not in data:
             raise ValueError("runtime hooks manifest requires 'schema_version'")
         sv = _check_schema_version(data["schema_version"])
@@ -284,6 +325,7 @@ class HookRunResult:
     failed_step: str = ""
     summary: str = ""
     stderr_tail: str = ""
+    checks: tuple[CheckVerdict, ...] = ()
 
     def __post_init__(self) -> None:
         if self.status not in ("pass", "fail"):
@@ -371,8 +413,13 @@ def run_hook_slot(
     spec = manifest.slots[slot]
     src_env = os.environ if ambient_env is None else ambient_env
     url, start = app_url.strip(), time.monotonic()
+    checks_file = (cwd or Path()) / spec.artifacts_dir / HOOK_CHECKS_FILE
+    checks_file.unlink(missing_ok=True)
+    done: list[CheckVerdict] = []
 
     def finish(st: str, code: int, fstep: str, summary: str, tail: str = "") -> HookRunResult:
+        if st == "fail" and all(c.ok for c in done):
+            done.append(CheckVerdict(slot, False, summary))
         res = HookRunResult(
             manifest.service,
             slot,
@@ -385,7 +432,10 @@ def run_hook_slot(
             fstep,
             summary,
             tail,
+            tuple(done),
         )
+        checks_file.parent.mkdir(parents=True, exist_ok=True)
+        record_verdicts(checks_file, source=slot, checks=done)
         if result_path is not None:
             result_path.parent.mkdir(parents=True, exist_ok=True)
             result_path.write_text(
@@ -406,13 +456,15 @@ def run_hook_slot(
     except ValueError as err:
         return finish("fail", 2, "env", str(err), str(err))
 
-    for step_name, cmd in (
-        *(("bootstrap", spec.bootstrap) for _ in (1,) if spec.bootstrap.strip()),
-        ("run", spec.run),
-    ):
+    steps = [(c.id, list(c.argv)) for c in spec.checks] or [(slot, ["sh", "-lc", spec.run])]
+    if spec.bootstrap.strip():
+        steps.insert(0, ("", ["sh", "-lc", spec.bootstrap]))
+    for check_id, argv in steps:
+        step_name = "run" if check_id else "bootstrap"
+        t0 = time.monotonic()
         try:
             proc = runner(
-                ["sh", "-lc", cmd],
+                argv,
                 env=clean_env,
                 cwd=cwd,
                 capture_output=True,
@@ -422,18 +474,27 @@ def run_hook_slot(
             )
         except subprocess.TimeoutExpired as exc:
             msg = f"{step_name} timed out after {spec.timeout_seconds}s"
+            done.append(CheckVerdict(check_id or slot, False, msg, seconds=time.monotonic() - t0))
             return finish(
                 "fail", 124, "timeout", msg, _format_hook_output_tail(exc.stdout, exc.stderr, msg)
             )
         if proc.returncode != 0:
             msg = f"{step_name} exited with code {proc.returncode}"
-            return finish(
-                "fail",
-                proc.returncode,
-                step_name,
-                msg,
-                _format_hook_output_tail(proc.stdout, proc.stderr, msg),
+            tail = _format_hook_output_tail(proc.stdout, proc.stderr, msg)
+            first = next(
+                (ln for ln in tail.splitlines() if ln.strip() and not ln.startswith("--- std")), msg
             )
+            done.append(
+                CheckVerdict(
+                    check_id or slot,
+                    False,
+                    scrub(first.strip(), clean_env),
+                    seconds=time.monotonic() - t0,
+                )
+            )
+            return finish("fail", proc.returncode, step_name, msg, tail)
+        if check_id:
+            done.append(CheckVerdict(check_id, True, seconds=time.monotonic() - t0))
     return finish("pass", 0, "", f"{slot} passed")
 
 
@@ -599,14 +660,14 @@ __all__ = [
     "CURRENT_HOOKS_SCHEMA_VERSION",
     "FORBIDDEN_HOOK_ENV_NAMES",
     "FORBIDDEN_HOOK_ENV_PREFIXES",
-    "HOOK_PHASES",
+    "HOOK_CHECKS_FILE",
     "HOOK_SLOTS",
+    "CheckSpec",
     "HookRunResult",
     "HookSlotSpec",
     "LEGACY_V1_HOOK_SLOTS",
     "ManifestSpec",
     "RuntimeHooksManifest",
-    "SLOT_PHASE",
     "STAGE_HOOK_PLANS",
     "StageHookPlan",
     "all_manifests",

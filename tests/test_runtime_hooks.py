@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import warnings
 from pathlib import Path
 
 import pytest
@@ -21,16 +22,16 @@ from infra2_sdk.manifests import (
     CURRENT_HOOKS_SCHEMA_VERSION,
     FORBIDDEN_HOOK_ENV_NAMES,
     FORBIDDEN_HOOK_ENV_PREFIXES,
-    HOOK_PHASES,
     LEGACY_V1_HOOK_SLOTS,
     SLOT_MAX_TIMEOUT_SECONDS,
-    SLOT_PHASE,
     STAGE_HOOK_PLANS,
+    CheckSpec,
     StageHookPlan,
     build_hook_env,
     main,
     stage_hook_plan,
 )
+from infra2_sdk.observability import CheckVerdict, load_trail
 
 
 def _sample_v2_manifest_dict(*, service: str = "finance_report/app") -> dict[str, object]:
@@ -69,16 +70,8 @@ def _sample_v2_manifest_dict(*, service: str = "finance_report/app") -> dict[str
 
 def test_v2_manifest_stage_hook_plans_and_slot_ceilings(tmp_path: Path) -> None:
     assert CURRENT_HOOKS_SCHEMA_VERSION == 2
-    assert HOOK_PHASES == ("pre", "deploy", "post")
     assert HOOK_SLOTS == ("smoke", "preview_gate", "staging_gate", "prod_gate", "scheduled_audit")
     assert LEGACY_V1_HOOK_SLOTS == ("smoke", "preview_gate", "staging_gate", "scheduled_audit")
-    assert SLOT_PHASE == {
-        "smoke": "deploy",
-        "preview_gate": "post",
-        "staging_gate": "post",
-        "prod_gate": "post",
-        "scheduled_audit": "post",
-    }
     assert SLOT_MAX_TIMEOUT_SECONDS == {
         "smoke": 120,
         "preview_gate": 360,
@@ -86,11 +79,7 @@ def test_v2_manifest_stage_hook_plans_and_slot_ceilings(tmp_path: Path) -> None:
         "prod_gate": 300,
         "scheduled_audit": 3600,
     }
-    assert stage_hook_plan("preview") == StageHookPlan("preview", "smoke", "preview_gate")
-    assert stage_hook_plan("staging") == StageHookPlan("staging", "smoke", "staging_gate")
-    assert stage_hook_plan("prod") == StageHookPlan("prod", "smoke", "prod_gate")
     assert stage_hook_plan("production") == STAGE_HOOK_PLANS["prod"]
-    assert stage_hook_plan("schedule") == StageHookPlan("schedule", None, "scheduled_audit")
     with pytest.raises(ValueError, match="unknown stage"):
         stage_hook_plan("canary")
     with pytest.raises(ValueError, match="stage must be a string"):
@@ -98,7 +87,7 @@ def test_v2_manifest_stage_hook_plans_and_slot_ceilings(tmp_path: Path) -> None:
     with pytest.raises(TypeError):
         SLOT_MAX_TIMEOUT_SECONDS["smoke"] = 999  # type: ignore[index]
     with pytest.raises(TypeError):
-        STAGE_HOOK_PLANS["prod"] = StageHookPlan("prod", None, None)  # type: ignore[index]
+        STAGE_HOOK_PLANS["prod"] = StageHookPlan("prod", (), None, None)  # type: ignore[index]
 
     v2 = RuntimeHooksManifest.from_dict(_sample_v2_manifest_dict())
     assert v2.schema_version == 2
@@ -606,3 +595,85 @@ def test_next_patch_tag_computes_highest_semver_and_handles_empty() -> None:
     assert next_patch_tag(["v1.4.9", "v1.4.10", "v0.99.99"]) == "v1.4.11"
     with pytest.raises(ValueError, match="initial must match"):
         next_patch_tag([], initial="1.0.0")
+
+
+def test_stage_hook_plan_phases() -> None:
+    release = ("contract", "provenance", "env", "upstream_post")
+    plan = stage_hook_plan("staging")
+    assert (plan.operation_slot, plan.post_slot, plan.pre_checks) == (
+        "smoke",
+        "staging_gate",
+        release,
+    )
+    assert stage_hook_plan("prod").pre_checks == release
+    assert stage_hook_plan("preview") == StageHookPlan(
+        "preview", ("contract",), "smoke", "preview_gate"
+    )
+    assert stage_hook_plan("schedule") == StageHookPlan("schedule", (), None, "scheduled_audit")
+    with pytest.warns(DeprecationWarning, match="v3.31.0"):
+        assert plan.deploy_slot == plan.operation_slot
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert plan.operation_slot == "smoke"
+
+
+def test_hook_slot_checks_and_run_are_exclusive() -> None:
+    check = CheckSpec("a", ("true",))
+    with pytest.raises(ValueError, match="not both"):
+        HookSlotSpec(run="echo ok", checks=(check,))
+    with pytest.raises(ValueError, match="not both"):
+        HookSlotSpec()
+    with pytest.raises(ValueError, match="unique"):
+        HookSlotSpec(checks=(check, check))
+    with pytest.raises(ValueError, match="argv"):
+        CheckSpec("a", ())
+    spec = HookSlotSpec.from_dict({"checks": [{"id": "a", "argv": ["true"]}]})
+    assert spec.checks == (check,)
+    assert HookSlotSpec.from_dict(spec.to_dict()) == spec
+
+
+def _checks_manifest(**slot: object) -> RuntimeHooksManifest:
+    raw = _sample_v2_manifest_dict()
+    raw["slots"] = {**raw["slots"], "smoke": {"timeout_seconds": 60, **slot}}  # type: ignore[dict-item]
+    return RuntimeHooksManifest.from_dict(raw)
+
+
+def test_run_hook_slot_runs_each_check_and_records_it(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        if cmd[0] == "b":
+            return subprocess.CompletedProcess(cmd, 3, "", "\nboom first\nsecond")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    kw = {"app_url": "https://x.example.com", "cwd": tmp_path, "ambient_env": {}, "runner": fake}
+    file = tmp_path / ".artifacts/hooks/checks.jsonl"
+    file.parent.mkdir(parents=True)
+    file.write_text('{"source": "stale", "checks": [], "complete": true}\n')
+
+    m = _checks_manifest(
+        checks=[
+            {"id": "a", "argv": ["a"]},
+            {"id": "b", "argv": ["b"]},
+            {"id": "c", "argv": ["c"]},
+        ]
+    )
+    res = run_hook_slot(m, "smoke", **kw)  # type: ignore[arg-type]
+    assert [c[0] for c in calls] == ["a", "b"]
+    assert (res.status, res.exit_code, res.failed_step) == ("fail", 3, "run")
+    assert [(c.name, c.ok, c.detail) for c in res.checks] == [
+        ("a", True, ""),
+        ("b", False, "boom first"),
+    ]
+    assert all(c.seconds >= 0 for c in res.checks) and isinstance(res.checks[0], CheckVerdict)
+    assert len(file.read_text().splitlines()) == 1  # stale line deleted, one line written
+    trail = load_trail(file, expected_sources=["smoke"])
+    assert trail.is_green("a") and "b" in trail.failing
+
+    calls.clear()
+    res = run_hook_slot(_checks_manifest(run="echo ok"), "smoke", **kw)  # type: ignore[arg-type]
+    assert res.status == "pass" and calls == [["sh", "-lc", "echo ok"]]
+    assert [(c.name, c.ok) for c in res.checks] == [("smoke", True)]
+    assert load_trail(file, expected_sources=["smoke"]).is_green("smoke")
+    assert "a" not in load_trail(file, expected_sources=["smoke"]).green

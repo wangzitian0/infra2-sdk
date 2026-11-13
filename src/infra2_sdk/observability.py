@@ -163,6 +163,7 @@ class CheckVerdict:
     detail: str = ""
     severity: str = ""
     failure_domain: str = ""
+    seconds: float = 0.0
 
 
 @dataclass
@@ -237,6 +238,7 @@ def _parse_record(line: str) -> tuple[str, list[CheckVerdict], bool] | None:
                 str(i.get("detail", "")),
                 str(i.get("severity", "")),
                 str(i.get("failure_domain", "")),
+                float(i.get("seconds", 0.0)),
             )
             for i in rec["checks"]
         ]

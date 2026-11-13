@@ -60,7 +60,7 @@ def test_sdk_source_byte_budget() -> None:
         for p in SRC_ROOT.rglob("*")
         if p.is_file() and "__pycache__" not in p.parts
     )
-    assert 150_000 <= total <= 275_000, f"src/infra2_sdk byte budget drifted: {total} B"
+    assert 150_000 <= total <= 280_500, f"src/infra2_sdk byte budget drifted: {total} B"
 
 
 def test_init_service_multi_checks_and_manifest(monkeypatch: pytest.MonkeyPatch) -> None:

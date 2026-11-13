@@ -36,6 +36,8 @@ REMOVED_NAMES = (
     ("infra2_sdk.delivery", "acceleration_allowed"),
     ("infra2_sdk.delivery", "detect_disagreement"),
     ("infra2_sdk.delivery", "validate_stage_result"),
+    ("infra2_sdk.manifests", "HOOK_PHASES"),
+    ("infra2_sdk.manifests", "SLOT_PHASE"),
     ("infra2_sdk.refs", "resolve_release_identity"),
     ("infra2_sdk.refs", "verify_runtime_identity"),
     ("infra2_sdk.routing", "resolve_dokploy_domains"),
@@ -209,9 +211,9 @@ def smoke_removed_names() -> None:
     import infra2_sdk.runtime
     from infra2_sdk.runtime.environment import RuntimeEnvKey, runtime_env_contract
 
-    assert len(REMOVED_NAMES) == 51 and len(set(REMOVED_NAMES)) == 51, (
+    assert len(REMOVED_NAMES) == 53 and len(set(REMOVED_NAMES)) == 53, (
         f"REMOVED_NAMES has {len(REMOVED_NAMES)} entries ({len(set(REMOVED_NAMES))} unique), "
-        "expected 51"
+        "expected 53"
     )
     for module, dotted in REMOVED_NAMES:
         *parents, leaf = dotted.split(".")
