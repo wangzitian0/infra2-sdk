@@ -6,17 +6,22 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+## 3.29.0 - 2026-11-13
+
 ### Added
 
 - Add `StageRecord` (`infra2_sdk.stage_record`), `CheckSpec`, `HookSlotSpec.checks`, `HookRunResult.checks`, `CheckVerdict.seconds`, `StageHookPlan.pre_checks` and `operation_slot`. `run_hook_slot` runs each check, times it and writes the verdicts to `<artifacts_dir>/checks.jsonl` ([#210](https://github.com/wangzitian0/infra2-sdk/issues/210)).
+- Add `StageHookPlan.stage_id`, a keyword-only field that maps each stage to its delivery stage: `preview` to `preview.runtime`, `staging` to `staging.release_validation`, `prod` to `prod.release_integrity`, and `schedule` to `staging.provider_regression` ([#210](https://github.com/wangzitian0/infra2-sdk/issues/210)).
+- The new fields `CheckVerdict.seconds` and `HookRunResult.checks` are keyword-only ([#210](https://github.com/wangzitian0/infra2-sdk/issues/210)).
 
 ### Changed
 
 - `StageHookPlan.deploy_slot` is a read-only alias of `operation_slot` that warns; v3.31.0 removes it. `HookSlotSpec.run` is optional when `checks` is set ([#210](https://github.com/wangzitian0/infra2-sdk/issues/210)).
+- Behavior change: the checks of a slot and its bootstrap share one `timeout_seconds` budget. For `run` slots with a bootstrap, the bootstrap time now counts against that budget ([#210](https://github.com/wangzitian0/infra2-sdk/issues/210)).
 
 ### Removed
 
-- Remove `HOOK_PHASES`, `SLOT_PHASE`, and the `phase`, `batch_policy` and `wall_clock_budget_seconds` fields of `data/stages.yaml` ([#210](https://github.com/wangzitian0/infra2-sdk/issues/210)).
+- Remove `HOOK_PHASES`, `SLOT_PHASE`, and the `phase`, `batch_policy` and `wall_clock_budget_seconds` fields of `data/stages.yaml` that no code read ([#210](https://github.com/wangzitian0/infra2-sdk/issues/210)).
 
 ## 3.28.0 - 2026-11-11
 
