@@ -40,7 +40,8 @@ The release workflow publishes each release. Do not publish manually. A change u
    `finance_report`, and `truealpha`. The census checks `M1` symbol reachability,
    `M2` `runtime_env_contract()` reachability, `M3` pin lag, `M4` `LEFT_THE_PACKAGES`
    references, `M5` hardcoded `SERVICE_NAME` lists, and `M6` `tools/*.py` cross-imports.
-   Do not remove a name that a consumer uses in a minor release.
+   Do not remove a name that a consumer uses in a minor release. A release runs with
+   consumers that are one minor version behind.
 1. Between releases, write [CHANGELOG](CHANGELOG.md) lines under `## Unreleased`. In the
    release PR, bump `version` in `pyproject.toml` and run `uv lock`. Give the CHANGELOG entry
    its version and date, and update the README version pins.

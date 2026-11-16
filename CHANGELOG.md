@@ -6,6 +6,8 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+## 3.30.0 - 2026-11-16
+
 ### Changed
 
 - `issue_trail_mode` returns `full` or `off`. Only `WATCHDOG_DRY_RUN` and `INFRA2_WATCHDOG_SSH_TARGETS_OVERRIDDEN` select `off`. It no longer reads `GITHUB_EVENT_NAME`, `GITHUB_REF` or the bound-cap variable, so a push, a pull request and a branch dispatch now give `full` ([#212](https://github.com/wangzitian0/infra2-sdk/issues/212)).
