@@ -49,6 +49,7 @@ from infra2_sdk.runtime.llm import (
 from infra2_sdk.runtime.otel import (
     OtelSettings,
     configure_telemetry,
+    init_worker,
     signal_endpoint,
 )
 from infra2_sdk.runtime.postgres import (
@@ -111,6 +112,7 @@ __all__ = [
     "request_with_retry",
     "OtelSettings",
     "configure_telemetry",
+    "init_worker",
     "signal_endpoint",
     "LlmClient",
     "probe_orchestrator",

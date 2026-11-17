@@ -97,6 +97,9 @@ REMOVED_NAMES = (
     ("infra2_sdk.observability", "_BOUND_CAP_ENV"),
     ("infra2_sdk.observability", "_GH_EVENT_NAME_KEY"),
     ("infra2_sdk.observability", "_GH_REF_KEY"),
+    # Removed in 3.31.0 (#210) and 3.32.0 (#213).
+    ("infra2_sdk.manifests", "StageHookPlan.deploy_slot"),
+    ("infra2_sdk.fastapi", "_LOG_FORMAT"),
 )
 
 # RuntimeEnvKey members removed in 3.4.0 (issue #102, decision 2) and 3.8.2 (#126).
@@ -217,9 +220,9 @@ def smoke_removed_names() -> None:
     import infra2_sdk.runtime
     from infra2_sdk.runtime.environment import RuntimeEnvKey, runtime_env_contract
 
-    assert len(REMOVED_NAMES) == 57 and len(set(REMOVED_NAMES)) == 57, (
+    assert len(REMOVED_NAMES) == 59 and len(set(REMOVED_NAMES)) == 59, (
         f"REMOVED_NAMES has {len(REMOVED_NAMES)} entries ({len(set(REMOVED_NAMES))} unique), "
-        "expected 57"
+        "expected 59"
     )
     for module, dotted in REMOVED_NAMES:
         *parents, leaf = dotted.split(".")
@@ -503,6 +506,11 @@ def smoke_fastapi_otel() -> None:
     )
 
     app = FastAPI()
+
+    @app.get("/ping")
+    def ping():
+        return {"pong": True}
+
     init_service(app, name="fastapi-otel-smoke", enable_otel=True)
     providers = app.state.telemetry_providers
     root = logging.getLogger()
@@ -530,11 +538,15 @@ def smoke_fastapi_otel() -> None:
         assert sent and sent[0]["type"] == "lifespan.startup.complete", sent
         status, livez = await _asgi_get(app, "/livez")
         assert (status, livez) == (200, {"status": "alive", "service": "fastapi-otel-smoke"})
+        ping_status, _ = await _asgi_get(app, "/ping")
+        assert ping_status == 200
         await incoming.put({"type": "lifespan.shutdown"})
         await lifespan
 
     asyncio.run(run_app())
-    assert "GET /livez" in [span.name for span in spans.get_finished_spans()]
+    span_names = [span.name for span in spans.get_finished_spans()]
+    assert "GET /ping" in span_names
+    assert "GET /livez" not in span_names
     assert providers.logging_handler is None and not [
         handler for handler in root.handlers if type(handler).__name__ == "LoggingHandler"
     ], "the lifespan shutdown must detach the OpenTelemetry logging handler"

@@ -779,3 +779,57 @@ def test_issued_identity_rejects_a_missing_service_name() -> None:
 def test_issued_identity_is_not_required_without_an_endpoint() -> None:
     settings = OtelSettings.from_env({}, require_issued_identity=True)
     assert settings.enabled is False
+
+
+def test_init_worker_configures_json_logging_and_otlp_without_http(
+    monkeypatch, memory_otlp, clean_otel_globals
+) -> None:
+    import json
+
+    from infra2_sdk.runtime.otel import init_worker
+
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.setenv("SERVICE_VERSION", "3.31.0")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
+    monkeypatch.setenv("OTEL_METRIC_EXPORT_INTERVAL", "3600000")
+
+    root = logging.getLogger()
+    saved_handlers, saved_level = list(root.handlers), root.level
+    root.handlers[:] = []
+    root.setLevel(logging.WARNING)
+    providers = None
+    try:
+        providers = init_worker("worker-svc")
+        assert providers is not None
+        assert providers.meter_provider is not None
+        stream_handlers = [h for h in root.handlers if type(h) is logging.StreamHandler]
+        assert len(stream_handlers) == 1
+        msg = "secret ghp_abcdefghij12345"
+        rec = logging.LogRecord("w", logging.INFO, __file__, 1, msg, (), None)
+        payload = json.loads(stream_handlers[0].format(rec))
+        assert payload["service.name"] == "worker-svc"
+        assert payload["service.version"] == "3.31.0"
+        assert "ghp_abcdefghij12345" not in payload["message"]
+        providers.meter_provider.force_flush()
+        uptime_metrics = [
+            m
+            for metrics_data in memory_otlp.metrics_data
+            for rm in metrics_data.resource_metrics
+            for sm in rm.scope_metrics
+            for m in sm.metrics
+            if m.name == "process.uptime"
+        ]
+        assert uptime_metrics
+        assert uptime_metrics[0].unit == "s"
+        assert uptime_metrics[0].data.data_points[0].value >= 0.0
+        assert providers.logger_provider._multi_log_record_processor.enabled(severity_number=None)
+        providers.shutdown()
+        providers.shutdown()  # idempotent atexit safety
+    finally:
+        if providers is not None:
+            providers.shutdown()
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)
+
+    with pytest.raises(ValueError, match="name must not be blank"):
+        init_worker("", environ={})

@@ -3,6 +3,7 @@
 import asyncio
 import inspect
 import io
+import json
 import logging
 import time
 import warnings
@@ -365,16 +366,39 @@ def test_probe_routes_do_not_collide_with_the_default_documentation_routes():
     assert paths - _PROBE_ROUTES <= {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
 
 
-def test_openapi_json_builds_and_documents_only_health():
+def test_openapi_json_builds_and_documents_probes_and_health():
     app = _app(db_checker=_sync(True))
 
     response = TestClient(app, raise_server_exceptions=False).get("/openapi.json")
 
     assert response.status_code == 200
-    paths = response.json()["paths"]
-    assert "/health" in paths
-    assert "/livez" not in paths
-    assert "/readyz" not in paths
+    spec = response.json()
+    paths = spec["paths"]
+    for route_path in ("/health", "/livez", "/readyz"):
+        assert route_path in paths
+        schema_ref = paths[route_path]["get"]["responses"]["200"]["content"]["application/json"][
+            "schema"
+        ]
+        assert "$ref" in schema_ref
+    for probe_path in ("/readyz", "/health"):
+        err_ref = paths[probe_path]["get"]["responses"]["503"]["content"]["application/json"][
+            "schema"
+        ]
+        assert "$ref" in err_ref
+    schemas = spec["components"]["schemas"]
+    assert {"ProbeResponse", "HealthResponse", "CheckDetail"} <= set(schemas)
+    from infra2_sdk.fastapi import ErrorResponse
+
+    assert {"error_id", "detail", "request_id"} <= set(
+        ErrorResponse.model_json_schema()["properties"]
+    )
+    op_ids = [
+        op["operationId"]
+        for path_item in paths.values()
+        for op in path_item.values()
+        if isinstance(op, dict) and "operationId" in op
+    ]
+    assert len(op_ids) == len(set(op_ids))
 
 
 def test_second_init_service_call_on_one_app_raises_and_changes_nothing():
@@ -523,6 +547,10 @@ def test_otel_pipeline_exports_all_signals_and_stops_with_the_app(
     monkeypatch.setenv("OTEL_METRIC_EXPORT_INTERVAL", "3600000")
     app = FastAPI()
 
+    @app.get("/ping")
+    def ping():
+        return {"pong": True}
+
     init_service(app, "svc", enable_otel=True)
 
     providers = app.state.telemetry_providers
@@ -542,6 +570,7 @@ def test_otel_pipeline_exports_all_signals_and_stops_with_the_app(
 
     with TestClient(app) as client:
         assert client.get("/livez").json() == {"status": "alive", "service": "svc"}
+        assert client.get("/ping").status_code == 200
         with trace.get_tracer("fastapi-test").start_as_current_span("unit-of-work"):
             logging.getLogger("svc.test").warning("something happened")
         providers.tracer_provider.force_flush()
@@ -550,8 +579,9 @@ def test_otel_pipeline_exports_all_signals_and_stops_with_the_app(
         spans = memory_otlp.spans.get_finished_spans()
         span_names = [span.name for span in spans]
         assert "unit-of-work" in span_names
-        # FastAPI 0.142+ emits request spans itself; no instrumentor package is installed.
-        assert "GET /livez" in span_names
+        assert "GET /ping" in span_names
+        # FastAPI 0.162+ excludes probe routes by default when suppress_probe_telemetry=True.
+        assert "GET /livez" not in span_names
         assert {span.resource.attributes["service.name"] for span in spans} == {"svc"}
         assert "something happened" in [
             record.log_record.body for record in memory_otlp.logs.get_finished_logs()
@@ -1200,9 +1230,13 @@ def test_init_service_gives_an_unconfigured_root_logger_info_level_and_a_stream_
             assert "application started" in _exported_log_bodies(memory_otlp, providers)
             stream_handlers = [h for h in root.handlers if type(h) is logging.StreamHandler]
             assert len(stream_handlers) == 1
-            assert stream_handlers[0].formatter._fmt == (
-                "%(asctime)s %(levelname)s %(name)s %(message)s"
-            )
+            assert stream_handlers[0].stream is __import__("sys").stdout
+            rec = logging.LogRecord("svc", logging.INFO, __file__, 1, "started", (), None)
+            payload = json.loads(stream_handlers[0].format(rec))
+            assert payload["service.name"] == "svc"
+            assert payload["deployment.environment.name"] == "local_dev"
+            assert payload["message"] == "started"
+            assert {"trace_id", "span_id", "request_id", "service.version"} <= set(payload)
             assert root.level == logging.INFO
         finally:
             providers.shutdown()
@@ -1260,11 +1294,218 @@ def test_log_level_applies_the_requested_level(monkeypatch, memory_otlp, clean_o
             app.state.telemetry_providers.shutdown()
 
 
-def test_log_level_is_ignored_while_telemetry_is_off(monkeypatch):
+def test_log_level_configures_json_logger_even_when_otlp_endpoint_is_absent(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "local_dev")
 
     with _root_logger_as_found_by_a_fresh_process() as root:
         init_service(FastAPI(), "svc", enable_otel=True)
 
+        assert root.level == logging.INFO
+        stream_handlers = [h for h in root.handlers if type(h) is logging.StreamHandler]
+        assert len(stream_handlers) == 1
+
+    with _root_logger_as_found_by_a_fresh_process() as root:
+        init_service(FastAPI(), "svc", enable_otel=False, log_level=None)
         assert root.level == logging.WARNING
         assert root.handlers == []
+
+
+def test_x_request_id_middleware_echoes_and_propagates_to_logs(monkeypatch):
+    from infra2_sdk.runtime.otel import current_request_id
+
+    monkeypatch.setenv("ENVIRONMENT", "local_dev")
+    monkeypatch.setenv("SERVICE_VERSION", "3.31.0")
+    app = FastAPI()
+    buf = io.StringIO()
+    handler = logging.StreamHandler(buf)
+
+    @app.get("/who")
+    def who():
+        logging.getLogger("svc.req").info("handling request")
+        return {"rid": current_request_id()}
+
+    with _root_logger_as_found_by_a_fresh_process() as root:
+        init_service(app, "svc", enable_otel=False)
+        stream_handlers = [h for h in root.handlers if type(h) is logging.StreamHandler]
+        assert stream_handlers
+        handler.setFormatter(stream_handlers[0].formatter)
+        root.handlers[:] = [handler]
+        client = TestClient(app)
+        res = client.get("/who", headers={"X-Request-ID": "req-abc-123"})
+        assert res.status_code == 200
+        assert res.headers["X-Request-ID"] == "req-abc-123"
+        assert res.json() == {"rid": "req-abc-123"}
+
+        gen = client.get("/who")
+        assert gen.status_code == 200
+        assert gen.headers["X-Request-ID"]
+        assert gen.json() == {"rid": gen.headers["X-Request-ID"]}
+        assert current_request_id() is None
+
+    lines = [json.loads(line) for line in buf.getvalue().splitlines() if line.strip()]
+    req_lines = [entry for entry in lines if entry["logger"] == "svc.req"]
+    assert [entry["request_id"] for entry in req_lines] == [
+        "req-abc-123",
+        gen.headers["X-Request-ID"],
+    ]
+    assert all(entry["service.version"] == "3.31.0" for entry in req_lines)
+
+
+def test_probe_telemetry_suppresses_metrics_and_spans_and_allows_opt_out(
+    monkeypatch, memory_otlp, clean_otel_globals
+):
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.setenv("OTEL_METRIC_EXPORT_INTERVAL", "3600000")
+    app = FastAPI()
+
+    @app.get("/work")
+    def work():
+        return {"ok": True}
+
+    init_service(app, "svc", enable_otel=True)
+    providers = app.state.telemetry_providers
+    with TestClient(app) as client:
+        for path in ("/livez", "/readyz", "/health", "/work"):
+            assert client.get(path).status_code == 200
+        providers.tracer_provider.force_flush()
+        providers.meter_provider.force_flush()
+
+    span_names = [s.name for s in memory_otlp.spans.get_finished_spans()]
+    assert "GET /work" in span_names
+    for probe in ("GET /livez", "GET /readyz", "GET /health"):
+        assert probe not in span_names
+
+    assert memory_otlp.metrics_data
+    metric_names: set[str] = set()
+    http_routes: set[str] = set()
+    for metrics_data in memory_otlp.metrics_data:
+        for rm in metrics_data.resource_metrics:
+            for sm in rm.scope_metrics:
+                for m in sm.metrics:
+                    metric_names.add(m.name)
+                    if m.name == "http.server.request.duration":
+                        for pt in m.data.data_points:
+                            route = pt.attributes.get("http.route") or pt.attributes.get("url.path")
+                            if route:
+                                http_routes.add(str(route))
+    assert "process.uptime" in metric_names
+    assert "/work" in http_routes
+    assert not ({"/livez", "/readyz", "/health"} & http_routes)
+
+
+def test_probe_telemetry_opt_out_emits_livez_span(monkeypatch, memory_otlp, clean_otel_globals):
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.setenv("OTEL_METRIC_EXPORT_INTERVAL", "3600000")
+    opt_out = FastAPI()
+    init_service(opt_out, "svc", enable_otel=True, suppress_probe_telemetry=False)
+    with TestClient(opt_out) as client:
+        assert client.get("/livez").status_code == 200
+        opt_out.state.telemetry_providers.tracer_provider.force_flush()
+    assert "GET /livez" in [s.name for s in memory_otlp.spans.get_finished_spans()]
+
+
+def test_x_request_id_survives_unhandled_500_and_exception_handler(monkeypatch):
+    from fastapi.responses import JSONResponse
+
+    from infra2_sdk.runtime.otel import current_request_id
+
+    monkeypatch.setenv("ENVIRONMENT", "local_dev")
+    seen_in_handler: list[str | None] = []
+    app = FastAPI()
+
+    @app.exception_handler(ValueError)
+    async def _on_val(_req, _exc):
+        seen_in_handler.append(current_request_id())
+        return JSONResponse(status_code=500, content={"error": "handled"})
+
+    @app.get("/boom")
+    def boom():
+        raise RuntimeError("unhandled")
+
+    @app.get("/val")
+    def val():
+        raise ValueError("handled")
+
+    init_service(app, "svc", enable_otel=False)
+    client = TestClient(app, raise_server_exceptions=False)
+    r500 = client.get("/boom", headers={"X-Request-ID": "rid-500"})
+    assert r500.status_code == 500
+    assert r500.headers["X-Request-ID"] == "rid-500"
+    rval = client.get("/val", headers={"X-Request-ID": "rid-val"})
+    assert rval.status_code == 500
+    assert rval.headers["X-Request-ID"] == "rid-val"
+    assert seen_in_handler == ["rid-val"]
+    assert current_request_id() is None
+
+
+def test_health_includes_release_identity_and_health_extra(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "local_dev")
+    monkeypatch.setenv("SERVICE_VERSION", "3.31.0")
+    monkeypatch.setenv("GIT_COMMIT_SHA", "deadbeef")
+    app = FastAPI()
+    init_service(
+        app,
+        "svc",
+        enable_otel=False,
+        health_extra=lambda: {"engine": "warm", "status": "ignored"},
+    )
+    assert app.state.service_release == {"version": "3.31.0", "git_sha": "deadbeef"}
+    body = TestClient(app).get("/health").json()
+    assert body["version"] == "3.31.0"
+    assert body["git_sha"] == "deadbeef"
+    assert body["engine"] == "warm"
+    assert body["status"] == "healthy"
+
+
+def test_logs_redact_secrets_and_emails_in_stdout_and_otlp(
+    monkeypatch, memory_otlp, clean_otel_globals
+):
+    monkeypatch.setenv("ENVIRONMENT", "local_dev")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setenv("CACHE_KEY_PREFIX", "user")
+    app = FastAPI()
+    buf = io.StringIO()
+    handler = logging.StreamHandler(buf)
+    secret_msg = (
+        "user=true prefix=user auth=Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig "
+        "mail=alice@example.com dsn=postgres://u:my!pass@db.example.com/app"
+    )
+
+    with _root_logger_as_found_by_a_fresh_process() as root:
+        init_service(app, "svc", enable_otel=True)
+        providers = app.state.telemetry_providers
+        try:
+            stream_handlers = [h for h in root.handlers if type(h) is logging.StreamHandler]
+            handler.setFormatter(stream_handlers[0].formatter)
+            root.handlers[:] = [handler, providers.logging_handler]
+            logging.getLogger("svc.sec").warning(secret_msg, extra={"token": "raw-tok"})
+            otlp_bodies = _exported_log_bodies(memory_otlp, providers)
+        finally:
+            providers.shutdown()
+
+    stdout_entry = json.loads(buf.getvalue().splitlines()[-1])
+    assert stdout_entry["token"] == "[REDACTED]"
+    otlp_rec = memory_otlp.logs.get_finished_logs()[-1].log_record
+    assert otlp_rec.attributes["token"] == "[REDACTED]"
+    for rendered in (stdout_entry["message"], otlp_bodies[-1]):
+        assert "user=true prefix=user" in rendered
+        assert "eyJhbGciOiJIUzI1NiJ9" not in rendered
+        assert "alice@example.com" not in rendered
+        assert "my!pass" not in rendered
+        assert "[REDACTED]" in rendered
+
+
+def test_ac13_untyped_health_route_fails_schema_check(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "local_dev")
+    bad_app = FastAPI()
+
+    @bad_app.get("/health")
+    def _untyped_health():
+        return {"status": "healthy"}
+
+    paths = bad_app.openapi()["paths"]
+    schema = paths["/health"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+    assert schema == {}

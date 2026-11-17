@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Any
@@ -102,6 +103,17 @@ def parse_iso_utc(value: object, *, allow_naive: bool = False) -> datetime:
     return parsed.astimezone(UTC)
 
 
+def redact_text(text: str, env: Mapping[str, str], env_re: re.Pattern[str]) -> str:
+    vals = {
+        v.strip()
+        for k, v in env.items()
+        if env_re.search(k) and isinstance(v, str) and len(v.strip()) >= 4
+    }
+    for val in sorted(vals, key=len, reverse=True):
+        text = text.replace(val, "***")
+    return text
+
+
 def _yaml() -> Any:
     import yaml
 
@@ -117,6 +129,7 @@ __all__ = [
     "parse_contract_version",
     "parse_iso_utc",
     "parse_string",
+    "redact_text",
     "require_contract_version",
     "validate_http_url",
 ]

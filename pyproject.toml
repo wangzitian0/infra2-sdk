@@ -1,6 +1,6 @@
 [project]
 name = "infra2-sdk"
-version = "3.31.0"
+version = "3.32.0"
 description = "Portable environment contracts and standard-protocol runtime adapters"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -29,7 +29,7 @@ http = [
     "httpx>=0.27,<1",
 ]
 fastapi = [
-    "fastapi>=0.142,<1",
+    "fastapi>=0.162,<1",
     "opentelemetry-api>=1.24,<2",
     "opentelemetry-sdk>=1.24,<2",
     "opentelemetry-exporter-otlp-proto-http>=1.24,<2",
@@ -37,7 +37,7 @@ fastapi = [
 ]
 all = [
     "boto3>=1.34,<2",
-    "fastapi>=0.142,<1",
+    "fastapi>=0.162,<1",
     "httpx>=0.27,<1",
     "opentelemetry-api>=1.24,<2",
     "opentelemetry-sdk>=1.24,<2",
@@ -48,7 +48,7 @@ all = [
 dev = [
     "boto3>=1.34,<2",
     "build>=1.2,<2,!=1.5.1",
-    "fastapi>=0.142,<1",
+    "fastapi>=0.162,<1",
     "httpx>=0.27,<1",
     "opentelemetry-api>=1.24,<2",
     "opentelemetry-sdk>=1.24,<2",
