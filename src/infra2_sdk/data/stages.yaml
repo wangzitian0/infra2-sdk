@@ -24,3 +24,197 @@ stages:
   manual.adjudication:
     order: 7
     definition: Human adjudication or manually triggered evidence gates.
+policy_version: 1
+cells:
+  local.pre:
+    stage: local
+    phase: pre
+    stage_id: local.advisory
+    owner: app
+    check_list: local_pre
+    trigger: git_hook
+    budget_seconds: 30
+    scale: none
+    enforcement: blocks
+    stop_on_fail: true
+    capabilities: [code, recorded_llm]
+  local.operation:
+    stage: local
+    phase: operation
+    stage_id: local.advisory
+    owner: platform
+    check_list: null
+    trigger: git_push
+    budget_seconds: 30
+    scale: none
+    enforcement: blocks
+    stop_on_fail: true
+    capabilities: [code]
+  local.post:
+    stage: local
+    phase: post
+    stage_id: local.advisory
+    owner: app
+    check_list: local_post
+    trigger: manual
+    budget_seconds: 300
+    scale: none
+    enforcement: reports
+    stop_on_fail: false
+    capabilities: [code, recorded_llm]
+  ci.pre:
+    stage: ci
+    phase: pre
+    stage_id: github_ci.merge_authority
+    owner: app
+    check_list: ci_pre
+    trigger: pr_push
+    budget_seconds: 240
+    scale: none
+    enforcement: blocks
+    stop_on_fail: false
+    capabilities: [code, recorded_llm]
+  ci.operation:
+    stage: ci
+    phase: operation
+    stage_id: github_ci.merge_authority
+    owner: platform
+    check_list: null
+    trigger: pr_push
+    budget_seconds: 240
+    scale: none
+    enforcement: blocks
+    stop_on_fail: true
+    capabilities: [code]
+  ci.post:
+    stage: ci
+    phase: post
+    stage_id: github_ci.merge_authority
+    owner: app
+    check_list: ci_post
+    trigger: merge_main
+    budget_seconds: 480
+    scale: none
+    enforcement: reports
+    stop_on_fail: false
+    capabilities: [code, recorded_llm]
+  preview.pre:
+    stage: preview
+    phase: pre
+    stage_id: preview.runtime
+    owner: platform
+    check_list: [contract]
+    trigger: pr_push
+    budget_seconds: 60
+    scale: none
+    enforcement: blocks
+    stop_on_fail: true
+    capabilities: [code]
+  preview.operation:
+    stage: preview
+    phase: operation
+    stage_id: preview.runtime
+    owner: platform
+    check_list: smoke
+    trigger: pr_push
+    budget_seconds: 120
+    scale: none
+    enforcement: blocks
+    stop_on_fail: true
+    capabilities: [code, running_service]
+  preview.post:
+    stage: preview
+    phase: post
+    stage_id: preview.runtime
+    owner: app
+    check_list: preview_gate
+    trigger: pr_push
+    budget_seconds: 360
+    scale: small
+    enforcement: blocks
+    stop_on_fail: false
+    capabilities: [code, running_service, real_llm]
+  staging.pre:
+    stage: staging
+    phase: pre
+    stage_id: staging.release_validation
+    owner: platform
+    check_list: [contract, provenance, env, upstream_post]
+    trigger: release_tag
+    budget_seconds: 60
+    scale: none
+    enforcement: blocks
+    stop_on_fail: true
+    capabilities: [code]
+  staging.operation:
+    stage: staging
+    phase: operation
+    stage_id: staging.release_validation
+    owner: platform
+    check_list: smoke
+    trigger: release_tag
+    budget_seconds: 120
+    scale: none
+    enforcement: blocks
+    stop_on_fail: true
+    capabilities: [code, running_service]
+  staging.post:
+    stage: staging
+    phase: post
+    stage_id: staging.release_validation
+    owner: app
+    check_list: staging_gate
+    trigger: release_tag
+    budget_seconds: 600
+    scale: medium
+    enforcement: reports
+    stop_on_fail: false
+    capabilities: [code, running_service, real_llm, staging_data, real_provider]
+  prod.pre:
+    stage: prod
+    phase: pre
+    stage_id: prod.release_integrity
+    owner: platform
+    check_list: [contract, provenance, env, upstream_post]
+    trigger: owner_approval
+    budget_seconds: 60
+    scale: none
+    enforcement: blocks
+    stop_on_fail: true
+    capabilities: [code]
+  prod.operation:
+    stage: prod
+    phase: operation
+    stage_id: prod.release_integrity
+    owner: platform
+    check_list: smoke
+    trigger: owner_approval
+    budget_seconds: 120
+    scale: none
+    enforcement: blocks
+    stop_on_fail: true
+    capabilities: [code, running_service]
+  prod.post:
+    stage: prod
+    phase: post
+    stage_id: prod.release_integrity
+    owner: app
+    check_list: prod_gate
+    trigger: owner_approval
+    budget_seconds: 300
+    scale: read_only
+    enforcement: reports
+    stop_on_fail: false
+    capabilities: [code, running_service, real_llm, real_provider]
+  scheduled_audit:
+    stage: schedule
+    phase: post
+    stage_id: staging.provider_regression
+    owner: app
+    check_list: scheduled_audit
+    trigger: clock
+    budget_seconds: 3600
+    scale: full
+    enforcement: reports
+    stop_on_fail: false
+    capabilities: [code, running_service, real_llm, staging_data, real_provider]

@@ -465,6 +465,8 @@ def test_symbols_removed_in_3_20_0_are_absent_from_modules_and_packages(
 
 REMOVED_IN_3_22_0: tuple[tuple[str, str], ...] = (("infra2_sdk.deploy", "dispatch_and_wait"),)
 
+REMOVED_IN_3_33_0: tuple[tuple[str, str], ...] = (("infra2_sdk.manifests", "LEGACY_V1_HOOK_SLOTS"),)
+
 
 @pytest.mark.parametrize(
     ("module", "dotted"),
@@ -479,6 +481,25 @@ def test_symbols_removed_in_3_22_0_are_absent_from_modules_and_packages(
     for part in parents:
         owner = getattr(owner, part)
     assert not hasattr(owner, leaf), f"{module}.{dotted} was removed in 3.22.0"
+    if not parents:
+        for package in (infra2_sdk, infra2_sdk.runtime):
+            assert leaf not in package.__all__, f"{package.__name__}.__all__ lists {leaf}"
+            assert not hasattr(package, leaf), f"{package.__name__} still exposes {leaf}"
+
+
+@pytest.mark.parametrize(
+    ("module", "dotted"),
+    REMOVED_IN_3_33_0,
+    ids=[f"{m}.{n}" for m, n in REMOVED_IN_3_33_0],
+)
+def test_symbols_removed_in_3_33_0_are_absent_from_modules_and_packages(
+    module: str, dotted: str
+) -> None:
+    owner = importlib.import_module(module)
+    *parents, leaf = dotted.split(".")
+    for part in parents:
+        owner = getattr(owner, part)
+    assert not hasattr(owner, leaf), f"{module}.{dotted} was removed"
     if not parents:
         for package in (infra2_sdk, infra2_sdk.runtime):
             assert leaf not in package.__all__, f"{package.__name__}.__all__ lists {leaf}"

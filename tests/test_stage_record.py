@@ -94,3 +94,35 @@ def test_every_plan_stage_id_is_a_stage_of_stages_yaml() -> None:
 def test_failed_check_gives_fail_verdict() -> None:
     rec = StageRecord.from_dict({**GOOD, "checks": [{"name": "a", "ok": False}]})
     assert rec.verdict == "fail" and rec.to_dict()["verdict"] == "fail"
+
+
+def test_skipped_check_semantics_and_zero_active_checks_fail(tmp_path: Path) -> None:
+    # A skipped check cannot claim ok=True.
+    with pytest.raises(ValueError, match="skipped check cannot have ok=True"):
+        StageRecord.from_dict({**GOOD, "checks": [{"name": "a", "ok": True, "skipped": True}]})
+
+    # All checks skipped => 0 active checks ran => verdict is fail.
+    all_skipped = StageRecord.from_dict(
+        {**GOOD, "checks": [{"name": "a", "ok": False, "skipped": True, "detail": "off (#1)"}]}
+    )
+    assert all_skipped.verdict == "fail"
+    assert all_skipped.checks[0].status == "skipped"
+    assert StageRecord.from_dict(all_skipped.to_dict()) == all_skipped
+
+    # One active pass + one skipped => pass, and skipped check is not green in trail.
+    mixed = StageRecord.from_dict(
+        {
+            **GOOD,
+            "checks": [
+                {"name": "active", "ok": True, "seconds": 1.0},
+                {"name": "muted", "ok": False, "skipped": True, "detail": "off (#1)"},
+            ],
+        }
+    )
+    assert mixed.verdict == "pass"
+    file = tmp_path / "checks.jsonl"
+    record_verdicts(file, source="preview_gate", checks=mixed.checks)
+    trail = load_trail(file, expected_sources=["preview_gate"])
+    assert trail.is_green("active")
+    assert not trail.is_green("muted")
+    assert "muted" not in trail.failing
