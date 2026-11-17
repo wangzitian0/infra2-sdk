@@ -55,7 +55,7 @@ _SECRET_VAL = re.compile(
 )
 _RISKY_KEY = re.compile(
     r"^(?:authorization|cookies?|api_key|token|secret|password"
-    r"|raw_prompt|raw_response|response_body|error_body)$",
+    r"|raw_(?:prompt|response)|(?:response|error)_body)$",
     re.I,
 )
 _STD_ATTRS = frozenset(logging.makeLogRecord({}).__dict__) | {
@@ -117,16 +117,12 @@ class _JsonLogFormatter(logging.Formatter):
             "message": _scrub(r.getMessage(), env),
             "trace_id": tid,
             "span_id": sid,
-            "request_id": current_request_id() or (str(ctx.get("request_id") or "") or None),
+            "request_id": current_request_id() or ctx.get("request_id") or None,
             **self._id,
         }
-        out.update(
-            {
-                k: _scrub(v, env, str(k))
-                for k, v in {**r.__dict__, **ctx}.items()
-                if k not in _STD_ATTRS and k not in out
-            }
-        )
+        for k, v in ((r.__dict__ | ctx) if ctx else r.__dict__).items():
+            if k not in _STD_ATTRS and k not in out:
+                out[k] = _scrub(v, env, str(k))
         if r.exc_info:
             out["exception"] = _scrub(self.formatException(r.exc_info), env)
         return json.dumps(out, separators=(",", ":"), default=str)
@@ -165,8 +161,8 @@ def _setup_logging(
 
 
 class _RedactingLogRecordProcessor:
-    def on_emit(self, log_record: Any) -> None:
-        rec, env = getattr(log_record, "log_record", log_record), os.environ
+    def on_emit(self, r: Any) -> None:
+        rec, env = getattr(r, "log_record", r), os.environ
         if rec.body is not None:
             rec.body = _scrub(rec.body, env)
         if rec.attributes:
@@ -525,7 +521,7 @@ def init_worker(
     set_global: bool = True,
     environ: Mapping[str, str] | None = None,
 ) -> TelemetryProviders | None:
-    """Init JSON logs, redaction, and OTLP telemetry for a worker."""
+    """Init JSON logs and telemetry for a worker."""
     _chk_name(name)
     s: OtelSettings | None = None
     try:

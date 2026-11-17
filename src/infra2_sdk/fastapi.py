@@ -43,7 +43,7 @@ _RELAX_HINT = "pass strict_otel=False to log the problem and start"
 
 try:
     from pydantic import BaseModel, ConfigDict
-except ImportError:  # pragma: no cover
+except ImportError:
     _HAS_PYDANTIC = False
 else:
     _HAS_PYDANTIC = True
@@ -80,16 +80,16 @@ async def _run_rid(inner: Any, scope: Any, receive: Any, send: Any) -> None:
         return
     from infra2_sdk.runtime import otel as _o
 
-    hdr = dict(scope.get("headers") or ()).get(b"x-request-id", b"")
-    rid = hdr.decode("latin1").strip() or str(uuid.uuid4())
+    raw = next((v for k, v in scope.get("headers") or () if k.lower() == b"x-request-id"), b"")
+    rid = raw.decode("latin1").strip() or str(uuid.uuid4())
     scope.setdefault("state", {})["request_id"] = rid
-    tok = _o._ctx_rid(rid)
+    tok, hdr = _o._ctx_rid(rid), (b"x-request-id", rid.encode("latin1"))
 
-    async def _send(msg: Any) -> None:
-        if msg["type"] == "http.response.start":
-            h = [p for p in msg.get("headers", ()) if p[0].lower() != b"x-request-id"]
-            msg = {**msg, "headers": [*h, (b"x-request-id", rid.encode("latin1"))]}
-        await send(msg)
+    async def _send(m: Any) -> None:
+        if m["type"] == "http.response.start":
+            h = [p for p in m.get("headers", ()) if p[0].lower() != b"x-request-id"]
+            m = {**m, "headers": [*h, hdr]}
+        await send(m)
 
     try:
         await inner(scope, receive, _send)
@@ -248,7 +248,7 @@ def init_service(
     check_timeout_seconds: float = 10.0,
     health_extra: Callable[[], Mapping[str, Any]] | None = None,
 ) -> None:
-    """Mount ``/livez``, ``/readyz``, ``/health`` and init telemetry."""
+    """Mount probe routes and init telemetry."""
     try:
         from fastapi.responses import JSONResponse
     except ImportError as exc:
@@ -271,8 +271,8 @@ def init_service(
         if enable_otel
         else (None, environment_from_env().tier.value, None)
     )
-    release = _otel._setup_logging(name, parsed, tier=tier, level=log_level)
-    app.state.service_release = dict(release)
+    rel = _otel._setup_logging(name, parsed, tier=tier, level=log_level)
+    app.state.service_release = dict(rel)
     setattr(app.state, _INITIALIZED_ATTRIBUTE, name)
     if suppress_probe_telemetry:
         access = logging.getLogger("uvicorn.access")
@@ -297,7 +297,7 @@ def init_service(
 
     @app.get("/livez", tags=t, response_model=ProbeResponse)
     def livez():
-        return JSONResponse(status_code=200, content={"status": "alive", "service": name})
+        return JSONResponse({"status": "alive", "service": name})
 
     @app.get(
         "/readyz", tags=t, response_model=ProbeResponse, responses={503: {"model": ProbeResponse}}
@@ -310,7 +310,7 @@ def init_service(
         }
         if code != _HTTP_OK:
             c["reasons"] = body["reasons"]
-        return JSONResponse(status_code=code, content=c)
+        return JSONResponse(c, status_code=code)
 
     @app.get(
         "/health", tags=t, response_model=HealthResponse, responses={503: {"model": HealthResponse}}
@@ -318,7 +318,7 @@ def init_service(
     async def health():
         code, body = await report()
         extra = health_extra() if health_extra else {}
-        return JSONResponse(status_code=code, content={**extra, **body, "service": name, **release})
+        return JSONResponse({**extra, **body, "service": name, **rel}, status_code=code)
 
     if settings is not None:
         _start_telemetry(app, settings, strict=strict_otel)
