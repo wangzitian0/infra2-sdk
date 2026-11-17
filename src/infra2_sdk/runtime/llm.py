@@ -81,6 +81,36 @@ class LlmSettings:
     def role_reasoning_effort(self, role: _ModelRole) -> str:
         return self._role_attr(role, "reasoning_effort")
 
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, str], **overrides: Any) -> LlmSettings:
+        """Build LlmSettings from a plain string mapping using shared_env.yaml names."""
+        from infra2_sdk.runtime.environment import _resolve_env, shared_env_contract
+
+        llm_specs = {str(entry["name"]): entry for entry in shared_env_contract()["groups"]["llm"]}
+
+        def _pick(canonical: str, *, sensitive: bool = False) -> str | None:
+            entry = llm_specs[canonical]
+            aliases = tuple(str(a) for a in (entry.get("deprecated_aliases") or ()))
+            return _resolve_env(mapping, canonical, aliases=aliases, sensitive=sensitive).value
+
+        values: dict[str, Any] = {}
+        for attr, key, sensitive in (
+            ("provider", "LLM_PROVIDER", False),
+            ("base_url", "LLM_BASE_URL", False),
+            ("api_key", "LLM_API_KEY", True),
+            ("large_model", "LARGE_MODEL", False),
+            ("small_model", "SMALL_MODEL", False),
+            ("multimodal_model", "MULTIMODAL_MODEL", False),
+            ("encryption_keys", "LLM_ENCRYPTION_KEYS", True),
+        ):
+            if attr in overrides and overrides[attr] is not None:
+                continue
+            resolved = _pick(key, sensitive=sensitive)
+            if resolved is not None:
+                values[attr] = resolved
+        values.update({k: v for k, v in overrides.items() if v is not None})
+        return cls(**values)
+
 
 @dataclass(frozen=True)
 class LlmResponse:

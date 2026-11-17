@@ -25,7 +25,7 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.30.0"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.31.0"
 ```
 
 ## Modules
@@ -65,6 +65,7 @@ python -m pip install \
 | PostgreSQL | `probe_postgres`, `redact_postgres_error` | `infra2_sdk.runtime.postgres` | Psycopg reachability/write probe with credential redaction |
 | S3 storage | `create_s3_client`, `probe_s3`, `ensure_bucket`, `put_object_bytes` | `infra2_sdk.runtime.s3` | Boto3 client initialization, bucket reachability probe, bucket creation, and byte writes |
 | Secret manifests | `render_agent_template`, `render_agent_policy` | `infra2_sdk.secrets` | Manifest-driven Vault Agent Consul template and HCL policy generation |
+| Shared env contract | `shared_env_contract`, `check_shared_env_conformance`, `assert_distinct_release_identity` | `infra2_sdk.runtime.environment` | Canonical cross-repo naming table (`data/shared_env.yaml`), conformance check, and release-identity check |
 
 ## Runtime extras
 
@@ -73,10 +74,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.30.0'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.31.0'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.30.0'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.31.0'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -197,7 +198,7 @@ Install the published wheel in a fresh Python 3.11+ environment:
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install \
-  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.30.0/infra2_sdk-3.30.0-py3-none-any.whl'
+  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.31.0/infra2_sdk-3.31.0-py3-none-any.whl'
 ```
 
 For a local connectivity exercise, start this server in another terminal:

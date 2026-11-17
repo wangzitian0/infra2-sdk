@@ -618,8 +618,7 @@ def test_stage_hook_plan_phases() -> None:
     assert stage_hook_plan("schedule") == StageHookPlan(
         "schedule", (), None, "scheduled_audit", stage_id="staging.provider_regression"
     )
-    with pytest.warns(DeprecationWarning, match="v3.31.0"):
-        assert plan.deploy_slot == plan.operation_slot
+    assert not hasattr(plan, "deploy_slot")
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         assert plan.operation_slot == "smoke"

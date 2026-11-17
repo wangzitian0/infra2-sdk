@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from importlib.resources import files as _resource_files
+from pathlib import Path
 from typing import Any
 
 from infra2_sdk.runtime._otel_env import load_resource_attributes
@@ -340,10 +342,81 @@ def _normalize_deployment_environment(value: str, tier: str | EnvironmentTier) -
     return resolved_tier.value
 
 
+def shared_env_contract(path: str | Path | None = None) -> dict[str, Any]:
+    """Return the cross-repository shared environment variable table."""
+    import yaml
+
+    source = (
+        Path(path)
+        if path is not None
+        else _resource_files("infra2_sdk").joinpath("data/shared_env.yaml")
+    )
+    with source.open(encoding="utf-8") as handle:
+        data = yaml.safe_load(handle) or {}
+    if not isinstance(data, dict) or not isinstance(data.get("groups"), dict):
+        raise ValueError("shared_env.yaml: 'groups' must be a mapping")
+    return data
+
+
+def check_shared_env_conformance(
+    names: Iterable[str],
+    *,
+    path: str | Path | None = None,
+) -> list[str]:
+    """Flag deprecated or non-canonical environment names in a manifest or mapping."""
+    contract = shared_env_contract(path)
+    deprecated_to_canonical: dict[str, str] = {}
+    for entries in contract["groups"].values():
+        for entry in entries:
+            canonical = str(entry["name"])
+            for alias in entry.get("deprecated_aliases") or ():
+                deprecated_to_canonical[str(alias)] = canonical
+    for entry in contract.get("retired") or ():
+        deprecated_to_canonical[str(entry["name"])] = str(entry["use"])
+
+    issues: list[str] = []
+    for name in sorted({str(item).strip() for item in names if str(item).strip()}):
+        replacement = deprecated_to_canonical.get(name)
+        if replacement is not None:
+            issues.append(f"{name} is deprecated: use {replacement}")
+    return issues
+
+
+def assert_distinct_release_identity(records: Sequence[Mapping[str, Any]]) -> None:
+    """Fail if deployed non-preview environments share RELEASE_ID across different builds."""
+    deployed: list[tuple[str, str, str, str]] = []
+    for record in records:
+        raw_env = str(record.get("environment") or "").strip()
+        if not raw_env:
+            continue
+        tier = to_environment_tier(raw_env)
+        if tier not in {EnvironmentTier.STAGING, EnvironmentTier.PRODUCTION}:
+            continue
+        release_id = str(record.get("release_id") or "").strip()
+        git_sha = str(record.get("git_commit_sha") or "").strip()
+        digest = str(record.get("image_digest") or "").strip()
+        if release_id:
+            deployed.append((tier.value, release_id, git_sha, digest))
+
+    for idx, (env_a, rel_a, sha_a, dig_a) in enumerate(deployed):
+        for env_b, rel_b, sha_b, dig_b in deployed[idx + 1 :]:
+            if env_a == env_b or rel_a != rel_b:
+                continue
+            sha_diff = bool(sha_a and sha_b and sha_a != sha_b)
+            dig_diff = bool(dig_a and dig_b and dig_a != dig_b)
+            if sha_diff or dig_diff:
+                raise ValueError(
+                    f"duplicate RELEASE_ID {rel_a!r} across {env_a} and {env_b} for distinct builds"
+                )
+
+
 __all__ = [
     "EnvironmentTier",
     "RuntimeEnvKey",
+    "assert_distinct_release_identity",
+    "check_shared_env_conformance",
     "is_preview_alias",
     "resolve_environment_tier",
     "runtime_env_contract",
+    "shared_env_contract",
 ]

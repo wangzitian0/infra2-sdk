@@ -19,9 +19,12 @@ from infra2_sdk.runtime.config_schema import (
 from infra2_sdk.runtime.environment import (
     EnvironmentTier,
     RuntimeEnvKey,
+    assert_distinct_release_identity,
+    check_shared_env_conformance,
     resolve_environment_tier,
     resolve_runtime_env,
     runtime_env_contract,
+    shared_env_contract,
 )
 from infra2_sdk.runtime.health import (
     Dependency,
@@ -78,6 +81,9 @@ __all__ = [
     "RuntimeEnvKey",
     "resolve_runtime_env",
     "runtime_env_contract",
+    "shared_env_contract",
+    "check_shared_env_conformance",
+    "assert_distinct_release_identity",
     "EnvironmentField",
     "EnvironmentManifest",
     "environment_manifest_from_model",

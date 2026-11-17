@@ -9,7 +9,6 @@ import re
 import subprocess
 import sys
 import time
-import warnings
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from importlib import import_module
@@ -51,11 +50,6 @@ class StageHookPlan:
     operation_slot: str | None
     post_slot: str | None
     stage_id: str = field(kw_only=True)
-
-    @property
-    def deploy_slot(self) -> str | None:
-        warnings.warn("deploy_slot is removed in v3.31.0", DeprecationWarning, stacklevel=2)
-        return self.operation_slot
 
 
 STAGE_HOOK_PLANS: Mapping[str, StageHookPlan] = MappingProxyType(
