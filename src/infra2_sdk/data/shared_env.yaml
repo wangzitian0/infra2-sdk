@@ -1,0 +1,138 @@
+# Single source of truth for cross-repository shared environment variable names.
+# Applications and infra2 validate manifests and runtime settings against this table.
+schema_version: 1
+groups:
+  runtime:
+    - name: ENVIRONMENT
+      deprecated_aliases: [ENV, APP_ENV]
+      sensitive: false
+      owners: [infra2, finance_report, truealpha]
+    - name: SERVICE_VERSION
+      deprecated_aliases: [IMAGE_TAG]
+      sensitive: false
+      owners: [infra2]
+    - name: GIT_COMMIT_SHA
+      deprecated_aliases: []
+      sensitive: false
+      owners: [infra2, finance_report, truealpha]
+    - name: IMAGE_DIGEST
+      deprecated_aliases: [DATA_ENGINE_IMAGE_DIGEST, TRUEALPHA_DATA_ENGINE_IMAGE_DIGEST]
+      sensitive: false
+      owners: [infra2, truealpha]
+    - name: CONFIGURATION_SHA256
+      deprecated_aliases: [TRUEALPHA_CONFIGURATION_SHA256]
+      sensitive: false
+      owners: [infra2, truealpha]
+    - name: RELEASE_ID
+      deprecated_aliases: [RELEASE_MANIFEST_ID, TRUEALPHA_RELEASE_MANIFEST_ID]
+      sensitive: false
+      owners: [infra2, truealpha]
+    - name: OTEL_SERVICE_NAME
+      deprecated_aliases: []
+      sensitive: false
+      owners: [infra2, finance_report, truealpha]
+    - name: OTEL_EXPORTER_OTLP_ENDPOINT
+      deprecated_aliases: []
+      sensitive: false
+      owners: [infra2, finance_report, truealpha]
+    - name: OTEL_RESOURCE_ATTRIBUTES
+      deprecated_aliases: []
+      sensitive: false
+      owners: [infra2, finance_report, truealpha]
+  postgres_redis:
+    - name: DATABASE_URL
+      deprecated_aliases: []
+      sensitive: true
+      owners: [infra2, finance_report, truealpha]
+    - name: REDIS_URL
+      deprecated_aliases: []
+      sensitive: true
+      owners: [infra2, finance_report]
+  s3:
+    - name: S3_ENDPOINT
+      deprecated_aliases: [CANARY_S3_ENDPOINT_URL]
+      sensitive: false
+      owners: [infra2, finance_report, truealpha]
+    - name: S3_BUCKET
+      deprecated_aliases: [CANARY_S3_BUCKET]
+      sensitive: false
+      owners: [infra2, finance_report, truealpha]
+    - name: S3_ACCESS_KEY
+      deprecated_aliases: [CANARY_S3_ACCESS_KEY]
+      sensitive: true
+      owners: [infra2, finance_report, truealpha]
+    - name: S3_SECRET_KEY
+      deprecated_aliases: [CANARY_S3_SECRET_KEY]
+      sensitive: true
+      owners: [infra2, finance_report, truealpha]
+    - name: S3_REGION
+      deprecated_aliases: []
+      sensitive: false
+      owners: [finance_report, truealpha]
+  llm:
+    - name: LLM_PROVIDER
+      deprecated_aliases: [AI_PROVIDER]
+      sensitive: false
+      owners: [finance_report, truealpha]
+    - name: LLM_BASE_URL
+      deprecated_aliases: [AI_BASE_URL]
+      sensitive: false
+      owners: [finance_report, truealpha]
+    - name: LLM_API_KEY
+      deprecated_aliases: [AI_API_KEY, ZAI_API_KEY]
+      sensitive: true
+      owners: [finance_report, truealpha]
+    - name: LARGE_MODEL
+      deprecated_aliases: []
+      sensitive: false
+      owners: [finance_report]
+    - name: SMALL_MODEL
+      deprecated_aliases: []
+      sensitive: false
+      owners: [finance_report]
+    - name: MULTIMODAL_MODEL
+      deprecated_aliases: []
+      sensitive: false
+      owners: [finance_report]
+    - name: LLM_ENCRYPTION_KEYS
+      deprecated_aliases: []
+      sensitive: true
+      owners: [finance_report]
+  frontend_telemetry:
+    - name: NEXT_PUBLIC_APP_URL
+      deprecated_aliases: []
+      sensitive: false
+      owners: [infra2, finance_report, truealpha]
+    - name: NEXT_PUBLIC_API_URL
+      deprecated_aliases: []
+      sensitive: false
+      owners: [infra2, finance_report]
+    - name: NEXT_PUBLIC_OTEL_EXPORTER_OTLP_ENDPOINT
+      deprecated_aliases: []
+      sensitive: false
+      owners: [infra2, finance_report, truealpha]
+    - name: OPENPANEL_API_URL
+      deprecated_aliases: []
+      sensitive: false
+      owners: [infra2, finance_report]
+    - name: OPENPANEL_CLIENT_ID
+      deprecated_aliases: []
+      sensitive: false
+      owners: [infra2, finance_report, truealpha]
+    - name: OPENPANEL_ENVIRONMENT
+      deprecated_aliases: []
+      sensitive: false
+      owners: [infra2, finance_report, truealpha]
+    - name: OPENPANEL_SCRIPT_URL
+      deprecated_aliases: []
+      sensitive: false
+      owners: [infra2, finance_report]
+retired:
+  - name: CANARY_POSTGRES_USER
+    use: DATABASE_URL
+  - name: CANARY_POSTGRES_PASSWORD
+    use: DATABASE_URL
+  - name: CANARY_POSTGRES_DATABASE
+    use: DATABASE_URL
+  - name: TRUEALPHA_CAPTURE_APPROVED_BY
+    use: CAPTURE_APPROVED_BY

@@ -6,6 +6,18 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+## 3.31.0 - 2026-11-17
+
+### Added
+
+- Add `data/shared_env.yaml`, `shared_env_contract()`, and `check_shared_env_conformance()` in `infra2_sdk.runtime.environment` to converge cross-repo naming across `ENVIRONMENT`, Postgres/Redis, S3, LLM, and frontend OpenPanel/OTLP contracts ([#227](https://github.com/wangzitian0/infra2-sdk/issues/227)).
+- Add `assert_distinct_release_identity()` in `infra2_sdk.runtime.environment` to reject matching `RELEASE_ID` values across distinct staging and production builds ([#227](https://github.com/wangzitian0/infra2-sdk/issues/227)).
+- Add `LlmSettings.from_mapping()` in `infra2_sdk.runtime.llm` to resolve canonical `LLM_*` settings and deprecated `AI_*` / `ZAI_API_KEY` fallbacks from an explicit mapping ([#227](https://github.com/wangzitian0/infra2-sdk/issues/227)).
+
+### Removed
+
+- Remove deprecated `StageHookPlan.deploy_slot` property (`operation_slot` replaces it as scheduled for v3.31.0) ([#210](https://github.com/wangzitian0/infra2-sdk/issues/210)).
+
 ## 3.30.0 - 2026-11-16
 
 ### Changed
