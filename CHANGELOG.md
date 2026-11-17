@@ -6,6 +6,22 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+## 3.32.0 - 2026-11-17
+
+### Added
+
+- Add structured JSON stdout logging with `trace_id`, `span_id`, `request_id`, `service.name`, `deployment.environment.name`, and `service.version`, pre-export OTLP and stdout secret/email redaction, `X-Request-ID` ASGI middleware and `current_request_id()`, `process.uptime` observable gauge, and `init_worker()` for non-HTTP workers ([#213](https://github.com/wangzitian0/infra2-sdk/issues/213)).
+- Add Pydantic OpenAPI response models (`ProbeResponse`, `CheckDetail`, `HealthResponse`, `ErrorResponse`) on `/livez`, `/readyz`, and `/health`, release identity (`version`, `git_sha`) on `/health`, `app.state.service_release`, and `health_extra` hook on `init_service` ([#213](https://github.com/wangzitian0/infra2-sdk/issues/213)).
+- Add `suppress_probe_telemetry=True` on `init_service` using FastAPI `>=0.162` probe exclusion so `/livez`, `/readyz`, and `/health` emit zero traces and metrics ([#213](https://github.com/wangzitian0/infra2-sdk/issues/213)).
+
+### Changed
+
+- Raise the `fastapi` extra lower bound from `0.142` to `0.162` ([#213](https://github.com/wangzitian0/infra2-sdk/issues/213)).
+
+### Removed
+
+- Remove legacy `_LOG_FORMAT` constant from `infra2_sdk.fastapi` ([#213](https://github.com/wangzitian0/infra2-sdk/issues/213)).
+
 ## 3.31.0 - 2026-11-17
 
 ### Added

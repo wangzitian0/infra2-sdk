@@ -98,6 +98,7 @@
     "probe_http": "consumer: finance_report",
     "OtelSettings": "consumer: finance_report, truealpha",
     "configure_telemetry": "consumer: truealpha",
+    "init_worker": "documented: README section Core runtime entrypoints",
     "signal_endpoint": "consumer: finance_report",
     "LlmSettings": "consumer: finance_report",
     "LlmClient": "held: pending adoption by truealpha#1652 Wave 2 (sources/llm.py -> infra2_sdk.runtime.llm) and finance_report#2936 llm transport delegation",

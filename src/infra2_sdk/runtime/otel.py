@@ -2,15 +2,24 @@
 
 from __future__ import annotations
 
+import atexit
+import json
 import logging
+import os
+import re
+import sys
 import threading
+import time
 from collections.abc import Mapping
+from contextlib import suppress
+from contextvars import ContextVar
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 from warnings import warn
 
-from infra2_sdk._wire import validate_http_url
+from infra2_sdk._wire import redact_text, validate_http_url
 from infra2_sdk.runtime._optional import require
 from infra2_sdk.runtime._otel_env import parse_otel_boolean, parse_traces_sampler
 from infra2_sdk.runtime.environment import (
@@ -34,6 +43,139 @@ REQUIRED_IDENTITY_ATTRIBUTES: tuple[str, ...] = (
     "service.version",
     "infra.iac.ref",
 )
+_REQUEST_ID: ContextVar[str | None] = ContextVar("rid", default=None)
+_SECRET_ENV = re.compile(
+    r"(?:^|_)(?:SECRET|TOKEN|PASSWORD|PASSWD|KEY|AUTH|CREDENTIAL|WEBHOOK|DSN)(?:_URL)?$"
+    r"|^(?:DATABASE|REDIS)_URL$|^INFRA2_OUT_OF_BAND_",
+    re.I,
+)
+_EMAIL_RE = re.compile(r"\b[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
+_SECRET_VAL = re.compile(
+    r"Bearer\s+[\w.-]+|eyJ[\w-]{8,}\.[\w-]+\.[\w-]*|(?:gh[ps]_|sk-|op_)[\w-]{8,}|(?<=:)[^:@/\s]+(?=@)"
+)
+_RISKY_KEY = re.compile(
+    r"^(?:authorization|cookies?|api_key|token|secret|password"
+    r"|raw_(?:prompt|response)|(?:response|error)_body)$",
+    re.I,
+)
+_STD_ATTRS = frozenset(logging.makeLogRecord({}).__dict__) | {
+    "message",
+    "asctime",
+    "otelTraceID",
+    "otelSpanID",
+    "otelTraceSampled",
+    "otelServiceName",
+}
+
+
+def current_request_id() -> str | None:
+    return _REQUEST_ID.get()
+
+
+def _sl() -> Any:
+    return getattr(sys.modules.get("structlog"), "contextvars", None)
+
+
+def _ctx_rid(val: Any, tok: Any = None) -> Any:
+    if c := _sl():
+        c.bind_contextvars(request_id=val) if tok is None else c.unbind_contextvars("request_id")
+    return _REQUEST_ID.set(val) if tok is None else _REQUEST_ID.reset(tok)
+
+
+def _scrub(val: Any, env: Mapping[str, str], key: str | None = None) -> Any:
+    if key and _RISKY_KEY.match(key):
+        return "[REDACTED]"
+    if isinstance(val, str):
+        s = redact_text(_SECRET_VAL.sub("[REDACTED]", val), env, _SECRET_ENV)
+        return _EMAIL_RE.sub("[EMAIL]", s)
+    if isinstance(val, Mapping):
+        return {k: _scrub(v, env, str(k)) for k, v in val.items()}
+    return type(val)(_scrub(x, env) for x in val) if isinstance(val, (list, tuple)) else val
+
+
+class _JsonLogFormatter(logging.Formatter):
+    def __init__(self, ident: dict[str, str]) -> None:
+        super().__init__()
+        self._id = ident
+
+    def format(self, r: logging.LogRecord) -> str:
+        env, sl = os.environ, _sl()
+        ctx = dict(sl.get_contextvars() or {}) if sl else {}
+        tid, sid = r.__dict__.get("otelTraceID"), r.__dict__.get("otelSpanID")
+        if tid and set(str(tid)) != {"0"}:
+            tid, sid = str(tid), str(sid) if sid else None
+        elif (ot := sys.modules.get("opentelemetry.trace")) and (
+            c := ot.get_current_span().get_span_context()
+        ).is_valid:
+            tid, sid = format(c.trace_id, "032x"), format(c.span_id, "016x")
+        else:
+            tid = sid = None
+        out = {
+            "timestamp": datetime.fromtimestamp(r.created, UTC).isoformat(),
+            "level": r.levelname,
+            "logger": r.name,
+            "message": _scrub(r.getMessage(), env),
+            "trace_id": tid,
+            "span_id": sid,
+            "request_id": current_request_id() or ctx.get("request_id") or None,
+            **self._id,
+        }
+        for k, v in ((r.__dict__ | ctx) if ctx else r.__dict__).items():
+            if k not in _STD_ATTRS and k not in out:
+                out[k] = _scrub(v, env, str(k))
+        if r.exc_info:
+            out["exception"] = _scrub(self.formatException(r.exc_info), env)
+        return json.dumps(out, separators=(",", ":"), default=str)
+
+
+def _chk_name(name: str) -> None:
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("name must not be blank")
+
+
+def _setup_logging(
+    name: str,
+    s: OtelSettings | None,
+    *,
+    tier: str = "local_dev",
+    level: int | None,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    sha = resolve_runtime_env(env, RuntimeEnvKey.GIT_COMMIT_SHA).value or "unknown"
+    ver = s.service_version if s else None
+    if not s:
+        with suppress(ValueError):
+            ver = resolve_runtime_env(env, RuntimeEnvKey.SERVICE_VERSION).value
+    rver = ver if ver and ver != "unknown" else sha
+    if level is not None and not (root := logging.getLogger()).handlers:
+        h = logging.StreamHandler(sys.stdout)
+        attrs = {
+            "service.name": s.service_name if s else name,
+            "deployment.environment.name": s.deployment_environment if s else tier,
+            "service.version": rver,
+        }
+        h.setFormatter(_JsonLogFormatter(attrs))
+        root.addHandler(h)
+        root.setLevel(level)
+    return {"version": rver, "git_sha": sha}
+
+
+class _RedactingLogRecordProcessor:
+    def on_emit(self, r: Any) -> None:
+        rec, env = getattr(r, "log_record", r), os.environ
+        if rec.body is not None:
+            rec.body = _scrub(rec.body, env)
+        if rec.attributes:
+            rec.attributes = {k: _scrub(v, env, str(k)) for k, v in rec.attributes.items()}
+
+    def enabled(self, *_: Any, **__: Any) -> bool:
+        return True
+
+    def shutdown(self) -> None:
+        pass
+
+    def force_flush(self, _t: int = 30_000) -> bool:
+        return True
 
 
 def _ot(module: str) -> Any:
@@ -183,6 +325,9 @@ class TelemetryProviders:
     logging_handler: Any | None = None
 
     def shutdown(self) -> None:
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
         _release_global(self)
         if self.logging_handler is not None:
             logging.getLogger().removeHandler(self.logging_handler)
@@ -325,7 +470,14 @@ def _build_providers(
             )
         ],
     )
+    started = time.monotonic()
+    mp.get_meter("infra2_sdk").create_observable_gauge(
+        "process.uptime",
+        callbacks=[lambda _: (metrics_api.Observation(time.monotonic() - started),)],
+        unit="s",
+    )
     lp = _ot("sdk._logs").LoggerProvider(resource=res)
+    lp.add_log_record_processor(_RedactingLogRecordProcessor())
     lp.add_log_record_processor(
         _ot("sdk._logs.export").BatchLogRecordProcessor(
             _ot("exporter.otlp.proto.http._log_exporter").OTLPLogExporter(
@@ -360,6 +512,38 @@ def _build_providers(
     return providers, not_installed
 
 
+def init_worker(
+    name: str,
+    *,
+    strict: bool = True,
+    require_issued_identity: bool = False,
+    log_level: int | None = logging.INFO,
+    set_global: bool = True,
+    environ: Mapping[str, str] | None = None,
+) -> TelemetryProviders | None:
+    """Init JSON logs and telemetry for a worker."""
+    _chk_name(name)
+    s: OtelSettings | None = None
+    try:
+        s = OtelSettings.from_env(
+            environ,
+            strict=strict,
+            default_service_name=name,
+            require_issued_identity=require_issued_identity,
+        )
+    except ValueError as exc:
+        if strict:
+            raise
+        warn(str(exc), RuntimeWarning, stacklevel=2)
+    _setup_logging(name, s, level=log_level, env=environ)
+    if not s or not s.enabled:
+        return None
+    providers = configure_telemetry(s, set_global=set_global)
+    if set_global:
+        atexit.register(providers.shutdown)
+    return providers
+
+
 def signal_endpoint(base: str | None, signal: str) -> str:
     if base is None:
         raise ValueError("OTLP endpoint is required")
@@ -378,6 +562,8 @@ __all__ = [
     "REQUIRED_IDENTITY_ATTRIBUTES",
     "TelemetryProviders",
     "configure_telemetry",
+    "current_request_id",
+    "init_worker",
     "resource_attributes",
     "signal_endpoint",
 ]

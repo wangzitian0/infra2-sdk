@@ -25,7 +25,7 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.31.0"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.32.0"
 ```
 
 ## Modules
@@ -58,7 +58,8 @@ python -m pip install \
 
 | Capability | Canonical entrypoint | Primary module | Description |
 |---|---|---|---|
-| Service bootstrap | `init_service` | `infra2_sdk.fastapi` | Mounts `/livez`, `/readyz`, `/health` routes and configures OpenTelemetry providers |
+| Service bootstrap | `init_service` | `infra2_sdk.fastapi` | Mounts `/livez`, `/readyz`, `/health` routes and configures JSON logs and OpenTelemetry |
+| Worker bootstrap | `init_worker` | `infra2_sdk.runtime.otel` | Configures JSON logs and OpenTelemetry providers for non-HTTP workers |
 | Health probes | `check_health`, `run_probes`, `probe_orchestrator` | `infra2_sdk.runtime.health` | Framework-agnostic readiness evaluation across declared dependency probes |
 | HTTP client | `request_with_retry`, `arequest_with_retry`, `probe_http` | `infra2_sdk.runtime.http` | Standard httpx retry helpers honoring `Retry-After` plus a reachability probe |
 | LLM client | `LlmClient`, `LlmResponse`, `LlmSettings` | `infra2_sdk.runtime.llm` | OpenAI-compatible chat, structured JSON, and embeddings client with OTel `gen_ai.*` spans |
@@ -74,10 +75,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.31.0'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.32.0'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.31.0'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v3.32.0'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -198,7 +199,7 @@ Install the published wheel in a fresh Python 3.11+ environment:
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install \
-  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.31.0/infra2_sdk-3.31.0-py3-none-any.whl'
+  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v3.32.0/infra2_sdk-3.32.0-py3-none-any.whl'
 ```
 
 For a local connectivity exercise, start this server in another terminal:
@@ -257,8 +258,8 @@ This single call registers three standardized endpoints and starts telemetry
 (`pip install 'infra2-sdk[fastapi]'` includes the OpenTelemetry packages):
 - `/livez`: Liveness probe (process-only, anti-puppet rule: never touches databases or external services).
 - `/readyz`: Readiness probe. It runs `db_checker` and answers HTTP 503 with `reasons` when the check fails.
-- `/health`: The `infra2_sdk.runtime.health` report (`status`, `checks`, `reasons`) plus `service`. A failed database check gives `unhealthy` and HTTP 503.
-- OpenTelemetry: when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, one OTLP bootstrap exports traces, metrics and logs. It stops with the application lifespan. FastAPI 0.142 or later emits the request spans itself. A deployed tier (preview, staging, production) without the endpoint logs a warning that names the variable, unless `OTEL_SDK_DISABLED=true`.
+- `/health`: The `infra2_sdk.runtime.health` report (`status`, `checks`, `reasons`) plus `service`, optional release fields (`version`, `git_sha`), and optional `health_extra` keys. A failed check gives `unhealthy` and HTTP 503. All three routes expose Pydantic OpenAPI schemas (`ProbeResponse`, `HealthResponse`, `ErrorResponse`). Do not set one custom `operation_id` on a multi-method route such as `methods=["GET", "HEAD"]`.
+- OpenTelemetry: when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, one OTLP bootstrap exports traces, metrics (including `process.uptime`), and redacted logs. It stops with the application lifespan. FastAPI 0.162 or later emits request spans and metrics itself; `suppress_probe_telemetry=True` excludes `/livez`, `/readyz`, and `/health` from request spans and metrics by default. `X-Request-ID` middleware echoes and propagates request IDs into logs. A deployed tier (preview, staging, production) without the endpoint logs a warning that names the variable, unless `OTEL_SDK_DISABLED=true`.
 
 `db_checker` returns `bool` or `(bool, detail)` and may be sync or async. A false result, an exception, or a call longer than `check_timeout_seconds` (default 10) counts as a failure. Sync checkers run in a worker thread.
 
@@ -285,7 +286,7 @@ With `strict_otel=False`, a telemetry problem never stops the service. A missing
 - A Python `RuntimeWarning` reports a malformed `OTEL_RESOURCE_ATTRIBUTES` (the SDK discards the attributes), an invalid `OTEL_SDK_DISABLED` (it counts as false) and an invalid `OTEL_TRACES_SAMPLER` or `OTEL_TRACES_SAMPLER_ARG` (the default sampler applies). The warning also appears when no endpoint is set.
 - A log record of the logger `infra2_sdk.fastapi` reports every other problem. With an endpoint, the record is `Could not initialize OpenTelemetry: ...` at WARNING, and telemetry stays off. Without an endpoint, the only record is `OTEL_EXPORTER_OTLP_ENDPOINT is not set; OpenTelemetry export is off`. Its level is WARNING in a deployed tier and DEBUG elsewhere. An unknown or conflicting tier counts as deployed. The tier comes from the tier variables. When no tier variable is set and `OtelSettings.from_env` succeeds, it comes from `deployment.environment.name`. After a failed `OtelSettings.from_env`, only the tier variables count, so a problem in the settings can lower the level to DEBUG. With `OTEL_SDK_DISABLED=true` and no other problem, the record is `OpenTelemetry is disabled by the environment` at DEBUG, with or without an endpoint. An explicit off switch is not a misconfiguration.
 
-Before OpenTelemetry attaches its logging handler, `init_service` calls `logging.basicConfig(level=log_level)` (default `INFO`). The call changes nothing when the root logger already has a handler. Pass `log_level=None` to skip it. The SDK serves no `/metrics` endpoint.
+Before OpenTelemetry attaches its logging handler, `init_service` installs a structured JSON `StreamHandler(sys.stdout)` at `log_level` (default `INFO`) when the root logger has no handlers yet. Pass `log_level=None` to skip it. The SDK serves no `/metrics` endpoint.
 
 
 

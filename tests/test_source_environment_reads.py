@@ -276,7 +276,6 @@ def _read_name_differences(
 def test_the_names_at_read_sites_are_the_contract_keys_plus_the_allow_list() -> None:
     found = {name for path in _source_files() for _, name in _read_sites(_parse(path))}
     contract_keys = {key.value for key in RuntimeEnvKey} - {
-        "GIT_COMMIT_SHA",
         "IMAGE_DIGEST",
         "CONFIGURATION_SHA256",
         "RELEASE_ID",

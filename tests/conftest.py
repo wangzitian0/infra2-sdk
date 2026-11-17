@@ -24,13 +24,17 @@ class _MemoryOtlp:
         memory_logs = getattr(log_export, "InMemoryLogRecordExporter", None)
         self.spans = InMemorySpanExporter()
         self.logs = (memory_logs or log_export.InMemoryLogExporter)()
+        self.metrics_data: list = []
         self.endpoints: list[tuple[str, str]] = []
 
     def metric_exporter(self, endpoint: str):
         from opentelemetry.sdk.metrics.export import MetricExporter, MetricExportResult
 
+        parent = self
+
         class Memory(MetricExporter):
             def export(self, metrics_data, timeout_millis=10_000, **kwargs):
+                parent.metrics_data.append(metrics_data)
                 return MetricExportResult.SUCCESS
 
             def force_flush(self, timeout_millis=10_000):

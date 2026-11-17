@@ -5,8 +5,10 @@ from __future__ import annotations
 import inspect
 import logging
 import time
-from collections.abc import Awaitable, Callable, Iterable
+import uuid
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from contextlib import asynccontextmanager
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from infra2_sdk.runtime.environment import (
@@ -35,10 +37,64 @@ if TYPE_CHECKING:
     from infra2_sdk.runtime.otel import OtelSettings
 
 _logger = logging.getLogger("infra2_sdk.fastapi")
-_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 _INITIALIZED_ATTRIBUTE = "infra2_service_name"
 _CheckerResult = bool | tuple[bool, str]
 _RELAX_HINT = "pass strict_otel=False to log the problem and start"
+
+try:
+    from pydantic import BaseModel, ConfigDict
+except ImportError:
+    _HAS_PYDANTIC = False
+else:
+    _HAS_PYDANTIC = True
+
+    class ProbeResponse(BaseModel):
+        status: str
+        service: str
+        reasons: list[str] | None = None
+
+    class CheckDetail(BaseModel):
+        status: str
+        detail: str
+        duration_ms: float
+        required: bool
+
+    class HealthResponse(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        status: str
+        service: str
+        version: str
+        git_sha: str
+        checks: dict[str, CheckDetail]
+        reasons: list[str]
+
+    class ErrorResponse(BaseModel):
+        error_id: str
+        detail: str
+        request_id: str | None = None
+
+
+async def _run_rid(inner: Any, scope: Any, receive: Any, send: Any) -> None:
+    if scope["type"] != "http":
+        await inner(scope, receive, send)
+        return
+    from infra2_sdk.runtime import otel as _o
+
+    raw = next((v for k, v in scope.get("headers") or () if k.lower() == b"x-request-id"), b"")
+    rid = raw.decode("latin1").strip() or str(uuid.uuid4())
+    scope.setdefault("state", {})["request_id"] = rid
+    tok, hdr = _o._ctx_rid(rid), (b"x-request-id", rid.encode("latin1"))
+
+    async def _send(m: Any) -> None:
+        if m["type"] == "http.response.start":
+            h = [p for p in m.get("headers", ()) if p[0].lower() != b"x-request-id"]
+            m = {**m, "headers": [*h, hdr]}
+        await send(m)
+
+    try:
+        await inner(scope, receive, _send)
+    finally:
+        _o._ctx_rid(None, tok)
 
 
 class _ProbeAccessFilter(logging.Filter):
@@ -89,9 +145,7 @@ def _in_deployed_tier() -> bool:
 
 
 def _with_relax_hint(exc: ValueError) -> ValueError:
-    if isinstance(exc, EnvironmentConflictError):
-        return EnvironmentConflictError(f"{exc}; {_RELAX_HINT}")
-    return ValueError(f"{exc}; {_RELAX_HINT}")
+    return type(exc)(f"{exc}; {_RELAX_HINT}")
 
 
 def _require_known_tier() -> None:
@@ -121,20 +175,18 @@ def _resolve_telemetry(
     strict: bool,
     require_issued_identity: bool = False,
     suppress_probe_telemetry: bool = False,
-) -> tuple[OtelSettings | None, str]:
+) -> tuple[OtelSettings | None, str, OtelSettings | None]:
     from infra2_sdk.runtime.otel import OtelSettings
 
     if strict and not require_issued_identity:
         _require_known_tier()
     try:
-        kwargs: dict[str, Any] = {
-            "strict": strict,
-            "default_service_name": name,
-            "suppress_probe_telemetry": suppress_probe_telemetry,
-        }
-        if require_issued_identity:
-            kwargs["require_issued_identity"] = True
-        settings = OtelSettings.from_env(**kwargs)
+        settings = OtelSettings.from_env(
+            strict=strict,
+            default_service_name=name,
+            suppress_probe_telemetry=suppress_probe_telemetry,
+            require_issued_identity=require_issued_identity,
+        )
     except Exception as exc:
         if strict:
             if isinstance(exc, ValueError):
@@ -144,25 +196,21 @@ def _resolve_telemetry(
             _log_missing_endpoint(deployed=_in_deployed_tier())
         else:
             _logger.warning("Could not initialize OpenTelemetry: %s", exc)
-        return None, EnvironmentTier.LOCAL_DEV.value
+        return None, EnvironmentTier.LOCAL_DEV.value, None
     tier = settings.environment
     if settings.sdk_disabled:
         _logger.debug("OpenTelemetry is disabled by the environment")
-        return None, tier
+        return None, tier, settings
     if settings.endpoint is None:
         _log_missing_endpoint(deployed=EnvironmentTier(tier) in _PLATFORM_OWNED_TIERS)
-        return None, tier
-    return settings, tier
+        return None, tier, settings
+    return settings, tier, settings
 
 
-def _start_telemetry(
-    app: Any, settings: OtelSettings, *, strict: bool, log_level: int | None
-) -> None:
+def _start_telemetry(app: Any, settings: OtelSettings, *, strict: bool) -> None:
     try:
         from infra2_sdk.runtime.otel import configure_telemetry
 
-        if log_level is not None:
-            logging.basicConfig(level=log_level, format=_LOG_FORMAT)
         providers = configure_telemetry(settings, set_global=True)
         app.state.telemetry_providers = providers
         original = app.router.lifespan_context
@@ -195,27 +243,25 @@ def init_service(
     enable_otel: bool = True,
     strict_otel: bool = True,
     require_issued_identity: bool = False,
-    suppress_probe_telemetry: bool = False,
+    suppress_probe_telemetry: bool = True,
     log_level: int | None = logging.INFO,
     check_timeout_seconds: float = 10.0,
+    health_extra: Callable[[], Mapping[str, Any]] | None = None,
 ) -> None:
-    """Register ``/livez``, ``/readyz``, and ``/health`` routes and initialize OpenTelemetry."""
+    """Mount probe routes and init telemetry."""
     try:
         from fastapi.responses import JSONResponse
     except ImportError as exc:
-        raise ImportError("fastapi is required to use infra2_sdk.fastapi.init_service") from exc
+        raise ImportError("fastapi is required for infra2_sdk.fastapi.init_service") from exc
     if hasattr(app.state, _INITIALIZED_ATTRIBUTE):
         raise RuntimeError("init_service was already called for this app")
     if not check_timeout_seconds > 0:
         raise ValueError("check_timeout_seconds must be positive")
-    if not isinstance(name, str) or not name.strip():
-        raise ValueError("name must not be blank")
-    all_checks: list[DependencyCheck] = []
-    if db_checker is not None:
-        all_checks.append(_DatabaseCheck(db_checker))
-    all_checks.extend(checks)
+    from infra2_sdk.runtime import otel as _otel
 
-    settings, resolved_tier = (
+    all_checks = ([_DatabaseCheck(db_checker)] if db_checker else []) + list(checks)
+    _otel._chk_name(name)
+    settings, tier, parsed = (
         _resolve_telemetry(
             name,
             strict=strict_otel,
@@ -223,47 +269,63 @@ def init_service(
             suppress_probe_telemetry=suppress_probe_telemetry,
         )
         if enable_otel
-        else (None, environment_from_env().tier.value)
+        else (None, environment_from_env().tier.value, None)
     )
+    rel = _otel._setup_logging(name, parsed, tier=tier, level=log_level)
+    app.state.service_release = dict(rel)
     setattr(app.state, _INITIALIZED_ATTRIBUTE, name)
     if suppress_probe_telemetry:
-        access_logger = logging.getLogger("uvicorn.access")
-        if not any(isinstance(f, _ProbeAccessFilter) for f in access_logger.filters):
-            access_logger.addFilter(_ProbeAccessFilter())
+        access = logging.getLogger("uvicorn.access")
+        if not any(isinstance(f, _ProbeAccessFilter) for f in access.filters):
+            access.addFilter(_ProbeAccessFilter())
+        if isinstance(tel := getattr(app, "_telemetry", None), dict):
+            prev = tel.get("exclude")
+            tel["exclude"] = lambda s, p=prev: s.get("path") in _otel.PROBE_PATHS or (p and p(s))
+
+    _orig = app.build_middleware_stack
+    app.build_middleware_stack, app.middleware_stack = (lambda: partial(_run_rid, _orig())), None
 
     async def report() -> tuple[int, dict[str, Any]]:
         if not all_checks and manifest is None:
             return _HTTP_OK, {"status": _HealthStatus.HEALTHY.value, "checks": {}, "reasons": []}
+        kw: dict[str, Any] = {"timeout_seconds": check_timeout_seconds}
         if manifest is not None:
-            return await check_health(
-                all_checks,
-                manifest=manifest,
-                tier=resolved_tier,
-                timeout_seconds=check_timeout_seconds,
-            )
-        return await check_health(all_checks, timeout_seconds=check_timeout_seconds)
+            kw.update(manifest=manifest, tier=tier)
+        return await check_health(all_checks, **kw)
 
-    @app.get("/livez", tags=["Observability"], include_in_schema=False)
+    t = ["Observability"]
+
+    @app.get("/livez", tags=t, response_model=ProbeResponse)
     def livez():
-        return JSONResponse(status_code=200, content={"status": "alive", "service": name})
+        return JSONResponse({"status": "alive", "service": name})
 
-    @app.get("/readyz", tags=["Observability"], include_in_schema=False)
+    @app.get(
+        "/readyz", tags=t, response_model=ProbeResponse, responses={503: {"model": ProbeResponse}}
+    )
     async def readyz():
-        status_code, body = await report()
-        if status_code == _HTTP_OK:
-            return JSONResponse(content={"status": "ready", "service": name})
-        return JSONResponse(
-            status_code=status_code,
-            content={"status": "not_ready", "service": name, "reasons": body["reasons"]},
-        )
+        code, body = await report()
+        c: dict[str, Any] = {
+            "status": "ready" if code == _HTTP_OK else "not_ready",
+            "service": name,
+        }
+        if code != _HTTP_OK:
+            c["reasons"] = body["reasons"]
+        return JSONResponse(c, status_code=code)
 
-    @app.get("/health", tags=["Observability"], include_in_schema=True)
+    @app.get(
+        "/health", tags=t, response_model=HealthResponse, responses={503: {"model": HealthResponse}}
+    )
     async def health():
-        status_code, body = await report()
-        return JSONResponse(status_code=status_code, content={**body, "service": name})
+        code, body = await report()
+        extra = health_extra() if health_extra else {}
+        return JSONResponse({**extra, **body, "service": name, **rel}, status_code=code)
 
     if settings is not None:
-        _start_telemetry(app, settings, strict=strict_otel, log_level=log_level)
+        _start_telemetry(app, settings, strict=strict_otel)
 
 
-__all__ = ["init_service"]
+__all__ = (
+    ["CheckDetail", "ErrorResponse", "HealthResponse", "ProbeResponse", "init_service"]
+    if _HAS_PYDANTIC
+    else ["init_service"]
+)

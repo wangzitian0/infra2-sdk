@@ -15,7 +15,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
-from infra2_sdk._wire import _is_loopback_host, parse_iso_utc
+from infra2_sdk._wire import _is_loopback_host, parse_iso_utc, redact_text
 from infra2_sdk.transport import (
     _github_api_url,
     _github_headers,
@@ -144,7 +144,7 @@ _DRY_RUN_ENV = "_".join(("WATCHDOG", "DRY", "RUN"))
 _EXPECTED_SOURCES = ("out-of-band-watchdog", "iac-runner-health")
 _FULL, _OFF = "full", "off"
 _MAIN_REF, _TAG_REFS = "refs/heads/main", "refs/tags/"
-_PER_PAGE, _MAX_PAGES, _MAX_DETAIL_CHARS, _MIN_SCRUBBED_VALUE = 100, 10, 1000, 4
+_PER_PAGE, _MAX_PAGES, _MAX_DETAIL_CHARS = 100, 10, 1000
 _SECRET_ENV_NAME = re.compile(
     r"^(?:INFRA2_|DOKPLOY_|CF_|FEISHU_|OP_|VAULT_)\w*"
     r"(?:HOST|USER|TOKEN|KEY|SECRET|PASSWORD|WEBHOOK|CHAT_ID|APP_ID)"
@@ -200,20 +200,8 @@ def check_name(title: str, *, title_prefix: str = _TITLE_PREFIX) -> str | None:
 
 
 def scrub(text: str, env: Mapping[str, str]) -> str:
-    secrets = sorted(
-        {
-            v.strip()
-            for k, v in env.items()
-            if _SECRET_ENV_NAME.search(k)
-            and isinstance(v, str)
-            and len(v.strip()) >= _MIN_SCRUBBED_VALUE
-        },
-        key=len,
-        reverse=True,
-    )
-    for val in secrets:
-        text = text.replace(val, "***")
-    text = _IPV6.sub("<ip>", _IPV4.sub("<ip>", text))
+    text = redact_text(text, env, _SECRET_ENV_NAME)
+    text = _IPV4.sub("<ip>", _IPV6.sub("<ip>", text))
     return text[:_MAX_DETAIL_CHARS] + " ...(truncated)" if len(text) > _MAX_DETAIL_CHARS else text
 
 
