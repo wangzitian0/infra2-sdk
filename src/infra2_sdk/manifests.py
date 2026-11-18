@@ -971,7 +971,7 @@ def _run_step(
     runner: Callable[..., subprocess.CompletedProcess[str]],
     bad: Callable[[str, str, float], None],
     flush: Callable[[], None],
-    budget_seconds: int,
+    timeout_label: str,
 ) -> tuple[bool, int, str, str, float]:
     t0 = time.monotonic()
     try:
@@ -985,7 +985,7 @@ def _run_step(
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
-        msg = f"{step_name} timed out after {budget_seconds}s"
+        msg = f"{step_name} timed out {timeout_label}"
         bad(check_id, msg, t0)
         return (
             False,
@@ -1020,8 +1020,10 @@ def _execute_cell(
     ambient_env: Mapping[str, str] | None,
     result_path: Path | None,
     runner: Callable[..., subprocess.CompletedProcess[str]],
+    stop_on_fail: bool | None = None,
 ) -> HookRunResult:
     policy = CELL_POLICIES[cell_id]
+    effective_stop = policy.stop_on_fail if stop_on_fail is None else stop_on_fail
     if "running_service" in policy.capabilities and (not app_url or not app_url.strip()):
         raise ValueError("app_url must be a non-empty string")
     src_env = os.environ if ambient_env is None else ambient_env
@@ -1109,6 +1111,7 @@ def _execute_cell(
     else:
         boot_cmds = list(dict.fromkeys(r.bootstrap.strip() for r in active if r.bootstrap.strip()))
     for cmd in boot_cmds:
+        boot_label = f"after {budget}s (cell budget {budget}s)"
         ok, code, fstep, tail, _ = _run_step(
             ["sh", "-lc", cmd],
             step_name="bootstrap",
@@ -1119,11 +1122,11 @@ def _execute_cell(
             runner=runner,
             bad=bad,
             flush=flush,
-            budget_seconds=budget,
+            timeout_label=boot_label,
         )
         if not ok:
             msg = (
-                f"bootstrap timed out after {budget}s"
+                f"bootstrap timed out {boot_label}"
                 if fstep == "timeout"
                 else f"bootstrap exited with code {code}"
             )
@@ -1137,6 +1140,10 @@ def _execute_cell(
             )
             continue
         rem = max(end - time.monotonic(), 0.001)
+        if r.timeout_seconds < budget and r.timeout_seconds <= rem:
+            t_label = f"after {r.timeout_seconds}s (check timeout {r.timeout_seconds}s)"
+        else:
+            t_label = f"after {budget}s (cell budget {budget}s)"
         ok, code, fstep, tail, dur = _run_step(
             r.argv,
             step_name="run",
@@ -1147,17 +1154,15 @@ def _execute_cell(
             runner=runner,
             bad=bad,
             flush=flush,
-            budget_seconds=budget,
+            timeout_label=t_label,
         )
         if not ok:
             msg = (
-                f"run timed out after {budget}s"
-                if fstep == "timeout"
-                else f"run exited with code {code}"
+                f"run timed out {t_label}" if fstep == "timeout" else f"run exited with code {code}"
             )
             if first_fail is None:
                 first_fail = (code, fstep, msg, tail)
-            if policy.stop_on_fail or (fstep == "timeout" and end - time.monotonic() <= 0):
+            if effective_stop or (fstep == "timeout" and end - time.monotonic() <= 0):
                 return finish("fail", *first_fail)
         else:
             done.append(CheckVerdict(r.id, True, seconds=dur))
@@ -1225,6 +1230,7 @@ def run_hook_slot(
         ambient_env=ambient_env,
         result_path=result_path,
         runner=runner,
+        stop_on_fail=True,
     )
 
 

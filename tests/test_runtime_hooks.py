@@ -1797,3 +1797,93 @@ def test_g1_policy_table_completeness_derived_views_and_grid_printer(tmp_path: P
     grid2 = format_check_grid(m2)
     assert "Service: truealpha/app (schema v2, policy v1)" in grid2
     assert "`health`" in grid2 and "`nightly_verdicts`" in grid2
+
+
+def test_run_hook_slot_stays_stop_on_fail_while_run_cell_runs_all_post_checks(
+    tmp_path: Path,
+) -> None:
+    raw = _sample_v2_manifest_dict()
+    raw["slots"] = {  # type: ignore[index]
+        **raw["slots"],  # type: ignore[dict-item]
+        "preview_gate": {
+            "checks": [{"id": "first", "argv": ["first"]}, {"id": "second", "argv": ["second"]}],
+            "timeout_seconds": 120,
+        },
+    }
+    manifest = RuntimeHooksManifest.from_dict(raw)
+    calls: list[list[str]] = []
+
+    def fail_first(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        rc = 2 if cmd[0] == "first" else 0
+        return subprocess.CompletedProcess(cmd, rc, "", "boom" if rc else "")
+
+    hook_res = run_hook_slot(
+        manifest,
+        "preview_gate",
+        app_url="https://app.example.com",
+        cwd=tmp_path,
+        ambient_env={},
+        runner=fail_first,
+    )
+    assert calls == [["first"]]
+    assert (hook_res.status, len(hook_res.checks)) == ("fail", 1)
+
+    calls.clear()
+    cell_res = run_cell(
+        manifest,
+        "preview",
+        "post",
+        app_url="https://app.example.com",
+        cwd=tmp_path,
+        ambient_env={},
+        runner=fail_first,
+    )
+    assert calls == [["first"], ["second"]]
+    assert [(c.name, c.ok) for c in cell_res.checks] == [("first", False), ("second", True)]
+
+
+def test_check_timeout_detail_reports_check_timeout_vs_cell_budget(tmp_path: Path) -> None:
+    manifest = RuntimeHooksManifest.from_dict(
+        {
+            "schema_version": 3,
+            "service": "demo/app",
+            "checks": [
+                {
+                    "id": "fast_cap",
+                    "argv": ["fast_cap"],
+                    "needs": ["running_service"],
+                    "writes": False,
+                    "accepts_scale": False,
+                    "timeout_seconds": 10,
+                },
+                {
+                    "id": "larger_cap",
+                    "argv": ["larger_cap"],
+                    "needs": ["running_service"],
+                    "writes": False,
+                    "accepts_scale": False,
+                    "timeout_seconds": 200,
+                },
+            ],
+        }
+    )
+
+    def timeout_first(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        if cmd[0] == "fast_cap":
+            raise subprocess.TimeoutExpired(cmd=cmd, timeout=10, stderr="slow")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    res = run_cell(
+        manifest,
+        "preview",
+        "post",
+        app_url="https://app.example.com",
+        cwd=tmp_path,
+        ambient_env={},
+        runner=timeout_first,
+    )
+    assert res.status == "fail"
+    assert "check timeout 10s" in res.checks[0].detail
+    assert "10s" in res.summary
+    assert res.checks[1].ok is True

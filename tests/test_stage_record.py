@@ -10,7 +10,13 @@ import pytest
 from infra2_sdk import StageRecord
 from infra2_sdk.ci import load_delivery_stages
 from infra2_sdk.manifests import STAGE_HOOK_PLANS
-from infra2_sdk.observability import CheckVerdict, load_trail, record_verdicts
+from infra2_sdk.observability import (
+    CheckVerdict,
+    load_trail,
+    reconcile_issue_trail,
+    record_verdicts,
+    title_for,
+)
 
 GOOD = {
     "env": "staging.release_validation",
@@ -123,6 +129,29 @@ def test_skipped_check_semantics_and_zero_active_checks_fail(tmp_path: Path) -> 
     file = tmp_path / "checks.jsonl"
     record_verdicts(file, source="preview_gate", checks=mixed.checks)
     trail = load_trail(file, expected_sources=["preview_gate"])
+    assert trail.complete is True
     assert trail.is_green("active")
     assert not trail.is_green("muted")
     assert "muted" not in trail.failing
+    assert not trail.is_retired("muted")
+
+    # A muted check must not cause reconcile_issue_trail to auto-close its open issue as retired.
+    class _StubApi:
+        def __init__(self) -> None:
+            self.closed: list[int] = []
+
+        def open_issues(self) -> list[dict]:
+            return [{"number": 42, "title": title_for("muted")}]
+
+        def create(self, title: str, body: str, labels: object) -> int:
+            return 0
+
+        def comment(self, number: int, body: str) -> None:
+            return None
+
+        def close(self, number: int) -> None:
+            self.closed.append(number)
+
+    api = _StubApi()
+    assert reconcile_issue_trail(api, trail, mode="full") == 0
+    assert api.closed == []

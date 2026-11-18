@@ -183,18 +183,25 @@ class Trail:
     failing: dict[str, CheckVerdict] = field(default_factory=dict)
     green: set[str] = field(default_factory=set)
     complete: bool = False
+    skipped: set[str] = field(default_factory=set)
 
     def is_green(self, name: str) -> bool:
         return name not in self.failing and name in self.green
 
     def is_retired(self, name: str) -> bool:
-        return self.complete and name not in self.failing and name not in self.green
+        return (
+            self.complete
+            and name not in self.failing
+            and name not in self.green
+            and name not in self.skipped
+        )
 
     def renamed(self, rename) -> Trail:
         return Trail(
             {rename(k): v for k, v in self.failing.items()},
             {rename(n) for n in self.green},
             self.complete,
+            {rename(n) for n in self.skipped},
         )
 
 
@@ -266,8 +273,8 @@ def load_trail(path: str | Path, expected_sources: Iterable[str] = _EXPECTED_SOU
         trail.green.add(src)
         for c in checks:
             if c.skipped:
-                continue
-            if c.ok:
+                trail.skipped.add(c.name)
+            elif c.ok:
                 trail.green.add(c.name)
             else:
                 trail.failing.setdefault(c.name, c)
@@ -281,6 +288,8 @@ def load_trail(path: str | Path, expected_sources: Iterable[str] = _EXPECTED_SOU
                 "watchdog-step",
             )
     trail.green.difference_update(trail.failing)
+    trail.skipped.difference_update(trail.failing)
+    trail.skipped.difference_update(trail.green)
     trail.complete = all_complete and all(s in seen for s in expected_sources)
     return trail
 

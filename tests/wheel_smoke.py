@@ -97,9 +97,10 @@ REMOVED_NAMES = (
     ("infra2_sdk.observability", "_BOUND_CAP_ENV"),
     ("infra2_sdk.observability", "_GH_EVENT_NAME_KEY"),
     ("infra2_sdk.observability", "_GH_REF_KEY"),
-    # Removed in 3.31.0 (#210) and 3.32.0 (#213).
+    # Removed in 3.31.0 (#210), 3.32.0 (#213), and G1/K5 (infra2#1644).
     ("infra2_sdk.manifests", "StageHookPlan.deploy_slot"),
     ("infra2_sdk.fastapi", "_LOG_FORMAT"),
+    ("infra2_sdk.manifests", "LEGACY_V1_HOOK_SLOTS"),
 )
 
 # RuntimeEnvKey members removed in 3.4.0 (issue #102, decision 2) and 3.8.2 (#126).
@@ -220,9 +221,9 @@ def smoke_removed_names() -> None:
     import infra2_sdk.runtime
     from infra2_sdk.runtime.environment import RuntimeEnvKey, runtime_env_contract
 
-    assert len(REMOVED_NAMES) == 59 and len(set(REMOVED_NAMES)) == 59, (
+    assert len(REMOVED_NAMES) == 60 and len(set(REMOVED_NAMES)) == 60, (
         f"REMOVED_NAMES has {len(REMOVED_NAMES)} entries ({len(set(REMOVED_NAMES))} unique), "
-        "expected 59"
+        "expected 60"
     )
     for module, dotted in REMOVED_NAMES:
         *parents, leaf = dotted.split(".")
