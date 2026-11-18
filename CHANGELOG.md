@@ -6,6 +6,22 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+## 3.33.0 - 2026-11-18
+
+### Added
+
+- Add `policy_version: 1` and `cells:` table in `data/stages.yaml` covering all 15 `{local, ci, preview, staging, prod} x {pre, operation, post}` cells plus `scheduled_audit` (`POLICY_VERSION`, `CELL_POLICIES`, `CellPolicy`) ([#230](https://github.com/wangzitian0/infra2-sdk/pull/230), [wangzitian0/infra2#1644](https://github.com/wangzitian0/infra2/issues/1644)).
+- Add manifest `schema_version: 3` (`CheckRow`, `CellOverrides`, `OverrideReason`, `resolve_check_cells`), `run_cell`, and `format_check_grid` in `infra2_sdk.manifests` ([#230](https://github.com/wangzitian0/infra2-sdk/pull/230)).
+- Add `skipped: bool = False` and `.status` on `CheckVerdict`, non-retirement tracking of skipped checks in `Trail`, and 0-active-check failure enforcement in `StageRecord` and `run_cell` ([#230](https://github.com/wangzitian0/infra2-sdk/pull/230)).
+
+### Changed
+
+- Derive `HOOK_SLOTS`, `SLOT_MAX_TIMEOUT_SECONDS`, and `STAGE_HOOK_PLANS` from `data/stages.yaml` and raise `CURRENT_HOOKS_SCHEMA_VERSION` to `3` while keeping `schema_version: 2` readable and `run_hook_slot` stop-on-fail compatible ([#230](https://github.com/wangzitian0/infra2-sdk/pull/230)).
+
+### Removed
+
+- Remove runtime hooks `schema_version: 1` support and `LEGACY_V1_HOOK_SLOTS` from `infra2_sdk.manifests` ([#230](https://github.com/wangzitian0/infra2-sdk/pull/230)).
+
 ## 3.32.0 - 2026-11-17
 
 ### Added

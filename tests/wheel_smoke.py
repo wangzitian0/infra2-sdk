@@ -97,7 +97,7 @@ REMOVED_NAMES = (
     ("infra2_sdk.observability", "_BOUND_CAP_ENV"),
     ("infra2_sdk.observability", "_GH_EVENT_NAME_KEY"),
     ("infra2_sdk.observability", "_GH_REF_KEY"),
-    # Removed in 3.31.0 (#210), 3.32.0 (#213), and G1/K5 (infra2#1644).
+    # Removed in 3.31.0 (#210), 3.32.0 (#213), and 3.33.0 (#230, infra2#1644).
     ("infra2_sdk.manifests", "StageHookPlan.deploy_slot"),
     ("infra2_sdk.fastapi", "_LOG_FORMAT"),
     ("infra2_sdk.manifests", "LEGACY_V1_HOOK_SLOTS"),
