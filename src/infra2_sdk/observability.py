@@ -165,6 +165,17 @@ class CheckVerdict:
     severity: str = ""
     failure_domain: str = ""
     seconds: float = field(default=0.0, kw_only=True)
+    skipped: bool = field(default=False, kw_only=True)
+
+    def __post_init__(self) -> None:
+        if type(self.skipped) is not bool:
+            raise ValueError("skipped must be a bool")
+        if self.skipped and self.ok:
+            raise ValueError("a skipped check cannot have ok=True")
+
+    @property
+    def status(self) -> str:
+        return "skipped" if self.skipped else ("pass" if self.ok else "fail")
 
 
 @dataclass
@@ -172,18 +183,25 @@ class Trail:
     failing: dict[str, CheckVerdict] = field(default_factory=dict)
     green: set[str] = field(default_factory=set)
     complete: bool = False
+    skipped: set[str] = field(default_factory=set)
 
     def is_green(self, name: str) -> bool:
         return name not in self.failing and name in self.green
 
     def is_retired(self, name: str) -> bool:
-        return self.complete and name not in self.failing and name not in self.green
+        return (
+            self.complete
+            and name not in self.failing
+            and name not in self.green
+            and name not in self.skipped
+        )
 
     def renamed(self, rename) -> Trail:
         return Trail(
             {rename(k): v for k, v in self.failing.items()},
             {rename(n) for n in self.green},
             self.complete,
+            {rename(n) for n in self.skipped},
         )
 
 
@@ -228,6 +246,7 @@ def _parse_record(line: str) -> tuple[str, list[CheckVerdict], bool] | None:
                 str(i.get("severity", "")),
                 str(i.get("failure_domain", "")),
                 seconds=float(i.get("seconds", 0)),
+                skipped=i.get("skipped", False) is True,
             )
             for i in rec["checks"]
         ]
@@ -253,7 +272,9 @@ def load_trail(path: str | Path, expected_sources: Iterable[str] = _EXPECTED_SOU
         all_complete = all_complete and comp
         trail.green.add(src)
         for c in checks:
-            if c.ok:
+            if c.skipped:
+                trail.skipped.add(c.name)
+            elif c.ok:
                 trail.green.add(c.name)
             else:
                 trail.failing.setdefault(c.name, c)
@@ -267,6 +288,8 @@ def load_trail(path: str | Path, expected_sources: Iterable[str] = _EXPECTED_SOU
                 "watchdog-step",
             )
     trail.green.difference_update(trail.failing)
+    trail.skipped.difference_update(trail.failing)
+    trail.skipped.difference_update(trail.green)
     trail.complete = all_complete and all(s in seen for s in expected_sources)
     return trail
 
@@ -387,7 +410,7 @@ def _red_body(
     lbls = " ".join(p for p in (verdict.severity, verdict.failure_domain) if p)
     stage, subject, url = (record.env, record.subject, record.run_url) if record else ("",) * 3
     last = [
-        f"{'green' if c.ok else 'red'} {r.subject}"
+        f"{('skipped' if c.skipped else ('green' if c.ok else 'red'))} {r.subject}"
         for r in history
         for c in r.checks
         if c.name == name

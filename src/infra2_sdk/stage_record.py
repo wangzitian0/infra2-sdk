@@ -55,6 +55,8 @@ class StageRecord:
             isinstance(c.name, str)
             and c.name
             and type(c.ok) is bool
+            and type(c.skipped) is bool
+            and not (c.skipped and c.ok)
             and type(c.seconds) in (int, float)
             and c.seconds >= 0
             for c in self.checks
@@ -68,7 +70,8 @@ class StageRecord:
 
     @property
     def verdict(self) -> str:
-        return "pass" if all(c.ok is True for c in self.checks) else "fail"
+        active = [c for c in self.checks if not c.skipped]
+        return "pass" if active and all(c.ok is True for c in active) else "fail"
 
     def to_dict(self) -> dict[str, Any]:
         return {"schema": 1, "verdict": self.verdict, **asdict(self)}
