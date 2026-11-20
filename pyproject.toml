@@ -105,3 +105,4 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 # Canary Todo moved verbatim from infra2 (#247): long SQL and HTML literals, FastAPI Body() defaults.
 "canary/todo/app.py" = ["E501", "B008", "SIM117"]
 "canary/todo/ui.py" = ["E501"]
+"canary/todo/tests/test_canary_depth.py" = ["E501"]
