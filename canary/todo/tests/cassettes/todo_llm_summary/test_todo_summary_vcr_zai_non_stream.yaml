@@ -1,0 +1,84 @@
+interactions:
+- request:
+    body: '{"model":"glm-5.3-flash","stream":false,"messages":[{"role":"system","content":"Summarize
+      recent infrastructure todo items concisely. Report open_count, completed_count,
+      a brief headline, and the next focus."},{"role":"user","content":"Recent todos:\n-
+      [open] (postgres) SECRET_TODO_ALPHA_991 Check Postgres replication lag\n- [done]
+      (redis) Verify Redis key TTL probe"}],"max_completion_tokens":512,"temperature":0.0,"tool_choice":"required","tools":[{"type":"function","function":{"name":"final_result","description":"The
+      final response which ends this conversation","parameters":{"properties":{"headline":{"type":"string"},"open_count":{"type":"integer"},"completed_count":{"type":"integer"},"focus":{"type":"string"}},"required":["headline","open_count","completed_count","focus"],"title":"TodoSummaryOutput","type":"object"},"strict":true}}],"thinking":{"type":"enabled","clear_thinking":false},"reasoning_effort":"low"}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      authorization:
+      - REDACTED
+      connection:
+      - keep-alive
+      content-length:
+      - '925'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+      user-agent:
+      - pydantic-ai/2.71.0
+      x-stainless-arch:
+      - arm64
+      x-stainless-async:
+      - async:asyncio
+      x-stainless-lang:
+      - python
+      x-stainless-os:
+      - MacOS
+      x-stainless-package-version:
+      - 3.57.0
+      x-stainless-read-timeout:
+      - '20.0'
+      x-stainless-retry-count:
+      - '0'
+      x-stainless-runtime:
+      - CPython
+      x-stainless-runtime-version:
+      - 3.12.12
+    method: POST
+    uri: https://api.z.ai/api/coding/paas/v4/chat/completions
+  response:
+    body:
+      string: '{"choices":[{"finish_reason":"tool_calls","index":0,"message":{"content":"","role":"assistant","tool_calls":[{"function":{"arguments":"{\"completed_count\":1,\"focus\":\"Check
+        Postgres replication lag\",\"headline\":\"1 infra item done (Redis TTL probe);
+        Postgres replication lag check remains open\",\"open_count\":1}","name":"final_result"},"id":"call_-7060123591135715503","index":0,"type":"function"}]}}],"created":1795164698,"id":"2026112016513547d3b8e788234b6a","model":"glm-5.3-flash","object":"chat.completion","request_id":"2026112016513547d3b8e788234b6a","usage":{"completion_tokens":51,"completion_tokens_details":{"reasoning_tokens":0},"prompt_tokens":265,"prompt_tokens_details":{"cached_tokens":0},"total_tokens":316}}'
+    headers:
+      alt-svc:
+      - h3=":443"; ma=3600
+      connection:
+      - keep-alive
+      content-length:
+      - '732'
+      content-type:
+      - application/json; charset=UTF-8
+      date:
+      - Fri, 20 Nov 2026 08:51:38 GMT
+      ga-traceid:
+      - 53dd6e89fc47559f8646379ce3ee696b
+      set-cookie:
+      - REDACTED
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      x-log-id:
+      - 2026112016513547d3b8e788234b6a
+      x-request-id:
+      - 8833a8e8-85d2-4d7f-b2c7-53b13908bf7f
+    status:
+      code: 200
+      message: OK
+version: 1

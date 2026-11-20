@@ -52,3 +52,27 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "${GITHUB_REF_NAME}" dist/* --generate-notes --verify-tag
+
+  canary-todo-image:
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/infra2-canary-todo
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the Canary Todo image from the tagged source
+        run: docker build -f canary/todo/Dockerfile -t "$IMAGE:$GITHUB_REF_NAME" .
+      - name: The image runs the tagged SDK version
+        run: scripts/check_canary_image_sdk.sh "$IMAGE:$GITHUB_REF_NAME"
+      - name: Push and print the digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push "$IMAGE:$GITHUB_REF_NAME"
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$GITHUB_REF_NAME")"
+          echo "canary image: $digest" | tee -a "$GITHUB_STEP_SUMMARY"
