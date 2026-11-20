@@ -11,6 +11,7 @@ import logging
 import re
 import sys
 import time
+import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -1428,6 +1429,7 @@ class LlmClient:
         sleep: Callable[[float], None] = time.sleep,
         asleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
     ) -> None:
+        warnings.warn("LlmClient deprecated: use create_llm_agent", DeprecationWarning, 2)
         self.settings = settings or LlmSettings()
         self._client, self._async_client = client, async_client
         self._max_retries, self._sleep, self._asleep = max_retries, sleep, asleep

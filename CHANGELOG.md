@@ -6,6 +6,14 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+## 3.34.1 - 2026-11-20
+
+### Changed
+
+- Restore the 3.33.0 stdout JSON log precedence: structlog and `_LOG_CONTEXT` fields override record extras ([#236](https://github.com/wangzitian0/infra2-sdk/issues/236)).
+- Send only `infra.llm.*`, `code.*`, `request_id`, and SDK-bound `_LOG_CONTEXT` keys from log context to OTLP `LogRecord`. Other structlog keys, such as `user_id`, stay in stdout JSON ([#236](https://github.com/wangzitian0/infra2-sdk/issues/236)).
+- Emit `DeprecationWarning` when `LlmClient` is constructed ([#236](https://github.com/wangzitian0/infra2-sdk/issues/236)).
+
 ## 3.34.0 - 2026-11-20
 
 ### Added
