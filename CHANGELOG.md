@@ -8,6 +8,7 @@ backfill from the merged pull requests.
 
 ### Added
 
+- Canary Todo service moved into `canary/todo/` from infra2 `platform/30.todo` (#247). CI runs its tests and builds its image; each release tag publishes `ghcr.io/wangzitian0/infra2-canary-todo:<tag>`, and `scripts/check_canary_image_sdk.sh` fails when the image does not run the tagged SDK. The wheel is unchanged.
 - `compile_compose` expands a service `x-routes` block into env-suffixed Traefik router, `strip_prefix` and Authentik ForwardAuth `sso` labels ([#238](https://github.com/wangzitian0/infra2-sdk/issues/238)).
 
 ## 3.34.1 - 2026-11-20
