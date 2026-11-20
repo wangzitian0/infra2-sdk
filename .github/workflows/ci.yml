@@ -86,7 +86,7 @@ jobs:
           cache: pip
       - run: python -m pip install -e '.[all,dev]'
       - name: Canary Todo tests
-        run: pytest -o addopts= canary/todo/tests -q
+        run: pytest canary/todo/tests -q
       - name: Build the Canary Todo image
         run: docker build -f canary/todo/Dockerfile -t infra2-canary-todo:ci .
       - name: The image runs the SDK version of this commit

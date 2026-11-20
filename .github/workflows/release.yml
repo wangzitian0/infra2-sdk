@@ -32,6 +32,7 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
       - run: pytest --cov --cov-report=term-missing
+      - run: pytest canary/todo/tests -q
       - run: python -m build
       - name: Smoke-test release wheel
         run: |
@@ -64,6 +65,9 @@ jobs:
       IMAGE: ghcr.io/${{ github.repository_owner }}/infra2-canary-todo
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Build the Canary Todo image from the tagged source
         run: docker build -f canary/todo/Dockerfile -t "$IMAGE:$GITHUB_REF_NAME" .
       - name: The image runs the tagged SDK version
