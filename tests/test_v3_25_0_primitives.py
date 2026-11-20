@@ -62,7 +62,8 @@ def test_sdk_source_byte_budget() -> None:
     )
     # Release A (#236) retains deprecated LlmClient alongside pydantic-ai adapters
     # until Release B (#236 Slice 4) and G4/K6 delete LlmClient and schema 2.
-    assert 150_000 <= total <= 371_000, f"src/infra2_sdk byte budget drifted: {total} B"
+    # 383_000: the x-infra2 compose compiler of #238 slice 1 adds about 11 KB.
+    assert 150_000 <= total <= 383_000, f"src/infra2_sdk byte budget drifted: {total} B"
 
 
 def test_init_service_multi_checks_and_manifest(monkeypatch: pytest.MonkeyPatch) -> None:

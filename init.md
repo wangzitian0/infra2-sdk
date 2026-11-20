@@ -82,7 +82,7 @@ Application processes import these modules directly at runtime:
 | `infra2_sdk.observability` | Flap hysteresis trackers (`ConsecutiveObservationState`), parameterized self-healing GitHub issue trails (`reconcile_issue_trail`), and OpenPanel query primitives |
 | `infra2_sdk.refs` | Git ref resolution (`resolve_to_sha`, `resolve_pr`, `identifier_kind`, `next_patch_tag`), OCI image digest resolution, and repo URL redaction |
 | `infra2_sdk.routing` | Canonical domain and routing SSOT (`CANARY_SLOT`, `PreviewStackCoordinates`, hostname and service URL resolution) |
-| `infra2_sdk.rules.compose` | Pure Docker Compose file rules (`inspect_compose`) enforcing memory ceilings and rejecting bare `:latest` image references |
+| `infra2_sdk.rules.compose` | Pure Docker Compose file rules (`inspect_compose`) enforcing memory ceilings and rejecting bare `:latest` image references, and `compile_compose` (`ComposeCompileError`), which expands `x-infra2` baseline defaults and the `x-vault` sidecar with no I/O |
 | `infra2_sdk.rules.imports` | Pure AST import-boundary and dependency-cycle validators (`LayerRule`, `ImportViolation`, `check_import_boundaries`, `find_dependency_cycle`) |
 | `infra2_sdk.secrets` | Vault KV v2 and 1Password CLI adapters, manifest-driven `SecretsResolver`, and Vault Agent template/policy renderers |
 

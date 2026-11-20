@@ -41,7 +41,7 @@ python -m pip install \
 | `infra2_sdk.observability` | Flap hysteresis trackers, parameterized self-healing GitHub issue trails, and OpenPanel export query & funnel summary primitives |
 | `infra2_sdk.refs` | Git ref resolution, PR heads, patch tag calculation (`next_patch_tag`), registry image digests, remote ref queries, commit ancestry checks, and credential redaction |
 | `infra2_sdk.routing` | Canonical domain and routing SSOT: `CANARY_SLOT`, hostname resolution, and service URL resolution |
-| `infra2_sdk.rules.compose` | Pure compose-file rules (memory ceilings, bare `:latest` image refs) |
+| `infra2_sdk.rules.compose` | Pure compose-file rules (memory ceilings, bare `:latest` image refs) and `compile_compose`, which expands `x-infra2` defaults and `x-vault` into plain Compose YAML |
 | `infra2_sdk.rules.imports` | Pure AST layered import-boundary, dependency-cycle, and `__all__` export validators |
 | `infra2_sdk.runtime.config_schema` | Environment field contracts, injection manifests, startup environment assertions (`assert_environment`), and configuration fingerprints |
 | `infra2_sdk.runtime.environment` | Canonical six-tier environment vocabulary, variable resolution, and contract definitions |
