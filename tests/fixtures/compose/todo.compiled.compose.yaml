@@ -149,25 +149,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
-    labels:
-    - traefik.enable=true
-    - traefik.http.services.platform-todo${ENV_DOMAIN_SUFFIX}.loadbalancer.server.port=8000
-    - traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.rule=Host(`todo${ENV_DOMAIN_SUFFIX}.${INTERNAL_DOMAIN}`) && Path(`/api/health`)
-    - traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.entrypoints=websecure
-    - traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.tls=true
-    - traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.tls.certresolver=letsencrypt
-    - traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.priority=100
-    - traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.service=platform-todo${ENV_DOMAIN_SUFFIX}
-    - traefik.http.middlewares.todo-auth${ENV_DOMAIN_SUFFIX}.forwardauth.address=http://platform-authentik-server${ENV_SUFFIX}:9000/outpost.goauthentik.io/auth/traefik
-    - traefik.http.middlewares.todo-auth${ENV_DOMAIN_SUFFIX}.forwardauth.trustForwardHeader=true
-    - traefik.http.middlewares.todo-auth${ENV_DOMAIN_SUFFIX}.forwardauth.authResponseHeaders=X-authentik-username,X-authentik-groups,X-authentik-email,X-authentik-name,X-authentik-uid
-    - traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.rule=Host(`todo${ENV_DOMAIN_SUFFIX}.${INTERNAL_DOMAIN}`)
-    - traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.entrypoints=websecure
-    - traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.tls=true
-    - traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.tls.certresolver=letsencrypt
-    - traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.priority=10
-    - traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.middlewares=todo-auth${ENV_DOMAIN_SUFFIX}@docker
-    - traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.service=platform-todo${ENV_DOMAIN_SUFFIX}
     entrypoint:
     - sh
     - -c
@@ -193,6 +174,25 @@ services:
     - vault-agent
     volumes:
     - secrets:/secrets:ro
+    labels:
+    - traefik.enable=true
+    - traefik.http.services.platform-todo${ENV_DOMAIN_SUFFIX}.loadbalancer.server.port=8000
+    - traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.rule=Host(`todo${ENV_DOMAIN_SUFFIX}.${INTERNAL_DOMAIN}`) && Path(`/api/health`)
+    - traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.entrypoints=websecure
+    - traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.tls=true
+    - traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.tls.certresolver=letsencrypt
+    - traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.priority=100
+    - traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.service=platform-todo${ENV_DOMAIN_SUFFIX}
+    - traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.rule=Host(`todo${ENV_DOMAIN_SUFFIX}.${INTERNAL_DOMAIN}`)
+    - traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.entrypoints=websecure
+    - traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.tls=true
+    - traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.tls.certresolver=letsencrypt
+    - traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.priority=10
+    - traefik.http.middlewares.todo-auth${ENV_DOMAIN_SUFFIX}.forwardauth.address=http://platform-authentik-server${ENV_SUFFIX}:9000/outpost.goauthentik.io/auth/traefik
+    - traefik.http.middlewares.todo-auth${ENV_DOMAIN_SUFFIX}.forwardauth.trustForwardHeader=true
+    - traefik.http.middlewares.todo-auth${ENV_DOMAIN_SUFFIX}.forwardauth.authResponseHeaders=X-authentik-username,X-authentik-groups,X-authentik-email,X-authentik-name,X-authentik-uid
+    - traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.middlewares=todo-auth${ENV_DOMAIN_SUFFIX}@docker
+    - traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.service=platform-todo${ENV_DOMAIN_SUFFIX}
     restart: always
     logging:
       driver: json-file
