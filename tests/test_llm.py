@@ -42,6 +42,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from infra2_sdk.runtime.llm import (
     DecodingSpec,
     GuardedLlmModel,
+    LlmClient,
     LlmSettings,
     allow_vcr_model_requests,
     create_llm_agent,
@@ -797,3 +798,80 @@ def test_nested_and_fallback_instrumented_models_do_not_double_count_or_leak() -
 
     for prov in (tp1, mp1, tp2, mp2, inner_tp, outer_tp):
         prov.shutdown()
+
+
+def test_auth_4xx_model_http_error_is_not_retried_by_retry_on_model_errors() -> None:
+    attempts = 0
+
+    def unauthorized(_m: list[Any], _i: Any) -> ModelResponse:
+        nonlocal attempts
+        attempts += 1
+        raise ModelHTTPError(401, "m1", {"error": "invalid api key"})
+
+    agent = create_llm_agent(
+        model=FunctionModel(unauthorized, model_name="m1"),
+        call_site="auth.noretry",
+        max_attempts=3,
+        initial_delay=0.0,
+        max_delay=0.0,
+    )
+    with pytest.raises(ModelHTTPError) as exc_info:
+        agent.run_sync("hello")
+    assert exc_info.value.status_code == 401
+    assert attempts == 1
+
+
+def test_failed_retry_attempts_get_attempt_spans_and_success_gets_one_chat_span() -> None:
+    exporter = InMemorySpanExporter()
+    tp = TracerProvider()
+    tp.add_span_processor(SimpleSpanProcessor(exporter))
+    attempts = 0
+
+    def flaky(_m: list[Any], _i: Any) -> ModelResponse:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise ModelRateLimitError("m1", "slow down", provider_error_code="1302")
+        return ModelResponse(parts=[TextPart("ok")], model_name="m1")
+
+    agent = create_llm_agent(
+        model=FunctionModel(flaky, model_name="m1"),
+        call_site="retry.spans",
+        max_attempts=3,
+        initial_delay=0.0,
+        max_delay=0.0,
+        tracer_provider=tp,
+    )
+    assert agent.run_sync("x").output == "ok"
+    assert attempts == 3
+    names = [s.name for s in exporter.get_finished_spans()]
+    assert names.count("model request attempt m1") == 2
+    assert sum(n.startswith("chat ") for n in names) == 1
+    tp.shutdown()
+
+
+def test_anthropic_model_disables_vendor_retries() -> None:
+    pytest.importorskip(
+        "anthropic", reason="infra2-sdk[pydantic-ai] extra lacks the anthropic package"
+    )
+    model = create_llm_model(
+        LlmSettings(provider="anthropic", api_key="anth-key"), instrument=False, guard=False
+    )
+    assert model.client.max_retries == 0
+
+
+def test_google_model_allows_one_vendor_attempt() -> None:
+    pytest.importorskip(
+        "google.genai", reason="infra2-sdk[pydantic-ai] extra lacks the google-genai package"
+    )
+    model = create_llm_model(
+        LlmSettings(provider="google", api_key="goog-key"), instrument=False, guard=False
+    )
+    retry = model.client._api_client._http_options.retry_options
+    assert retry is not None and retry.attempts == 1
+
+
+def test_llm_client_construction_emits_deprecation_warning_at_caller() -> None:
+    with pytest.warns(DeprecationWarning, match="create_llm_agent") as record:
+        LlmClient(LlmSettings(api_key="k"))
+    assert record[0].filename == __file__
