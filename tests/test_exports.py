@@ -189,7 +189,8 @@ SURFACE = _load_surface(Path(__file__).with_name("surface.json").read_text(encod
 README = (Path(__file__).resolve().parent.parent / "README.md").read_text(encoding="utf-8")
 PACKAGES = ("infra2_sdk", "infra2_sdk.runtime")
 REASON_PREFIXES = ("consumer:", "documented:", "held:")
-CONSUMER_REPOSITORIES = frozenset({"infra2", "finance_report", "truealpha"})
+# canary_todo: the Canary Todo app in canary/todo (#247); the infra2 census reads it as a consumer.
+CONSUMER_REPOSITORIES = frozenset({"canary_todo", "infra2", "finance_report", "truealpha"})
 # A hold is a recorded decision: name -> exact reason. A new hold needs a new line here and a
 # review of that decision. surface.json and this table must agree on the names and the reasons.
 _ADOPTION_HELD = (
