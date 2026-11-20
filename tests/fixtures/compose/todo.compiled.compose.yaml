@@ -1,0 +1,212 @@
+services:
+  vault-agent:
+    init: true
+    image: hashicorp/vault:1.15
+    container_name: platform-todo-vault-agent${ENV_SUFFIX}
+    restart: always
+    mem_limit: 128m
+    cpu_shares: 256
+    entrypoint:
+    - sh
+    - -c
+    - |
+      rm -f /vault/secrets/.env /vault/.token /vault/role_id /vault/secret_id 2>/dev/null || true
+      if [ -z "$$VAULT_ROLE_ID" ] || [ -z "$$VAULT_SECRET_ID" ]; then
+        echo "VAULT_ROLE_ID and VAULT_SECRET_ID are required"
+        exit 1
+      fi
+      if [ -z "$$VAULT_ADDR" ]; then
+        echo "VAULT_ADDR is required"
+        exit 1
+      fi
+      echo "$$VAULT_ROLE_ID" > /vault/role_id
+      echo "$$VAULT_SECRET_ID" > /vault/secret_id
+      printf '%s\n' "$$VAULT_AGENT_HCL" > /vault/agent.hcl
+      printf '%s\n' "$$VAULT_SECRETS_TEMPLATE" > /vault/secrets.ctmpl
+      # AppRole auto_auth: vault-agent logs in and renews the token itself.
+      exec vault agent -config=/vault/agent.hcl
+    environment:
+      VAULT_ADDR: ${VAULT_ADDR}
+      VAULT_ROLE_ID: ${VAULT_ROLE_ID:-}
+      VAULT_SECRET_ID: ${VAULT_SECRET_ID:-}
+      ENV: ${ENV}
+      CONFIGURATION_SHA256: ${CONFIGURATION_SHA256:-}
+      VAULT_AGENT_HCL: |
+        vault {
+          # VAULT_ADDR is read from the container environment.
+        }
+        auto_auth {
+          method "approle" {
+            config = {
+              role_id_file_path                   = "/vault/role_id"
+              secret_id_file_path                 = "/vault/secret_id"
+              remove_secret_id_file_after_reading = false
+            }
+          }
+
+          sink {
+            type = "file"
+            config = {
+              path = "/vault/.token"
+            }
+          }
+
+          exit_on_err = true
+        }
+
+        template_config {
+          static_secret_render_interval = "5m"
+          exit_on_retry_failure = true
+        }
+
+        template {
+          source      = "/vault/secrets.ctmpl"
+          destination = "/vault/secrets/.env"
+          perms       = 0644
+          # A required key missing in Vault must fail the render instead of rendering `%!q(<nil>)`.
+          error_on_missing_key = true
+        }
+      VAULT_SECRETS_TEMPLATE: |
+        {{- /* Generated from platform/todo by infra2_sdk.secrets. Do not edit. */ -}}
+        {{- $$env := env "ENV" -}}
+        {{- with secret (printf "secret/data/platform/%s/redis" $$env) }}
+        REDIS_PASSWORD={{ printf "%q" .Data.data.password }}
+        {{- end }}
+        {{- with secret (printf "secret/data/platform/%s/todo" $$env) }}
+        CANARY_POSTGRES_PASSWORD={{ printf "%q" .Data.data.CANARY_POSTGRES_PASSWORD }}
+        TODO_POSTGRES_PASSWORD={{ printf "%q" .Data.data.TODO_POSTGRES_PASSWORD }}
+        {{ with index .Data.data "S3_ACCESS_KEY" }}S3_ACCESS_KEY={{ printf "%q" . }}{{ end }}
+        {{ with index .Data.data "S3_SECRET_KEY" }}S3_SECRET_KEY={{ printf "%q" . }}{{ end }}
+        {{ with index .Data.data "LLM_API_KEY" }}LLM_API_KEY={{ printf "%q" . }}{{ end }}
+        {{- end }}
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - |
+        test -s /vault/secrets/.env && ! grep -q "<no value>" /vault/secrets/.env && test -s /vault/.token || exit 1
+        if [ -z "$$(find /tmp/.vault_hc -mmin -5 2>/dev/null)" ]; then
+          wget -q -T 3 --header="X-Vault-Token: $$(cat /vault/.token)" "$$VAULT_ADDR/v1/auth/token/lookup-self" -O /dev/null || exit 1
+          touch /tmp/.vault_hc
+        fi
+      interval: 30s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    volumes:
+    - secrets:/vault/secrets
+    labels:
+    - infra2.vault.config.sha256=8f1ed993986ab8709ef19bc161abab2fb947f60e7449dba50bb7964128a26f38
+    - infra2.vault.template.sha256=058a0ce1ca3564d51933c879f0eae72a5f1b28295fe815404e115b3285679450
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: '2'
+    networks:
+    - dokploy-network
+  todo:
+    build:
+      context: ../..
+      dockerfile: platform/30.todo/Dockerfile
+    image: platform-todo:${CONFIGURATION_SHA256:-}
+    container_name: platform-todo${ENV_SUFFIX}
+    mem_limit: 256m
+    cpu_shares: 512
+    command:
+    - python
+    - /app/app.py
+    environment:
+      CONFIGURATION_SHA256: ${CONFIGURATION_SHA256:-}
+      PORT: '8000'
+      ENVIRONMENT: ${ENV}
+      INTERNAL_DOMAIN: ${INTERNAL_DOMAIN:-zitian.party}
+      ENV_SUFFIX: ${ENV_SUFFIX:-}
+      POSTGRES_HOST: platform-postgres${ENV_SUFFIX}
+      POSTGRES_PORT: '5432'
+      CANARY_POSTGRES_USER: canary_ro
+      CANARY_POSTGRES_DATABASE: postgres
+      TODO_POSTGRES_USER: todo_app
+      TODO_POSTGRES_DATABASE: postgres
+      REDIS_HOST: platform-redis${ENV_SUFFIX}
+      REDIS_PORT: '6379'
+      S3_ENDPOINT: http://platform-s3${ENV_SUFFIX}:9000
+      S3_BUCKET: platform-canary
+      SIGNOZ_OTEL_COLLECTOR: http://platform-signoz-otel-collector:13133
+      OPENPANEL_API_URL: http://platform-openpanel-api:3000/healthcheck
+      AUTHENTIK_ENDPOINT: http://platform-authentik-server${ENV_SUFFIX}:9000/-/health/live/
+      GIT_COMMIT_SHA: ${INFRA_IAC_REF:-unknown}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-signoz-otel-collector:4318
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-}
+      OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_SMALL_MODEL: ${LLM_SMALL_MODEL:-}
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).read()"
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+    - traefik.enable=true
+    - traefik.http.services.platform-todo${ENV_DOMAIN_SUFFIX}.loadbalancer.server.port=8000
+    - traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.rule=Host(`todo${ENV_DOMAIN_SUFFIX}.${INTERNAL_DOMAIN}`) && Path(`/api/health`)
+    - traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.entrypoints=websecure
+    - traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.tls=true
+    - traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.tls.certresolver=letsencrypt
+    - traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.priority=100
+    - traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.service=platform-todo${ENV_DOMAIN_SUFFIX}
+    - traefik.http.middlewares.todo-auth${ENV_DOMAIN_SUFFIX}.forwardauth.address=http://platform-authentik-server${ENV_SUFFIX}:9000/outpost.goauthentik.io/auth/traefik
+    - traefik.http.middlewares.todo-auth${ENV_DOMAIN_SUFFIX}.forwardauth.trustForwardHeader=true
+    - traefik.http.middlewares.todo-auth${ENV_DOMAIN_SUFFIX}.forwardauth.authResponseHeaders=X-authentik-username,X-authentik-groups,X-authentik-email,X-authentik-name,X-authentik-uid
+    - traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.rule=Host(`todo${ENV_DOMAIN_SUFFIX}.${INTERNAL_DOMAIN}`)
+    - traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.entrypoints=websecure
+    - traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.tls=true
+    - traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.tls.certresolver=letsencrypt
+    - traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.priority=10
+    - traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.middlewares=todo-auth${ENV_DOMAIN_SUFFIX}@docker
+    - traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.service=platform-todo${ENV_DOMAIN_SUFFIX}
+    entrypoint:
+    - sh
+    - -c
+    - |
+      set -e
+      waited=0
+      max_wait="300"
+      while [ ! -s /secrets/.env ] && [ "$$waited" -lt "$$max_wait" ]; do
+        echo "Waiting for secrets file..."
+        sleep 2
+        waited=$$((waited + 2))
+      done
+      if [ ! -s /secrets/.env ]; then
+        echo "ERROR: /secrets/.env is missing or empty"
+        exit 1
+      fi
+      set -a
+      . /secrets/.env
+      set +a
+      exec "$$@"
+    - --
+    depends_on:
+    - vault-agent
+    volumes:
+    - secrets:/secrets:ro
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: '2'
+    networks:
+    - dokploy-network
+networks:
+  dokploy-network:
+    external: true
+volumes:
+  secrets:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=10m,mode=0755

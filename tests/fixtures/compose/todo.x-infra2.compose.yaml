@@ -1,0 +1,82 @@
+# Source: wangzitian0/infra2@4dd5ed29 platform/30.todo/compose.yaml, rewritten as x-infra2 by hand.
+# Routes stay literal labels here: x-routes ships in a later slice of infra2-sdk#238.
+x-infra2:
+  vault:
+    name: platform-todo
+
+services:
+  todo:
+    build:
+      context: ../..
+      dockerfile: platform/30.todo/Dockerfile
+    image: platform-todo:${CONFIGURATION_SHA256:-}
+    container_name: platform-todo${ENV_SUFFIX}
+    mem_limit: 256m
+    cpu_shares: 512
+    command: ["python", "/app/app.py"]
+    x-vault: {}
+    environment:
+      PORT: "8000"
+      ENVIRONMENT: ${ENV}
+      INTERNAL_DOMAIN: ${INTERNAL_DOMAIN:-zitian.party}
+      ENV_SUFFIX: ${ENV_SUFFIX:-}
+      POSTGRES_HOST: platform-postgres${ENV_SUFFIX}
+      POSTGRES_PORT: "5432"
+      # Dedicated read-only role. TodoDeployer.CANARY_PG_ROLE creates it on every sync.
+      CANARY_POSTGRES_USER: canary_ro
+      CANARY_POSTGRES_DATABASE: postgres
+      # Dedicated todos persistence role. TodoDeployer.TODO_PG_ROLE creates it with todos DML grants.
+      TODO_POSTGRES_USER: todo_app
+      TODO_POSTGRES_DATABASE: postgres
+      REDIS_HOST: platform-redis${ENV_SUFFIX}
+      REDIS_PORT: "6379"
+      S3_ENDPOINT: http://platform-s3${ENV_SUFFIX}:9000
+      S3_BUCKET: platform-canary
+      SIGNOZ_OTEL_COLLECTOR: http://platform-signoz-otel-collector:13133
+      OPENPANEL_API_URL: http://platform-openpanel-api:3000/healthcheck
+      AUTHENTIK_ENDPOINT: http://platform-authentik-server${ENV_SUFFIX}:9000/-/health/live/
+      # The deploy issues the full infra2 SHA as INFRA_IAC_REF. The page shows its first 7 characters.
+      GIT_COMMIT_SHA: ${INFRA_IAC_REF:-unknown}
+      # Telemetry (#991). The endpoint turns export on and the service refuses to start
+      # on it without the identity, so both identity variables come verbatim from the
+      # deploy (TodoDeployer.telemetry_service_name), never hardcoded or defaulted.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://platform-signoz-otel-collector:4318
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-}
+      OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_SMALL_MODEL: ${LLM_SMALL_MODEL:-}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).read()\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.services.platform-todo${ENV_DOMAIN_SUFFIX}.loadbalancer.server.port=8000"
+
+      # Public bypass router: unauthenticated access to the health path ONLY.
+      # /api/canary/status is not here: it returns internal hostnames and raw errors and
+      # runs six real probes per request. The probe runner reads it over the Docker
+      # network; people reach it through the SSO router below.
+      - "traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.rule=Host(`todo${ENV_DOMAIN_SUFFIX}.${INTERNAL_DOMAIN}`) && Path(`/api/health`)"
+      - "traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.entrypoints=websecure"
+      - "traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.tls=true"
+      - "traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.priority=100"
+      - "traefik.http.routers.platform-todo-public${ENV_DOMAIN_SUFFIX}.service=platform-todo${ENV_DOMAIN_SUFFIX}"
+
+      # Authentik ForwardAuth middleware
+      - "traefik.http.middlewares.todo-auth${ENV_DOMAIN_SUFFIX}.forwardauth.address=http://platform-authentik-server${ENV_SUFFIX}:9000/outpost.goauthentik.io/auth/traefik"
+      - "traefik.http.middlewares.todo-auth${ENV_DOMAIN_SUFFIX}.forwardauth.trustForwardHeader=true"
+      - "traefik.http.middlewares.todo-auth${ENV_DOMAIN_SUFFIX}.forwardauth.authResponseHeaders=X-authentik-username,X-authentik-groups,X-authentik-email,X-authentik-name,X-authentik-uid"
+
+      # Protected router: UI and interactive APIs protected by Authentik SSO
+      - "traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.rule=Host(`todo${ENV_DOMAIN_SUFFIX}.${INTERNAL_DOMAIN}`)"
+      - "traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.entrypoints=websecure"
+      - "traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.tls=true"
+      - "traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.priority=10"
+      - "traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.middlewares=todo-auth${ENV_DOMAIN_SUFFIX}@docker"
+      - "traefik.http.routers.platform-todo${ENV_DOMAIN_SUFFIX}.service=platform-todo${ENV_DOMAIN_SUFFIX}"
