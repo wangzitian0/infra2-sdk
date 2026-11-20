@@ -6,6 +6,13 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+## 3.35.1 - 2026-11-20
+
+### Changed
+
+- Canary Todo `/api/health` reports `sdk_version`, the installed infra2-sdk. The infra2 staging gate compares it with the Canary image pin, so a tag that names the wrong digest fails the gate (#247).
+- Canary Todo tests: the depth tests moved from infra2, `canary_todo` is a known `tests/surface.json` consumer (#250).
+
 ## 3.35.0 - 2026-11-20
 
 ### Added

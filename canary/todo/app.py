@@ -1047,6 +1047,15 @@ def _canary_readiness_checker() -> tuple[bool, str]:
         return False, f"canary status check failed: {exc}"
 
 
+def _installed_sdk_version() -> str:
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("infra2-sdk")
+    except PackageNotFoundError:
+        return "unknown"
+
+
 def _todo_health_extra() -> dict[str, Any]:
     verdict = peek_canary_verdict()
     env_name = resolve_runtime_env(None, RuntimeEnvKey.ENVIRONMENT).value or "unknown"
@@ -1056,6 +1065,8 @@ def _todo_health_extra() -> dict[str, Any]:
         "domain": "todo.zitian.party",
         "environment": env_name,
         "configuration_sha256": config_sha,
+        # The installed SDK. The infra2 staging gate compares it with the image pin (#247).
+        "sdk_version": _installed_sdk_version(),
         "canary": {
             "ok": verdict.get("ok") is True,
             "checked_at": verdict.get("timestamp"),

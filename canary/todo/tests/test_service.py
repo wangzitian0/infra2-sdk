@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import importlib.util
 import time
 import warnings
@@ -412,6 +413,9 @@ def test_todo_readiness_passes_only_on_an_ok_document(monkeypatch, path: str) ->
 def test_todo_fastapi_endpoints_contract(monkeypatch) -> None:
     """Verify Canary Todo exposes FastAPI endpoints with strict OpenAPI schemas."""
     wire_fake_todo_pg(monkeypatch)
+    # Collect loops that earlier tests left to the garbage collector first; their
+    # ResourceWarning is not a warning of this module load.
+    gc.collect()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         todo_mod = load_todo_module("todo_app_fastapi")
@@ -530,3 +534,15 @@ def test_todo_db_unavailable_fails_closed_with_503(monkeypatch) -> None:
     res_down = client.post("/api/todos", json={"title": "Should Fail Closed"})
     assert res_down.status_code == 503
     assert "error" in res_down.json()
+
+
+def test_health_reports_the_installed_sdk_version(monkeypatch) -> None:
+    """The infra2 staging gate compares this field with the Canary image pin (#247)."""
+    from importlib.metadata import version
+
+    wire_fake_todo_pg(monkeypatch)
+    todo_mod = load_todo_module("todo_app_sdk_version")
+    with TestClient(todo_mod.fastapi_app) as client:
+        assert client.get("/api/health").json()["sdk_version"] == version("infra2-sdk")
+        monkeypatch.setattr(todo_mod, "_installed_sdk_version", lambda: "0.0.0")
+        assert client.get("/api/health").json()["sdk_version"] == "0.0.0"
