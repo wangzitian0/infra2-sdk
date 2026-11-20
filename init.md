@@ -20,7 +20,7 @@ Across 170+ issues and 45 releases (`v0.1.0` through `v3.23.0`), consumer requir
 ### P1 — Contract vs. Orchestration, Zero-I/O on Import, and Thin Open-Protocol Adapters (`#19`, `#33`, `#102`)
 
 - `import infra2_sdk` and `import infra2_sdk.runtime` perform zero network I/O, zero filesystem mutation, and zero global provider registration (`tests/test_exports.py`).
-- Core runtime contracts declare zero third-party adapter dependencies in `pyproject.toml` (only `pyyaml` for offline manifest and workflow parsing, lazy-loaded where required). Consumers install only the optional extras they need (`s3`, `postgres`, `http`, `otel`, `fastapi`, `all`).
+- Core runtime contracts declare zero third-party adapter dependencies in `pyproject.toml` (only `pyyaml` for offline manifest and workflow parsing, lazy-loaded where required). Consumers install only the optional extras they need (`s3`, `postgres`, `http`, `otel`, `fastapi`, `pydantic-ai`, `all`).
 - Protocol adapters return standard upstream objects (`boto3` S3 client, `psycopg` connection probe, `httpx.Client` and `httpx.AsyncClient`, OpenTelemetry providers) rather than custom wrapper abstractions. Application policy (object keys, SQL schemas, retry budgets, trace propagation) stays in the application.
 - Pure cross-repository validators (`validate_manifest_offline`, `validate_inventory`, `validate_workflow_step_contracts`) execute offline without importing consumer repositories (`#19`, `#33`).
 
@@ -28,7 +28,7 @@ Across 170+ issues and 45 releases (`v0.1.0` through `v3.23.0`), consumer requir
 
 - Every environment variable in an application manifest (`EnvironmentManifest`) declares one `source` class (`bootstrap`, `human`, `runtime`, `release`, `decision`, `code`). The source class defines who produces the value, where truth lives, and how the value reaches the container (`#16`, `#38`).
 - Shared cross-repository mechanisms (`capacity`, `ci`, `deploy`, `fastapi`, `manifests`, `observability`, `refs`, `routing`, `rules`, `runtime`, `secrets`, `transport`) live in `infra2-sdk` (`v3.7.0`, `#115`). Extracting these modules from `infra2` and consumer applications ensures that all repositories share one tested implementation.
-- `LlmSettings` (`src/infra2_sdk/runtime/llm.py`, `#137`) owns default models and reasoning efforts across three capability roles (`large`, `small`, `multimodal`). Consumer applications map per-role environment overrides (`LLM_LARGE_MODELS`, `LLM_SMALL_MODELS`, `LLM_MULTIMODAL_MODELS`) onto this single contract.
+- `LlmSettings` (`src/infra2_sdk/runtime/llm.py`, `#137`, `#236`) owns default models and reasoning efforts across three capability roles (`large`, `small`, `multimodal`). Consumer applications map per-role environment overrides (`LLM_LARGE_MODEL`, `LLM_SMALL_MODEL`, `LLM_MULTIMODAL_MODEL`) onto this single contract.
 
 ### P3 — 100% Consumer-Reachable Public Surface (`#102`, `#108`, `#121`, `#126`)
 
@@ -61,7 +61,7 @@ Application processes import these modules directly at runtime:
 | `infra2_sdk.runtime.config_schema` | `EnvironmentField`, `EnvironmentManifest`, `assert_environment`, and manifest config fingerprints |
 | `infra2_sdk.runtime.health` | Framework-agnostic readiness probes (`check_health`, `run_probes`, `probe_orchestrator`) and dependency status contracts |
 | `infra2_sdk.runtime.http` | `HttpClientSettings`, Retry-After retry helpers (`request_with_retry`, `arequest_with_retry`), and `probe_http` |
-| `infra2_sdk.runtime.llm` | `LlmSettings`, `LlmClient`, capability roles (`large`, `small`, `multimodal`), and role-based model defaults |
+| `infra2_sdk.runtime.llm` | `LlmSettings`, `DecodingSpec`, `create_llm_agent`, `create_llm_model`, `GuardedLlmModel`, `llm_call_context`, `prompt_sha256`, `schema_sha256`, `request_sha256`, `redact_llm_error`, `redact_uri`, `sanitize_headers`, `vcr_llm_config`, `allow_vcr_model_requests`, deprecated `LlmClient`, and `large`/`small`/`multimodal` role defaults |
 | `infra2_sdk.runtime.otel` | Explicit OTLP/HTTP trace, metric, and log provider bootstrap (`OtelSettings`, `PROBE_PATHS`, `configure_telemetry`) |
 | `infra2_sdk.runtime.postgres` | `PostgresSettings`, `redact_postgres_error`, and `probe_postgres` |
 | `infra2_sdk.runtime.s3` | `S3Settings`, `boto3` S3 client initialization, bucket reachability probe (`probe_s3`), `ensure_bucket`, and `put_object_bytes` |

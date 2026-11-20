@@ -73,25 +73,25 @@ groups:
     - name: LLM_PROVIDER
       deprecated_aliases: [AI_PROVIDER]
       sensitive: false
-      owners: [finance_report, truealpha]
+      owners: [infra2, finance_report, truealpha]
     - name: LLM_BASE_URL
       deprecated_aliases: [AI_BASE_URL]
       sensitive: false
-      owners: [finance_report, truealpha]
+      owners: [infra2, finance_report, truealpha]
     - name: LLM_API_KEY
       deprecated_aliases: [AI_API_KEY, ZAI_API_KEY]
       sensitive: true
-      owners: [finance_report, truealpha]
-    - name: LARGE_MODEL
-      deprecated_aliases: []
+      owners: [infra2, finance_report, truealpha]
+    - name: LLM_LARGE_MODEL
+      deprecated_aliases: [LARGE_MODEL]
       sensitive: false
       owners: [finance_report]
-    - name: SMALL_MODEL
-      deprecated_aliases: []
+    - name: LLM_SMALL_MODEL
+      deprecated_aliases: [SMALL_MODEL]
       sensitive: false
-      owners: [finance_report]
-    - name: MULTIMODAL_MODEL
-      deprecated_aliases: []
+      owners: [infra2, finance_report, truealpha]
+    - name: LLM_MULTIMODAL_MODEL
+      deprecated_aliases: [MULTIMODAL_MODEL]
       sensitive: false
       owners: [finance_report]
     - name: LLM_ENCRYPTION_KEYS
