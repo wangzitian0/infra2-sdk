@@ -6,6 +6,19 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+## 3.34.0 - 2026-11-20
+
+### Added
+
+- Add `infra2-sdk[pydantic-ai]` extra (`pydantic-ai-slim[zai]>=2.71.0,<3`) with unified `create_llm_agent` / `create_llm_model`, `GuardedLlmModel`, `DecodingSpec`, single-layer `RetryOnModelErrors` with vendor `max_retries=0`, `gen_ai.*` OpenTelemetry instrumentation, and `vcr_llm_config` / `allow_vcr_model_requests` replay helpers ([#236](https://github.com/wangzitian0/infra2-sdk/issues/236)).
+- Add `prompt_sha256`, `schema_sha256`, `request_sha256`, exception-subclass-preserving `redact_llm_error`, `redact_uri`, `sanitize_headers`, and `llm_call_context` in `infra2_sdk.runtime.llm` ([#236](https://github.com/wangzitian0/infra2-sdk/issues/236)).
+- Add stdlib `_LOG_CONTEXT` propagation across stdout JSON logs and OTLP `LogRecord` export without requiring `structlog` ([#236](https://github.com/wangzitian0/infra2-sdk/issues/236)).
+
+### Changed
+
+- Unify `shared_env.yaml` LLM role variables to `LLM_LARGE_MODEL`, `LLM_SMALL_MODEL`, and `LLM_MULTIMODAL_MODEL` (keeping unprefixed `LARGE_MODEL`, `SMALL_MODEL`, and `MULTIMODAL_MODEL` as deprecated aliases through Release A) and add `infra2` ownership for Canary `platform/30.todo` ([#236](https://github.com/wangzitian0/infra2-sdk/issues/236)).
+- Deprecate `LlmClient` ahead of Release B deletion after downstream consumer migration (`truealpha#1745`, `finance_report#3153`) ([#236](https://github.com/wangzitian0/infra2-sdk/issues/236)).
+
 ## 3.33.0 - 2026-11-18
 
 ### Added

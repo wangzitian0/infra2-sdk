@@ -10,8 +10,8 @@ import re
 import sys
 import threading
 import time
-from collections.abc import Mapping
-from contextlib import suppress
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -44,6 +44,7 @@ REQUIRED_IDENTITY_ATTRIBUTES: tuple[str, ...] = (
     "infra.iac.ref",
 )
 _REQUEST_ID: ContextVar[str | None] = ContextVar("rid", default=None)
+_LOG_CONTEXT: ContextVar[Mapping[str, Any] | None] = ContextVar("infra2_log_ctx", default=None)
 _SECRET_ENV = re.compile(
     r"(?:^|_)(?:SECRET|TOKEN|PASSWORD|PASSWD|KEY|AUTH|CREDENTIAL|WEBHOOK|DSN)(?:_URL)?$"
     r"|^(?:DATABASE|REDIS)_URL$|^INFRA2_OUT_OF_BAND_",
@@ -82,6 +83,39 @@ def _ctx_rid(val: Any, tok: Any = None) -> Any:
     return _REQUEST_ID.set(val) if tok is None else _REQUEST_ID.reset(tok)
 
 
+@contextmanager
+def _bind_log_context(
+    fields: Mapping[str, Any] | None = None, /, **extra_fields: Any
+) -> Iterator[None]:
+    """Bind context fields into stdout JSON logs, OTLP log records, and structlog if loaded."""
+    merged_input = {**(fields or {}), **extra_fields}
+    clean = {k: v for k, v in merged_input.items() if v is not None}
+    if not clean:
+        yield
+        return
+    prev = dict(_LOG_CONTEXT.get() or {})
+    tok = _LOG_CONTEXT.set({**prev, **clean})
+    sl = _sl()
+    prev_sl: dict[str, Any] = {}
+    if sl is not None:
+        prev_sl = dict(sl.get_contextvars() or {})
+        sl.bind_contextvars(**clean)
+    try:
+        yield
+    finally:
+        if sl is not None:
+            to_unbind = [k for k in clean if k not in prev_sl]
+            to_restore = {k: prev_sl[k] for k in clean if k in prev_sl}
+            if to_unbind:
+                sl.unbind_contextvars(*to_unbind)
+            if to_restore:
+                sl.bind_contextvars(**to_restore)
+        try:
+            _LOG_CONTEXT.reset(tok)
+        except ValueError:
+            _LOG_CONTEXT.set(prev or None)
+
+
 def _scrub(val: Any, env: Mapping[str, str], key: str | None = None) -> Any:
     if key and _RISKY_KEY.match(key):
         return "[REDACTED]"
@@ -100,7 +134,8 @@ class _JsonLogFormatter(logging.Formatter):
 
     def format(self, r: logging.LogRecord) -> str:
         env, sl = os.environ, _sl()
-        ctx = dict(sl.get_contextvars() or {}) if sl else {}
+        sl_ctx = dict(sl.get_contextvars() or {}) if sl else {}
+        ctx = dict(_LOG_CONTEXT.get() or {}) | sl_ctx
         tid, sid = r.__dict__.get("otelTraceID"), r.__dict__.get("otelSpanID")
         if tid and set(str(tid)) != {"0"}:
             tid, sid = str(tid), str(sid) if sid else None
@@ -120,7 +155,7 @@ class _JsonLogFormatter(logging.Formatter):
             "request_id": current_request_id() or ctx.get("request_id") or None,
             **self._id,
         }
-        for k, v in ((r.__dict__ | ctx) if ctx else r.__dict__).items():
+        for k, v in (ctx | r.__dict__).items():
             if k not in _STD_ATTRS and k not in out:
                 out[k] = _scrub(v, env, str(k))
         if r.exc_info:
@@ -165,8 +200,12 @@ class _RedactingLogRecordProcessor:
         rec, env = getattr(r, "log_record", r), os.environ
         if rec.body is not None:
             rec.body = _scrub(rec.body, env)
-        if rec.attributes:
-            rec.attributes = {k: _scrub(v, env, str(k)) for k, v in rec.attributes.items()}
+        sl = _sl()
+        sl_ctx = dict(sl.get_contextvars() or {}) if sl else {}
+        log_ctx = dict(_LOG_CONTEXT.get() or {}) | sl_ctx
+        if rec.attributes or log_ctx:
+            merged = dict(rec.attributes or {}) | log_ctx
+            rec.attributes = {k: _scrub(v, env, str(k)) for k, v in merged.items()}
 
     def enabled(self, *_: Any, **__: Any) -> bool:
         return True

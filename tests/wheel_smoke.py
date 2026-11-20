@@ -178,6 +178,7 @@ def smoke_core() -> None:
     import infra2_sdk.rules.compose  # noqa: F401
     import infra2_sdk.runtime.health  # noqa: F401
     import infra2_sdk.runtime.http  # noqa: F401
+    import infra2_sdk.runtime.llm  # noqa: F401
     import infra2_sdk.runtime.otel  # noqa: F401
     import infra2_sdk.runtime.postgres  # noqa: F401
     import infra2_sdk.runtime.s3  # noqa: F401
@@ -553,11 +554,29 @@ def smoke_fastapi_otel() -> None:
     ], "the lifespan shutdown must detach the OpenTelemetry logging handler"
 
 
+def smoke_pydantic_ai() -> None:
+    import pydantic_ai
+    from pydantic_ai.models.test import TestModel
+
+    from infra2_sdk.runtime.llm import DecodingSpec, create_llm_agent
+
+    spec = DecodingSpec("v1", thinking=False, max_tokens=64)
+    agent = create_llm_agent(
+        model=TestModel(),
+        call_site="smoke.test",
+        decoding=spec,
+    )
+    assert pydantic_ai.BANNER_ENABLED is False
+    result = agent.run_sync("ping")
+    assert isinstance(result.output, str) and result.output
+
+
 def smoke_all() -> None:
     import boto3  # noqa: F401
     import httpx  # noqa: F401
     import opentelemetry.sdk.trace  # noqa: F401
     import psycopg  # noqa: F401
+    import pydantic_ai  # noqa: F401
 
     from infra2_sdk.runtime.otel import OtelSettings
 
@@ -576,6 +595,7 @@ SMOKES = {
     "http": smoke_http,
     "otel": smoke_otel,
     "fastapi": smoke_fastapi,
+    "pydantic-ai": smoke_pydantic_ai,
     "all": smoke_all,
 }
 

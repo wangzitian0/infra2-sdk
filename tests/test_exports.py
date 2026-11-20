@@ -114,7 +114,7 @@ def test_infra2_sdk_runtime_submodules_accessible() -> None:
 
 def test_import_isolation_without_optional_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify modules import cleanly without optional third-party packages installed."""
-    blocked = {"boto3", "botocore", "psycopg", "httpx", "opentelemetry"}
+    blocked = {"boto3", "botocore", "psycopg", "httpx", "opentelemetry", "pydantic_ai", "openai"}
 
     class BlockOptionalFinder:
         def find_spec(self, fullname: str, path: object = None, target: object = None) -> None:
@@ -123,12 +123,21 @@ def test_import_isolation_without_optional_dependencies(monkeypatch: pytest.Monk
             return None
 
     monkeypatch.setattr(sys, "meta_path", [BlockOptionalFinder(), *sys.meta_path])
+    for mod_name in list(sys.modules):
+        if mod_name.split(".")[0] in blocked:
+            monkeypatch.delitem(sys.modules, mod_name, raising=False)
 
+    from infra2_sdk.runtime.llm import DecodingSpec, create_llm_agent
     from infra2_sdk.runtime.s3 import S3Settings, create_s3_client
 
     settings = S3Settings(bucket="my-bucket")
     with pytest.raises(RuntimeError, match="boto3 is required; install infra2-sdk\\[s3\\]"):
         create_s3_client(settings)
+
+    assert DecodingSpec("v1", thinking=False).to_model_settings() == {"thinking": False}
+    err_match = r"pydantic_ai is required; install infra2-sdk\[pydantic-ai\]"
+    with pytest.raises(RuntimeError, match=err_match):
+        create_llm_agent()
 
 
 def test_infra2_sdk_unknown_attribute_raises() -> None:
@@ -191,11 +200,6 @@ _ADOPTION_HELD = (
 
 HELD = {
     "runtime_env_contract": "held: issue #102 decision 7 (adopt, do not delete)",
-    "LlmClient": (
-        "held: pending adoption by truealpha#1652 Wave 2 "
-        "(sources/llm.py -> infra2_sdk.runtime.llm) "
-        "and finance_report#2936 llm transport delegation"
-    ),
     "arequest_with_retry": _ADOPTION_HELD,
     "request_with_retry": _ADOPTION_HELD,
     "probe_orchestrator": (

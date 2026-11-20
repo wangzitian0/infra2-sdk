@@ -51,7 +51,7 @@ jobs:
     timeout-minutes: 15
     strategy:
       matrix:
-        extra: [core, s3, postgres, http, otel, fastapi, all]
+        extra: [core, s3, postgres, http, otel, fastapi, pydantic-ai, all]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

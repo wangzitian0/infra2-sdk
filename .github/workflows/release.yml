@@ -36,7 +36,7 @@ jobs:
       - name: Smoke-test release wheel
         run: |
           wheel="$(find dist -name '*.whl' -print -quit)"
-          for extra in core s3 postgres http otel all; do
+          for extra in core s3 postgres http otel fastapi pydantic-ai all; do
             venv=".wheel-smoke-${extra}"
             python -m venv "$venv"
             if [ "$extra" = core ]; then
