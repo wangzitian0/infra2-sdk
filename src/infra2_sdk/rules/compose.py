@@ -65,7 +65,17 @@ _XINFRA2_VAULT_KEYS = frozenset({"name"})
 _SERVICE_XVAULT_KEYS = frozenset({"max_wait_seconds"})
 # Later slices of infra2-sdk#238 own these service keys. A silent pass-through would
 # make Compose ignore them, so the compiler rejects them until that slice ships.
-_RESERVED_SERVICE_KEYS = frozenset({"x-routes", "x-capabilities", "x-preview"})
+_RESERVED_SERVICE_KEYS = frozenset({"x-capabilities", "x-preview"})
+_ROUTES_KEYS = frozenset({"service", "port", "routes"})
+_ROUTE_KEYS = frozenset({"name", "rule", "priority", "tls", "strip_prefix", "sso"})
+# Compose interpolates these in the labels on purpose, so the SDK does not escape them.
+_SUFFIX = "${ENV_DOMAIN_SUFFIX}"
+_SSO_ADDRESS = (
+    "http://platform-authentik-server${ENV_SUFFIX}:9000/outpost.goauthentik.io/auth/traefik"
+)
+_SSO_HEADERS = (
+    "X-authentik-username,X-authentik-groups,X-authentik-email,X-authentik-name,X-authentik-uid"
+)
 _VAULT_SIDECAR = "vault-agent"
 _VAULT_IMAGE = "hashicorp/vault:1.15"
 _DEFAULT_WAIT_SECONDS = 300
@@ -235,6 +245,85 @@ def _wrap_vault_service(spec: dict[str, Any], options: dict[str, Any], where: st
     spec["environment"] = {_SHA_KEY: _SHA_REF, **environment}
 
 
+def _text(value: object, where: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ComposeCompileError(f"{where} must be a non-empty string")
+    return value
+
+
+def _route_labels(spec: dict[str, Any], options: dict[str, Any], where: str) -> None:
+    """Append the Traefik labels of one `x-routes` block. Label order has no meaning."""
+    where = f"{where}.x-routes"
+    _reject_unknown(options, _ROUTES_KEYS, where)
+    service = _text(options.get("service"), f"{where}.service")
+    port = options.get("port")
+    if isinstance(port, bool) or not isinstance(port, int) or port <= 0:
+        raise ComposeCompileError(f"{where}.port must be a positive integer")
+    routes = options.get("routes")
+    if not isinstance(routes, list) or not routes:
+        raise ComposeCompileError(f"{where}.routes must be a non-empty list")
+    existing = spec.get("labels", [])
+    if not isinstance(existing, list):
+        raise ComposeCompileError(f"{where}: `labels` must be a list when x-routes is set")
+    if any(str(label).startswith("traefik.") for label in existing):
+        raise ComposeCompileError(f"{where} owns every `traefik.*` label; remove them")
+    labels = [
+        "traefik.enable=true",
+        f"traefik.http.services.{service}{_SUFFIX}.loadbalancer.server.port={port}",
+    ]
+    names: set[str] = set()
+    sso_names: set[str] = set()
+    for index, route in enumerate(routes):
+        here = f"{where}.routes[{index}]"
+        route = _require_mapping(route, here)
+        _reject_unknown(route, _ROUTE_KEYS, here)
+        name = _text(route.get("name"), f"{here}.name")
+        if name in names:
+            raise ComposeCompileError(f"{here}.name {name!r} is used twice")
+        names.add(name)
+        router = f"traefik.http.routers.{name}{_SUFFIX}"
+        labels += [
+            f"{router}.rule={_text(route.get('rule'), f'{here}.rule')}",
+            f"{router}.entrypoints=websecure",
+        ]
+        tls = route.get("tls", False)
+        if not isinstance(tls, bool):
+            raise ComposeCompileError(f"{here}.tls must be a boolean")
+        if tls:
+            labels.append(f"{router}.tls=true")
+        labels.append(f"{router}.tls.certresolver=letsencrypt")
+        priority = route.get("priority")
+        if priority is not None:
+            if isinstance(priority, bool) or not isinstance(priority, int):
+                raise ComposeCompileError(f"{here}.priority must be an integer")
+            labels.append(f"{router}.priority={priority}")
+        strip, sso = route.get("strip_prefix"), route.get("sso")
+        if strip is not None and sso is not None:
+            raise ComposeCompileError(f"{here}: strip_prefix and sso together are not supported")
+        middleware = None
+        if strip is not None:
+            if not _text(strip, f"{here}.strip_prefix").startswith("/"):
+                raise ComposeCompileError(f"{here}.strip_prefix must start with `/`")
+            middleware = f"{name}-strip"
+            labels.append(
+                f"traefik.http.middlewares.{middleware}{_SUFFIX}.stripprefix.prefixes={strip}"
+            )
+        elif sso is not None:
+            middleware = _text(sso, f"{here}.sso")
+            if middleware not in sso_names:
+                sso_names.add(middleware)
+                auth = f"traefik.http.middlewares.{middleware}{_SUFFIX}.forwardauth"
+                labels += [
+                    f"{auth}.address={_SSO_ADDRESS}",
+                    f"{auth}.trustForwardHeader=true",
+                    f"{auth}.authResponseHeaders={_SSO_HEADERS}",
+                ]
+        if middleware:
+            labels.append(f"{router}.middlewares={middleware}{_SUFFIX}@docker")
+        labels.append(f"{router}.service={service}{_SUFFIX}")
+    spec["labels"] = [*existing, *labels]
+
+
 def _apply_service_defaults(spec: dict[str, Any]) -> None:
     spec.setdefault("restart", "always")
     spec.setdefault(
@@ -276,6 +365,9 @@ def _compile_mapping(source: Mapping[str, Any], vault_template: str | None) -> d
         options = spec.pop("x-vault", None)
         if options is not None:
             _wrap_vault_service(spec, _require_mapping(options, f"{where}.x-vault"), where)
+        routes = spec.pop("x-routes", None)
+        if routes is not None:
+            _route_labels(spec, _require_mapping(routes, f"{where}.x-routes"), where)
         out_services[svc_name] = spec
     for spec in out_services.values():
         _apply_service_defaults(spec)
@@ -314,9 +406,9 @@ def compile_compose(source: str | Mapping[str, Any], *, vault_template: str | No
 
     The function is pure: it does no file, network, or environment access, and it returns
     the same bytes for the same input. It applies the baseline service defaults and expands
-    `x-vault` into one inline `vault-agent` sidecar. `vault_template` holds the rendered
-    Vault Agent template text. Any unknown `x-infra2` or `x-vault` key raises
-    `ComposeCompileError`.
+    `x-vault` into one inline `vault-agent` sidecar and `x-routes` into Traefik labels.
+    `vault_template` holds the rendered Vault Agent template text. Any unknown `x-infra2`,
+    `x-vault` or `x-routes` key raises `ComposeCompileError`.
     """
     if isinstance(source, str):
         yaml = _yaml()

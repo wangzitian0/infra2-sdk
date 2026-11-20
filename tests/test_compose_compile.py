@@ -9,6 +9,9 @@ d = Path('tests/fixtures/compose'); \
 (d / 'todo.x-infra2.compose.yaml').read_text(), \
 vault_template=(d / 'todo.secrets.ctmpl').read_text().split('\\n', 1)[1]))"
 
+The route fixtures in `tests/fixtures/compose_routes/` are verbatim copies of infra2 compose
+files at the commit named in their first line.
+
 The equivalence check against the real infra2 files runs in infra2 CI (infra2#1822).
 """
 
@@ -84,6 +87,9 @@ def test_compiled_todo_app_equals_handwritten_after_normalization() -> None:
     hand_script = hand.pop("entrypoint")[2]
     assert _strip_comments(hand_script)[-1] == "exec " + " ".join(compiled["command"])
     del compiled["command"], compiled["entrypoint"]
+    # Normalization 2: label order has no meaning to Traefik, so compare labels as sets.
+    for spec in (hand, compiled):
+        spec["labels"] = sorted(spec["labels"])
     assert compiled == hand
 
 
@@ -297,10 +303,6 @@ def _with(path: list[str], value: Any) -> dict[str, Any]:
             r"services.api.x-vault: unknown key\(s\) \['image'\]",
         ),
         (
-            _with(["services", "web", "x-routes"], {}),
-            r"services.web: \['x-routes'\] is not supported",
-        ),
-        (
             _with(["services", "web", "x-capabilities"], {}),
             r"\['x-capabilities'\] is not supported",
         ),
@@ -314,6 +316,7 @@ def _with(path: list[str], value: Any) -> dict[str, Any]:
         ),
         (_with(["services", "vault-agent"], {"image": "x"}), r"'vault-agent' is reserved"),
         (_with(["services", "api", "environment"], ["A=1"]), r"environment must be a mapping"),
+        (_with(["services", "web", "x-routes"], []), r"services.web.x-routes must be a mapping"),
     ],
 )
 def test_invalid_source_fails_closed(source: dict[str, Any], message: str) -> None:
@@ -358,3 +361,219 @@ def test_inspect_compose_reports_compile_error_for_bad_x_infra2_input() -> None:
     report = inspect_compose(yaml.safe_dump(source))
     assert not report.is_valid
     assert "x-infra2: unknown key(s) ['routes']" in report.errors[0]
+
+
+# --- x-routes -----------------------------------------------------------------------------
+
+ROUTES = Path(__file__).with_name("fixtures") / "compose_routes"
+SUFFIX = "${ENV_DOMAIN_SUFFIX}"
+
+
+def _traefik_labels(spec: dict[str, Any]) -> list[str]:
+    return [label for label in spec["labels"] if label.startswith("traefik.")]
+
+
+def _route_source(**options: Any) -> dict[str, Any]:
+    base = {"service": "svc", "port": 80, "routes": [{"name": "r", "rule": "Host(`h`)"}]}
+    return _minimal(**{"x-routes": {**base, **options}})
+
+
+def _route_labels(**options: Any) -> list[str]:
+    out = yaml.safe_load(compile_compose(_route_source(**options)))
+    return _traefik_labels(out["services"]["app"])
+
+
+def _compiled_routes(name: str, routes: dict[str, Any]) -> dict[str, Any]:
+    hand = yaml.safe_load((ROUTES / name).read_text(encoding="utf-8"))["services"]
+    source = {
+        "x-infra2": {},
+        "services": {
+            svc: {"image": "x", "mem_limit": "64m", "x-routes": block}
+            for svc, block in routes.items()
+        },
+    }
+    out = yaml.safe_load(compile_compose(source))["services"]
+    # Label order has no meaning to Traefik, so compare as sets. A list equality here would
+    # also fail on the middleware blocks that the hand files place between routers.
+    # Equal length proves that the compiler emits no duplicate label.
+    for svc in routes:
+        got, want = _traefik_labels(out[svc]), _traefik_labels(hand[svc])
+        assert len(got) == len(want)
+        assert set(got) == set(want)
+    return out
+
+
+def test_compiled_finance_report_routes_equal_handwritten_labels() -> None:
+    host = "Host(`report${ENV_DOMAIN_SUFFIX}.${INTERNAL_DOMAIN}`)"
+    _compiled_routes(
+        "finance_report.handwritten.compose.yaml",
+        {
+            "backend": {
+                "service": "finance-report-api",
+                "port": 8000,
+                "routes": [
+                    {
+                        "name": "finance-report-api",
+                        "rule": f"{host} && PathPrefix(`/api`)",
+                        "strip_prefix": "/api",
+                    }
+                ],
+            },
+            "frontend": {
+                "service": "finance-report-web",
+                "port": 3000,
+                "routes": [{"name": "finance-report-web", "rule": host, "priority": 1}],
+            },
+        },
+    )
+
+
+def test_compiled_prefect_sso_route_equals_handwritten_labels() -> None:
+    _compiled_routes(
+        "prefect.handwritten.compose.yaml",
+        {
+            "prefect-server": {
+                "service": "prefect",
+                "port": 4200,
+                "routes": [
+                    {
+                        "name": "prefect",
+                        "rule": "Host(`prefect${ENV_DOMAIN_SUFFIX}.${INTERNAL_DOMAIN}`)",
+                        "tls": True,
+                        "sso": "prefect-auth",
+                    }
+                ],
+            }
+        },
+    )
+
+
+def test_x_routes_is_removed_from_the_service_and_other_keys_stay() -> None:
+    spec = yaml.safe_load(compile_compose(_route_source()))["services"]["app"]
+    assert "x-routes" not in spec
+    assert spec["image"] == "alpine:3.20"
+    assert spec["restart"] == "always"
+
+
+def test_route_emits_exact_baseline_label_set() -> None:
+    assert sorted(_route_labels()) == sorted(
+        [
+            "traefik.enable=true",
+            f"traefik.http.services.svc{SUFFIX}.loadbalancer.server.port=80",
+            f"traefik.http.routers.r{SUFFIX}.rule=Host(`h`)",
+            f"traefik.http.routers.r{SUFFIX}.entrypoints=websecure",
+            f"traefik.http.routers.r{SUFFIX}.tls.certresolver=letsencrypt",
+            f"traefik.http.routers.r{SUFFIX}.service=svc{SUFFIX}",
+        ]
+    )
+
+
+def test_route_labels_keep_interpolation_unescaped() -> None:
+    labels = _route_labels()
+    assert not [label for label in labels if "$$" in label]
+    assert all(SUFFIX in label for label in labels if ".routers." in label)
+
+
+def test_route_tls_priority_strip_and_sso_fields_emit_their_labels() -> None:
+    routes = [
+        {"name": "a", "rule": "A", "tls": True, "priority": 7, "strip_prefix": "/api"},
+        {"name": "b", "rule": "B", "sso": "auth"},
+        {"name": "c", "rule": "C", "sso": "auth"},
+    ]
+    labels = _route_labels(routes=routes)
+    assert f"traefik.http.routers.a{SUFFIX}.tls=true" in labels
+    assert f"traefik.http.routers.a{SUFFIX}.priority=7" in labels
+    assert f"traefik.http.middlewares.a-strip{SUFFIX}.stripprefix.prefixes=/api" in labels
+    assert f"traefik.http.routers.a{SUFFIX}.middlewares=a-strip{SUFFIX}@docker" in labels
+    assert f"traefik.http.routers.b{SUFFIX}.middlewares=auth{SUFFIX}@docker" in labels
+    assert f"traefik.http.routers.c{SUFFIX}.middlewares=auth{SUFFIX}@docker" in labels
+    assert f"traefik.http.routers.b{SUFFIX}.tls=true" not in labels
+    assert f"traefik.http.routers.b{SUFFIX}.priority=7" not in labels
+    # Two routes share the `auth` middleware: it is defined once.
+    defined = [x for x in labels if x.startswith(f"traefik.http.middlewares.auth{SUFFIX}.")]
+    assert len(defined) == 3
+    assert any(x.endswith(".forwardauth.trustForwardHeader=true") for x in defined)
+
+
+def test_route_labels_append_after_existing_non_traefik_labels() -> None:
+    source = _route_source()
+    source["services"]["app"]["labels"] = ["iac.x=1"]
+    labels = yaml.safe_load(compile_compose(source))["services"]["app"]["labels"]
+    assert labels[0] == "iac.x=1"
+    assert "traefik.enable=true" in labels[1:]
+
+
+def test_route_compile_does_not_mutate_its_input_and_is_deterministic() -> None:
+    source = _route_source()
+    before = copy.deepcopy(source)
+    first = compile_compose(source)
+    assert source == before
+    assert compile_compose(copy.deepcopy(source)) == first
+
+
+def _routes_with(path: list[str], value: Any) -> dict[str, Any]:
+    source = _route_source()
+    node: Any = source["services"]["app"]["x-routes"]
+    for key in path[:-1]:
+        node = node[key]
+    node[path[-1]] = value
+    return source
+
+
+@pytest.mark.parametrize(
+    ("source", "message"),
+    [
+        (_routes_with(["extra"], 1), r"x-routes: unknown key\(s\) \['extra'\]"),
+        (_routes_with(["service"], ""), r"x-routes.service must be a non-empty string"),
+        (_routes_with(["port"], 0), r"x-routes.port must be a positive integer"),
+        (_routes_with(["port"], True), r"x-routes.port must be a positive integer"),
+        (_routes_with(["routes"], []), r"x-routes.routes must be a non-empty list"),
+        (_routes_with(["routes"], ["r"]), r"routes\[0\] must be a mapping"),
+        (
+            _routes_with(["routes"], [{"name": "r", "rule": "H", "max_request_body_bytes": 1}]),
+            r"routes\[0\]: unknown key\(s\) \['max_request_body_bytes'\]",
+        ),
+        (_routes_with(["routes"], [{"rule": "H"}]), r"routes\[0\].name must be a non-empty"),
+        (_routes_with(["routes"], [{"name": "r"}]), r"routes\[0\].rule must be a non-empty"),
+        (
+            _routes_with(["routes"], [{"name": "r", "rule": "H"}, {"name": "r", "rule": "H"}]),
+            r"name 'r' is used twice",
+        ),
+        (
+            _routes_with(["routes"], [{"name": "r", "rule": "H", "tls": "yes"}]),
+            r"tls must be a boolean",
+        ),
+        (
+            _routes_with(["routes"], [{"name": "r", "rule": "H", "priority": "1"}]),
+            r"priority must be an integer",
+        ),
+        (
+            _routes_with(["routes"], [{"name": "r", "rule": "H", "strip_prefix": "api"}]),
+            r"strip_prefix must start with `/`",
+        ),
+        (
+            _routes_with(["routes"], [{"name": "r", "rule": "H", "sso": ""}]),
+            r"sso must be a non-empty string",
+        ),
+        (
+            _routes_with(
+                ["routes"], [{"name": "r", "rule": "H", "sso": "a", "strip_prefix": "/a"}]
+            ),
+            r"strip_prefix and sso together are not supported",
+        ),
+    ],
+)
+def test_invalid_x_routes_fails_closed(source: dict[str, Any], message: str) -> None:
+    with pytest.raises(ComposeCompileError, match=message):
+        compile_compose(source)
+
+
+def test_x_routes_rejects_traefik_labels_and_mapping_labels_in_the_source() -> None:
+    for labels, message in (
+        (["traefik.enable=true"], r"owns every `traefik.\*` label"),
+        ({"a": "b"}, r"`labels` must be a list"),
+    ):
+        source = _route_source()
+        source["services"]["app"]["labels"] = labels
+        with pytest.raises(ComposeCompileError, match=message):
+            compile_compose(source)

@@ -6,6 +6,10 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+### Added
+
+- `compile_compose` expands a service `x-routes` block into env-suffixed Traefik router, `strip_prefix` and Authentik ForwardAuth `sso` labels ([#238](https://github.com/wangzitian0/infra2-sdk/issues/238)).
+
 ## 3.34.1 - 2026-11-20
 
 ### Changed
