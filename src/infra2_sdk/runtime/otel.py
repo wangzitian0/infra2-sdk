@@ -45,6 +45,7 @@ REQUIRED_IDENTITY_ATTRIBUTES: tuple[str, ...] = (
 )
 _REQUEST_ID: ContextVar[str | None] = ContextVar("rid", default=None)
 _LOG_CONTEXT: ContextVar[Mapping[str, Any] | None] = ContextVar("infra2_log_ctx", default=None)
+_OTLP_KEY = re.compile(r"(?:infra\.llm\.|code\.|request_id$)")
 _SECRET_ENV = re.compile(
     r"(?:^|_)(?:SECRET|TOKEN|PASSWORD|PASSWD|KEY|AUTH|CREDENTIAL|WEBHOOK|DSN)(?:_URL)?$"
     r"|^(?:DATABASE|REDIS)_URL$|^INFRA2_OUT_OF_BAND_",
@@ -87,9 +88,7 @@ def _ctx_rid(val: Any, tok: Any = None) -> Any:
 def _bind_log_context(
     fields: Mapping[str, Any] | None = None, /, **extra_fields: Any
 ) -> Iterator[None]:
-    """Bind context fields into stdout JSON logs, OTLP log records, and structlog if loaded."""
-    merged_input = {**(fields or {}), **extra_fields}
-    clean = {k: v for k, v in merged_input.items() if v is not None}
+    clean = {k: v for k, v in {**(fields or {}), **extra_fields}.items() if v is not None}
     if not clean:
         yield
         return
@@ -155,7 +154,7 @@ class _JsonLogFormatter(logging.Formatter):
             "request_id": current_request_id() or ctx.get("request_id") or None,
             **self._id,
         }
-        for k, v in (ctx | r.__dict__).items():
+        for k, v in (r.__dict__ | ctx).items():
             if k not in _STD_ATTRS and k not in out:
                 out[k] = _scrub(v, env, str(k))
         if r.exc_info:
@@ -202,7 +201,9 @@ class _RedactingLogRecordProcessor:
             rec.body = _scrub(rec.body, env)
         sl = _sl()
         sl_ctx = dict(sl.get_contextvars() or {}) if sl else {}
-        log_ctx = dict(_LOG_CONTEXT.get() or {}) | sl_ctx
+        log_ctx = dict(_LOG_CONTEXT.get() or {}) | {
+            k: v for k, v in sl_ctx.items() if _OTLP_KEY.match(k)
+        }
         if rec.attributes or log_ctx:
             merged = dict(rec.attributes or {}) | log_ctx
             rec.attributes = {k: _scrub(v, env, str(k)) for k, v in merged.items()}
