@@ -1456,3 +1456,16 @@ def test_served_paths_are_the_routed_contract(app) -> None:
     """infra2 routes exactly these paths (only /api/health without SSO). A new path must
     change this set and the infra2 routing test together."""
     assert _served_paths() == SERVED_PATHS
+
+
+def test_the_classification_sits_inside_the_first_128_bytes(app, monkeypatch) -> None:
+    """The infra2 probe runner keeps only the first 128 bytes of the body (infra2
+    common/observability/probes.py). The red/gap classification must sit inside them."""
+    _env(monkeypatch)
+    gap = {"status": "unconfigured", "latency_ms": 0.1, "detail": "CANARY_S3 gap"}
+    _patch_probes(app, monkeypatch, s3=gap)
+    _code, body = _get_status(app)
+    head = body[:128] if isinstance(body, str) else body[:128].decode()
+    assert '"unconfigured":["s3"]' in head or '"unconfigured": ["s3"]' in head
+    assert '"failed":[]' in head or '"failed": []' in head
+    assert '"ok":false' in head or '"ok": false' in head
