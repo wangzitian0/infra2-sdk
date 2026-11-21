@@ -44,7 +44,8 @@ The release workflow publishes each release. Do not publish manually. A change u
    2026-10-26). The workflow verifies that `$GITHUB_SHA` is on `origin/main`
    (`git merge-base --is-ancestor "$GITHUB_SHA" origin/main`). It also verifies that the tag
    matches `pyproject.toml`, builds the package, and runs `gh release create --verify-tag`.
-   It runs no test: `.github/workflows/ci.yml` ran them on that commit of `main`.
+   It runs no test. It fails unless a `ci.yml` run on `main` passed for that commit: push the
+   tag after that run is green.
 3. Do not create the GitHub release manually before the workflow finishes. A manual release
    causes the publish step to fail and leaves unverified assets attached to the tag.
    Follow the release identity contract in `.github/workflows/release.yml`

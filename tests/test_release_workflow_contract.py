@@ -58,6 +58,13 @@ def validate_workflow_contracts(
     publish_step = _find_step_by_script(rel_steps, "gh release create")
     if publish_step is None:
         violations.append("release.yml:release: missing gh release create step")
+    ci_step = _find_step_by_script(
+        rel_steps, 'gh run list --workflow ci.yml --commit "$GITHUB_SHA" --event push --status success'
+    )
+    if ci_step is None or (
+        publish_step is not None and rel_steps.index(ci_step) > rel_steps.index(publish_step)
+    ):
+        violations.append("release.yml:release: missing CI success check before gh release create")
     if ancestor_step is None:
         violations.append("release.yml:release: missing origin/main ancestor verification step")
     else:
@@ -117,6 +124,17 @@ def test_mutation_removing_release_ancestor_check_or_publish_fails_guard() -> No
     assert (
         "release.yml:release: missing origin/main ancestor verification step"
         in validate_workflow_contracts(ci_data, mutated_anc)
+    )
+
+    mutated_ci_check = copy.deepcopy(release_data)
+    mutated_ci_check["jobs"]["release"]["steps"] = [
+        s
+        for s in mutated_ci_check["jobs"]["release"]["steps"]
+        if "gh run list" not in str(s.get("run", ""))
+    ]
+    assert (
+        "release.yml:release: missing CI success check before gh release create"
+        in validate_workflow_contracts(ci_data, mutated_ci_check)
     )
 
     mutated_pub = copy.deepcopy(release_data)

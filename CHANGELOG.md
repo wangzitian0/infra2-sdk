@@ -6,7 +6,7 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
-- The release workflow builds and publishes only. It runs no lint, test or wheel smoke on the tag: `ci.yml` ran them on that commit of `main` (#264).
+- The release workflow builds and publishes only. It runs no lint, test or wheel smoke on the tag. It fails unless a `ci.yml` run on `main` passed for the tagged commit (#264).
 - `docs/app-integration-contract.md` states that `local.post` is a manual cell for a person (#264).
 - `README.md` and `CONTRIBUTING.md` name no full-suite or build command for local use (#264).
 
