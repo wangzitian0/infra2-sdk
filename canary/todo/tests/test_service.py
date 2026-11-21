@@ -546,14 +546,12 @@ def test_health_reports_the_installed_sdk_version(monkeypatch) -> None:
     ("url", "expected"),
     [
         (
-            "postgresql://todo_app:p%40ss%2Fword@db.internal:6543/todo%20db",
+            "postgresql://todo_app:p%40ss%2Fword@db.internal:6543/todo%20db?sslmode=require",
             ("db.internal", 6543, "todo_app", "p@ss/word", "todo db"),
         ),
         ("postgresql+psycopg://u:p@h/d", ("h", 5432, "u", "p", "d")),
         ("postgres://u:p@h", ("h", 5432, "u", "p", "postgres")),
-        ("", ("", 5432, "", "", "postgres")),
-        ("mysql://u:p@h/d", ("", 5432, "", "", "postgres")),
-        ("postgresql://u:p@h:notaport/d", ("", 5432, "", "", "postgres")),
+        ("postgresql://u:p@[::1]:6543/d", ("::1", 6543, "u", "p", "d")),
     ],
 )
 def test_database_target_reads_only_database_url(monkeypatch, url, expected) -> None:
@@ -562,6 +560,51 @@ def test_database_target_reads_only_database_url(monkeypatch, url, expected) -> 
         monkeypatch.setenv(retired, "retired-name-must-not-be-read")
     monkeypatch.setenv("DATABASE_URL", url)
     assert todo_mod._database_target() == expected
+
+
+@pytest.mark.parametrize(
+    ("url", "message"),
+    [
+        ("", "DATABASE_URL is not configured"),
+        ("mysql://u:p@h/d", "DATABASE_URL is not a PostgreSQL URL"),
+        ("postgresql://u:p@h:notaport/d", "DATABASE_URL is not a PostgreSQL URL"),
+        ("postgresql://u:SECRET/PW@h:5432/d", "DATABASE_URL is not a PostgreSQL URL"),
+        ("postgresql://u:SECRET#PW@h/d", "DATABASE_URL is not a PostgreSQL URL"),
+        ("postgresql://u@h/d", "DATABASE_URL is not a PostgreSQL URL"),
+        ("postgresql:///d?host=h&user=u", "DATABASE_URL is not a PostgreSQL URL"),
+    ],
+)
+def test_database_target_names_the_fault_and_hides_the_value(monkeypatch, url, message) -> None:
+    todo_mod = load_todo_module("todo_app_database_fault")
+    monkeypatch.setenv("DATABASE_URL", url)
+    with pytest.raises(ValueError) as caught:
+        todo_mod._database_target()
+    assert str(caught.value).startswith(message)
+    assert "SECRET" not in str(caught.value)
+    with pytest.raises(todo_mod._TodoStoreUnavailable, match=message):
+        todo_mod._connect_todo_db()
+
+
+def test_postgres_check_fails_on_a_malformed_database_url(monkeypatch) -> None:
+    todo_mod = load_todo_module("todo_app_database_malformed")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:SECRET/PW@h:5432/d")
+    monkeypatch.setattr(todo_mod, "_probe_postgres", lambda *a, **k: pytest.fail("no login"))
+    check = todo_mod.run_all_checks()["checks"]["postgres"]
+    assert check["status"] == "fail"
+    assert check["detail"].startswith("DATABASE_URL is not a PostgreSQL URL")
+    assert "SECRET" not in check["detail"]
+
+
+def test_postgres_probe_brackets_an_ipv6_host() -> None:
+    todo_mod = load_todo_module("todo_app_database_ipv6")
+    seen: list[str] = []
+
+    def _connector(dsn: str, **kwargs):
+        seen.append(dsn)
+        raise OSError("stop after capture")
+
+    todo_mod._probe_postgres("::1", 6543, user="u", password="p" * 20, connector=_connector)
+    assert seen and "@[::1]:6543/postgres" in seen[0]
 
 
 def test_todo_store_connects_with_the_database_url_login(monkeypatch) -> None:

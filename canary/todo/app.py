@@ -156,35 +156,45 @@ def _row_to_todo(row: tuple[Any, ...]) -> dict[str, Any]:
     }
 
 
+_DATABASE_URL_UNSET = "DATABASE_URL is not configured"
+_DATABASE_URL_INVALID = (
+    "DATABASE_URL is not a PostgreSQL URL with host, user and password "
+    "(percent-encode reserved characters)"
+)
+
+
 def _database_target() -> tuple[str, int, str, str, str]:
     """Return host, port, user, password and database name from `DATABASE_URL`.
 
-    The todo store and the Postgres probe use this one login. An unset or
-    malformed `DATABASE_URL` gives empty strings: each caller reports it.
+    The todo store and the Postgres probe use this one login. Only these five
+    parts are read: query parameters are ignored. Raise `ValueError` with a
+    message that has no part of the value when the URL is unset or malformed.
     """
     raw = os.environ.get("DATABASE_URL", "").strip()
     if not raw:
-        return "", 5432, "", "", "postgres"
+        raise ValueError(_DATABASE_URL_UNSET)
     try:
         parts = urllib.parse.urlsplit(raw)
         port = parts.port or 5432
     except ValueError:
-        return "", 5432, "", "", "postgres"
-    if parts.scheme.split("+", 1)[0] not in {"postgresql", "postgres"}:
-        return "", 5432, "", "", "postgres"
-    return (
-        parts.hostname or "",
-        port,
-        urllib.parse.unquote(parts.username or ""),
-        urllib.parse.unquote(parts.password or ""),
-        urllib.parse.unquote(parts.path.lstrip("/")) or "postgres",
-    )
+        raise ValueError(_DATABASE_URL_INVALID) from None
+    host = parts.hostname or ""
+    user = urllib.parse.unquote(parts.username or "")
+    password = urllib.parse.unquote(parts.password or "")
+    if parts.scheme.split("+", 1)[0] not in {"postgresql", "postgres"} or not (
+        host and user and password
+    ):
+        raise ValueError(_DATABASE_URL_INVALID)
+    return host, port, user, password, urllib.parse.unquote(parts.path.lstrip("/")) or "postgres"
 
 
 def _connect_todo_db():
-    host, port, user, password, dbname = _database_target()
-    if not (host and user and password):
-        raise _TodoStoreUnavailable("Missing PostgreSQL todo storage configuration: DATABASE_URL")
+    try:
+        host, port, user, password, dbname = _database_target()
+    except ValueError as exc:
+        raise _TodoStoreUnavailable(
+            f"Missing PostgreSQL todo storage configuration: {exc}"
+        ) from None
     import psycopg
 
     return psycopg.connect(
@@ -461,7 +471,7 @@ def _probe_postgres(
     if not (user and password):
         return _unconfigured(
             start,
-            "DATABASE_URL is not configured",
+            _DATABASE_URL_UNSET,
         )
     try:
         from infra2_sdk.runtime.postgres import (
@@ -472,7 +482,8 @@ def _probe_postgres(
         dsn = (
             f"postgresql://{urllib.parse.quote(user, safe='')}"
             f":{urllib.parse.quote(password, safe='')}"
-            f"@{host}:{int(port)}/{urllib.parse.quote(dbname, safe='')}"
+            f"@{f'[{host}]' if ':' in host else host}:{int(port)}"
+            f"/{urllib.parse.quote(dbname, safe='')}"
         )
         settings = PostgresSettings(
             dsn=dsn, connect_timeout_seconds=max(1, min(60, math.ceil(timeout)))
@@ -917,7 +928,12 @@ def _run_checks(
 def run_all_checks() -> dict[str, Any]:
     """Run the real probes against the platform's infrastructure capabilities."""
     suffix = os.environ.get("ENV_SUFFIX", "")
-    pg_host, pg_port, pg_user, pg_password, pg_database = _database_target()
+    pg_problem = ""
+    pg_host, pg_port, pg_user, pg_password, pg_database = "", 5432, "", "", "postgres"
+    try:
+        pg_host, pg_port, pg_user, pg_password, pg_database = _database_target()
+    except ValueError as exc:
+        pg_problem = str(exc)
     redis_host = os.environ.get("REDIS_HOST", f"platform-redis{suffix}")
     redis_port = int(os.environ.get("REDIS_PORT", "6379"))
     redis_password = os.environ.get("REDIS_PASSWORD") or None
@@ -945,8 +961,12 @@ def run_all_checks() -> dict[str, Any]:
         return lambda: _probe_http(url)
 
     plan: dict[str, Callable[[], Any]] = {
-        "postgres": lambda: _probe_postgres(
-            pg_host, pg_port, user=pg_user, password=pg_password, dbname=pg_database
+        "postgres": lambda: (
+            _outcome("fail", time.perf_counter(), pg_problem)
+            if pg_problem == _DATABASE_URL_INVALID
+            else _probe_postgres(
+                pg_host, pg_port, user=pg_user, password=pg_password, dbname=pg_database
+            )
         ),
         "redis": lambda: _probe_redis(redis_host, redis_port, password=redis_password),
         "s3": lambda: _probe_s3(

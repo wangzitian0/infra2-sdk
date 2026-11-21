@@ -712,7 +712,7 @@ def test_run_all_checks_hands_each_probe_its_credentials(app, monkeypatch) -> No
         monkeypatch,
         ENV_SUFFIX="-staging",
         REDIS_PASSWORD=REDIS_PW,
-        DATABASE_URL=f"postgresql://canary_ro:{PG_PASSWORD}@platform-postgres-staging:5432/postgres",
+        DATABASE_URL=f"postgresql://canary_ro:{PG_PASSWORD}@platform-postgres-staging:6543/canary_db",
         S3_ENDPOINT="http://platform-s3-staging:9000",
         S3_BUCKET="platform-canary",
         S3_ACCESS_KEY=S3_ACCESS_KEY,
@@ -747,6 +747,8 @@ def test_run_all_checks_hands_each_probe_its_credentials(app, monkeypatch) -> No
     assert calls["redis"]["args"][0] == "platform-redis-staging"
     assert calls["redis"]["kwargs"]["password"] == REDIS_PW
     assert calls["postgres"]["args"][0] == "platform-postgres-staging"
+    assert calls["postgres"]["args"][1] == 6543
+    assert calls["postgres"]["kwargs"]["dbname"] == "canary_db"
     assert calls["postgres"]["kwargs"]["user"] == "canary_ro"
     assert calls["postgres"]["kwargs"]["password"] == PG_PASSWORD
     assert calls["s3"]["kwargs"] == {

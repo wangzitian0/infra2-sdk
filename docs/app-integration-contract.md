@@ -88,6 +88,9 @@ when they are stale. Regenerate them with `python scripts/render_app_contract.py
 | `CANARY_POSTGRES_USER` | `DATABASE_URL` |
 | `CANARY_POSTGRES_PASSWORD` | `DATABASE_URL` |
 | `CANARY_POSTGRES_DATABASE` | `DATABASE_URL` |
+| `TODO_POSTGRES_USER` | `DATABASE_URL` |
+| `TODO_POSTGRES_PASSWORD` | `DATABASE_URL` |
+| `TODO_POSTGRES_DATABASE` | `DATABASE_URL` |
 | `TRUEALPHA_CAPTURE_APPROVED_BY` | `CAPTURE_APPROVED_BY` |
 
 | Cell (app owned) | Trigger | Budget (s) | Check list |
