@@ -732,10 +732,23 @@ def test_app_reads_the_process_environment_only_through_the_settings_class() -> 
         if alias.name == "os"
     ] == [None]
 
+    names = {"environ", "environb", "getenv", "getenvb", "putenv"}
+
     def reads(node: ast.AST) -> bool:
-        return (
-            isinstance(node, ast.Attribute) and node.attr in {"environ", "getenv", "putenv"}
-        ) or (isinstance(node, ast.Name) and node.id in {"environ", "getenv"})
+        return (isinstance(node, ast.Attribute) and node.attr in names) or (
+            isinstance(node, ast.Name) and node.id in names
+        )
+
+    # No lookup of an `os` attribute by a text name: `getattr(os, "environ")`.
+    dynamic = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"getattr", "vars"}
+        and any(isinstance(arg, ast.Name) and arg.id == "os" for arg in node.args)
+    ]
+    assert dynamic == []
 
     functions = [
         node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -763,3 +776,10 @@ def test_app_reads_the_process_environment_only_through_the_settings_class() -> 
             parent = next(p for p in ast.walk(tree) if parent in ast.iter_child_nodes(p))
         assert isinstance(parent, ast.Call), ast.dump(parent)[:120]
         assert node is not parent.func and node not in ast.walk(parent.func), node.lineno
+        # Only these readers receive the mapping. `dict(os.environ)` is not one of them.
+        assert ast.unparse(parent.func) in {
+            "CanarySettings.from_environ",
+            "CanarySettings.read",
+            "LlmSettings.from_mapping",
+            "assert_environment",
+        }, ast.unparse(parent.func)
