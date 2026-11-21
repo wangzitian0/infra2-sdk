@@ -350,6 +350,10 @@ python -m infra2_sdk.runtime.config_schema app.config:Settings \
   --json required-env.generated.json --markdown env-reference.generated.md --check
 ```
 
+`merge_manifests([(label, manifest), ...], source=..., exclude=...)` joins the manifests of
+one stack. A variable that two manifests declare must agree on how it is produced and
+rendered; the first declaration wins for the rest.
+
 ## Configuration supply chain
 
 Manifest contract version 2 gives every field a *source class*: who may legitimately
