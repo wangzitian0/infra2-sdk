@@ -30,6 +30,7 @@ services:
       VAULT_ROLE_ID: ${VAULT_ROLE_ID:-}
       VAULT_SECRET_ID: ${VAULT_SECRET_ID:-}
       ENV: ${ENV}
+      ENV_SUFFIX: ${ENV_SUFFIX:-}
       CONFIGURATION_SHA256: ${CONFIGURATION_SHA256:-}
       VAULT_AGENT_HCL: |
         vault {
@@ -69,11 +70,13 @@ services:
       VAULT_SECRETS_TEMPLATE: |
         {{- /* Generated from platform/todo by infra2_sdk.secrets. Do not edit. */ -}}
         {{- $$env := env "ENV" -}}
+        {{- with secret (printf "secret/data/platform/%s/todo" $$env) }}
+        DATABASE_URL={{ printf "%q" (printf "postgresql://todo_app:%s@platform-postgres%s:5432/postgres" .Data.data.TODO_POSTGRES_PASSWORD (env "ENV_SUFFIX")) }}
+        {{- end }}
         {{- with secret (printf "secret/data/platform/%s/redis" $$env) }}
         REDIS_PASSWORD={{ printf "%q" .Data.data.password }}
         {{- end }}
         {{- with secret (printf "secret/data/platform/%s/todo" $$env) }}
-        CANARY_POSTGRES_PASSWORD={{ printf "%q" .Data.data.CANARY_POSTGRES_PASSWORD }}
         TODO_POSTGRES_PASSWORD={{ printf "%q" .Data.data.TODO_POSTGRES_PASSWORD }}
         {{ with index .Data.data "S3_ACCESS_KEY" }}S3_ACCESS_KEY={{ printf "%q" . }}{{ end }}
         {{ with index .Data.data "S3_SECRET_KEY" }}S3_SECRET_KEY={{ printf "%q" . }}{{ end }}
@@ -96,7 +99,7 @@ services:
     - secrets:/vault/secrets
     labels:
     - infra2.vault.config.sha256=8f1ed993986ab8709ef19bc161abab2fb947f60e7449dba50bb7964128a26f38
-    - infra2.vault.template.sha256=058a0ce1ca3564d51933c879f0eae72a5f1b28295fe815404e115b3285679450
+    - infra2.vault.template.sha256=df17112e71c8b8295037c2f5e2504ab82da728baf334421b150994c97dc971e4
     logging:
       driver: json-file
       options:
@@ -105,10 +108,7 @@ services:
     networks:
     - dokploy-network
   todo:
-    build:
-      context: ../..
-      dockerfile: platform/30.todo/Dockerfile
-    image: platform-todo:${CONFIGURATION_SHA256:-}
+    image: ghcr.io/wangzitian0/infra2-canary-todo:v4.1.0@sha256:0686a555ca8ab190098de6edfb1c8d5f006c84b9f2cedc81b2cb2966c5e51e3e
     container_name: platform-todo${ENV_SUFFIX}
     mem_limit: 256m
     cpu_shares: 512
@@ -121,12 +121,6 @@ services:
       ENVIRONMENT: ${ENV}
       INTERNAL_DOMAIN: ${INTERNAL_DOMAIN:-zitian.party}
       ENV_SUFFIX: ${ENV_SUFFIX:-}
-      POSTGRES_HOST: platform-postgres${ENV_SUFFIX}
-      POSTGRES_PORT: '5432'
-      CANARY_POSTGRES_USER: canary_ro
-      CANARY_POSTGRES_DATABASE: postgres
-      TODO_POSTGRES_USER: todo_app
-      TODO_POSTGRES_DATABASE: postgres
       REDIS_HOST: platform-redis${ENV_SUFFIX}
       REDIS_PORT: '6379'
       S3_ENDPOINT: http://platform-s3${ENV_SUFFIX}:9000

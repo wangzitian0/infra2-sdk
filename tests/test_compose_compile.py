@@ -1,6 +1,6 @@
 """Tests for `compile_compose`: baseline defaults and the `x-vault` sidecar expansion.
 
-The fixtures in `tests/fixtures/compose/` come from `wangzitian0/infra2@4dd5ed29`
+The fixtures in `tests/fixtures/compose/` come from `wangzitian0/infra2@e276d9a7`
 `platform/30.todo/`. Regenerate the golden output with:
 
     uv run python -c "from pathlib import Path; from infra2_sdk.rules import compile_compose; \
@@ -117,6 +117,29 @@ def test_compiled_todo_template_and_config_equal_handwritten_files() -> None:
     assert env["VAULT_SECRETS_TEMPLATE"].replace("$$", "$") == _body("todo.secrets.ctmpl")
     hand_hcl = _strip_comments(_body("todo.vault-agent.hcl").replace("/etc/vault/", "/vault/"))
     assert _strip_comments(env["VAULT_AGENT_HCL"].replace("$$", "$")) == hand_hcl
+
+
+def test_compiled_sidecar_passes_env_suffix_through_from_the_deploy_env() -> None:
+    env = yaml.safe_load(compile_compose(_vault_source(), vault_template="T"))["services"][
+        "vault-agent"
+    ]["environment"]
+    # Same value form as the hand-written infra2 sidecars: an unset suffix gives "".
+    assert env["ENV_SUFFIX"] == "${ENV_SUFFIX:-}"
+
+
+def test_compiled_todo_sidecar_env_equals_handwritten_env() -> None:
+    hand = yaml.safe_load(_read("todo.handwritten.compose.yaml"))["services"]["vault-agent"]
+    compiled = _compiled_todo()["services"]["vault-agent"]["environment"]
+    # The two keys that carry the config and template files are the only intended additions.
+    extra = {"VAULT_AGENT_HCL", "VAULT_SECRETS_TEMPLATE"}
+    assert extra <= set(compiled)
+    assert {k: v for k, v in compiled.items() if k not in extra} == hand["environment"]
+
+
+def test_compiled_todo_sidecar_supplies_every_env_name_the_template_reads() -> None:
+    read = set(re.findall(r'\benv "([A-Z_][A-Z0-9_]*)"', _body("todo.secrets.ctmpl")))
+    assert read == {"ENV", "ENV_SUFFIX"}
+    assert read <= set(_compiled_todo()["services"]["vault-agent"]["environment"])
 
 
 def test_compiled_todo_top_level_blocks_equal_handwritten() -> None:
