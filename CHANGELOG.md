@@ -17,12 +17,21 @@ backfill from the merged pull requests.
 
 ### Added
 
+- `python -m infra2_sdk.manifests --run-cell CELL --hooks-manifest P --app-url U [--env E] [--version-ref R] [--result-file F]` runs one schema 3 cell through `run_cell` and prints the result JSON; it replaces the removed `--run-hook` (K6).
 - `docs/app-integration-contract.md`: what an app does to run on infra2 with the SDK; its tables come from `data/shared_env.yaml` and `data/stages.yaml` (`scripts/render_app_contract.py`, test-locked) ([#241](https://github.com/wangzitian0/infra2-sdk/issues/241)).
 - `runtime.merge_manifests(...)` joins the manifests of one stack; a variable declared twice must agree on `source`, `provided_by`, `composed_from`, `store_key`, `empty_ok` and `scope` (moved from infra2 `common/security/registry.merged_manifest`, [#238](https://github.com/wangzitian0/infra2-sdk/issues/238)).
 - `runtime.schema_check`: the pre-deploy enum and data precondition check moved from infra2 `tools/pre_deploy_schema_check.py`. The application names its metadata (`EnumSchemaSpec` or `--metadata`, `--import`, `--requires-migration`, `--precondition`); the SDK keeps no table of applications and reads no environment variable (`--db-url` is explicit). The stdout lines `ROLLBACK_CLASS:`, `NEW_TABLE_COVERS:` and `APPLIED_MIGRATION:` keep their format ([#239](https://github.com/wangzitian0/infra2-sdk/issues/239)).
 - `runtime.render_env_markdown(manifest)` renders the Markdown reference of an `EnvironmentManifest`. `python -m infra2_sdk.runtime.config_schema module:Settings --json P --markdown P [--check]` writes the manifest JSON and the reference, or exits 1 on a stale file ([#239](https://github.com/wangzitian0/infra2-sdk/issues/239)).
 - `compile_compose(..., mode="preview")` applies each service `x-preview` block: `remove` drops the service, `database_url` points `DATABASE_URL` at one added `db` service (`PREVIEW_DB_IMAGE`, `postgres:16-alpine`) and `environment` sets `ENVIRONMENT=$ENV`; both overrides run after `/secrets/.env` is sourced. `mode="deploy"` (the default) drops the blocks ([#238](https://github.com/wangzitian0/infra2-sdk/issues/238)).
 - `compile_compose` expands a service `x-capabilities` block (`s3`, `openpanel`, `otel`, `browser_otel`) into the environment block that finance_report and truealpha carry today. A key that the service also sets with another value raises `ComposeCompileError` ([#238](https://github.com/wangzitian0/infra2-sdk/issues/238)).
+
+### Removed (breaking, 4.0.0)
+
+- Runtime hooks manifest `schema_version: 2`. `load_hooks_manifest` and `RuntimeHooksManifest` refuse it with an error that names `schema_version` 3 and `run_cell`. `SUPPORTED_HOOKS_SCHEMA_VERSIONS` is `(3,)` ([#1644](https://github.com/wangzitian0/infra2/issues/1644) K6).
+- `run_hook_slot`, the `--run-hook` option of `python -m infra2_sdk.manifests`, `HOOK_SLOTS`, `SLOT_MAX_TIMEOUT_SECONDS`, `HookSlotSpec` and `CheckSpec`. Run a cell with `run_cell`; the cell budget comes from `CELL_POLICIES`.
+- `RuntimeHooksManifest.slots` (the schema 2 slot view). `build_hook_env` takes `required_env` and `optional_env` instead of a `HookSlotSpec`.
+- The hook environment names `DEPLOY_BASE_URL`, `STAGING_BASE_URL`, `TA_BASE_URL` and `EXPECTED_SHA`. Use `APP_URL` and `APP_VERSION_REF`.
+- `format_check_grid` no longer renders schema 2 manifests.
 
 ## 3.35.1 - 2026-11-20
 

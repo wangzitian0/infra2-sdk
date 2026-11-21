@@ -486,6 +486,35 @@ def test_symbols_removed_in_3_22_0_are_absent_from_modules_and_packages(
             assert not hasattr(package, leaf), f"{package.__name__} still exposes {leaf}"
 
 
+# Removed in 4.0.0 with runtime hooks manifest schema_version 2 (infra2#1644 K6).
+REMOVED_IN_4_0_0_K6: tuple[tuple[str, str], ...] = (
+    ("infra2_sdk.manifests", "HOOK_SLOTS"),
+    ("infra2_sdk.manifests", "SLOT_MAX_TIMEOUT_SECONDS"),
+    ("infra2_sdk.manifests", "HookSlotSpec"),
+    ("infra2_sdk.manifests", "CheckSpec"),
+    ("infra2_sdk.manifests", "run_hook_slot"),
+)
+
+
+@pytest.mark.parametrize(
+    ("module", "dotted"),
+    REMOVED_IN_4_0_0_K6,
+    ids=[f"{m}.{n}" for m, n in REMOVED_IN_4_0_0_K6],
+)
+def test_symbols_removed_in_4_0_0_k6_are_absent_from_modules_and_packages(
+    module: str, dotted: str
+) -> None:
+    owner = importlib.import_module(module)
+    *parents, leaf = dotted.split(".")
+    for part in parents:
+        owner = getattr(owner, part)
+    assert not hasattr(owner, leaf), f"{module}.{dotted} was removed in 4.0.0"
+    if not parents:
+        for package in (infra2_sdk, infra2_sdk.runtime):
+            assert leaf not in package.__all__, f"{package.__name__}.__all__ lists {leaf}"
+            assert not hasattr(package, leaf), f"{package.__name__} still exposes {leaf}"
+
+
 # #236 Release B (4.0.0): the LlmClient path left with LlmClient.
 REMOVED_IN_4_0_0 = (
     ("infra2_sdk.runtime.llm", "LlmClient"),
