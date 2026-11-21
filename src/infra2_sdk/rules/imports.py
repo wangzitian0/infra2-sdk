@@ -66,6 +66,17 @@ def _is_tc(test: ast.expr) -> bool:
     return isinstance(name, str) and name.lower() == "type_checking"
 
 
+def _import_module_call(node: ast.AST) -> ast.Import | None:
+    """`importlib.import_module("a.b")` or `import_module("a.b")` as an `import a.b`."""
+    if not (isinstance(node, ast.Call) and node.args):
+        return None
+    func, arg = node.func, node.args[0]
+    name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+    if name == "import_module" and isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+        return ast.Import(names=[ast.alias(name=arg.value)])
+    return None
+
+
 def _walk_imports(node: ast.AST, *, ignore_tc: bool) -> list[ast.stmt]:
     out: list[ast.stmt] = []
     for child in ast.iter_child_nodes(node):
@@ -75,6 +86,8 @@ def _walk_imports(node: ast.AST, *, ignore_tc: bool) -> list[ast.stmt]:
         elif isinstance(child, (ast.Import, ast.ImportFrom)):
             out.append(child)
         else:
+            if (call := _import_module_call(child)) is not None:
+                out.append(call)
             out.extend(_walk_imports(child, ignore_tc=ignore_tc))
     return out
 
@@ -93,7 +106,15 @@ def _scan(
 ]:
     trees: dict[str, tuple[ast.Module, bool]] = {}
     exports: dict[str, frozenset[str] | None] = {}
-    for p in sorted(f for f in base.rglob("*.py") if "__pycache__" not in f.parts):
+    # Hidden directories (.venv, .git, .tox) hold no first-party code.
+    files = (
+        f
+        for f in base.rglob("*.py")
+        if not any(
+            part.startswith(".") or part == "__pycache__" for part in f.relative_to(base).parts
+        )
+    )
+    for p in sorted(files):
         if mod := _module_name(base, p, prefix):
             is_pkg = p.name == "__init__.py"
             tree = ast.parse(p.read_text(encoding="utf-8"), filename=str(p))

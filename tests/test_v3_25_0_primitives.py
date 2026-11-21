@@ -586,3 +586,36 @@ def test_rules_imports_layers_cycles_type_checking_and_public_all(tmp_path: Path
     )
     kinds = {v.kind for v in violations}
     assert kinds == {"layer_rank", "deep_import", "private_export", "cycle"}
+
+
+def test_rules_imports_skip_hidden_dirs_and_read_import_module_strings(tmp_path: Path) -> None:
+    """wangzitian0/infra2#1823 Step 4.3: a repository-root scan must not walk `.venv/`, and
+    `importlib.import_module("a.b")` is an import edge."""
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "lib" / "core.py").write_text(
+        'import importlib\nplugin = importlib.import_module("cli.main")\n', encoding="utf-8"
+    )
+    (tmp_path / "lib" / "late.py").write_text(
+        "from importlib import import_module\ndef load():\n    return import_module('cli.main')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "cli").mkdir()
+    (tmp_path / "cli" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "cli" / "main.py").write_text("from lib import core\n", encoding="utf-8")
+    venv = tmp_path / ".venv" / "lib" / "site-packages" / "dep"
+    venv.mkdir(parents=True)
+    (venv / "a.py").write_text("from . import b\n", encoding="utf-8")
+    (venv / "b.py").write_text("from . import a\n", encoding="utf-8")
+
+    graph = scan_module_imports(tmp_path)
+    assert not any(module.startswith(".venv") for module in graph)
+    assert graph["lib.core"] == {"cli.main"}
+    assert graph["lib.late"] == {"cli.main"}
+
+    layers = [LayerRule("lib", ("lib",), rank=0), LayerRule("cli", ("cli",), rank=1)]
+    violations = check_import_boundaries(tmp_path, layers, forbid_cycles=False)
+    assert sorted((v.source_module, v.kind) for v in violations) == [
+        ("lib.core", "layer_rank"),
+        ("lib.late", "layer_rank"),
+    ]

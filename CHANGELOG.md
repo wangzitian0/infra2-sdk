@@ -6,6 +6,8 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+- `rules.imports` skips hidden directories (`.venv`, `.git`) when it scans a tree, and reads `importlib.import_module("a.b")` and `import_module("a.b")` with a literal name as an import edge. A scan from a repository root no longer walks the virtualenv (wangzitian0/infra2#1823 Step 4.3).
+
 - `init.md` links to the one definition of the code layers (infra2 `docs/ssot/core.harness.md` §5.3) and drops its hand-copied module list and stale release count (wangzitian0/infra2#1823 Step 4.1).
 
 ## 4.3.0 - 2026-11-22
