@@ -6,10 +6,19 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+## 4.0.0 - 2026-11-21
+
+Major release (wangzitian0/infra2#1823 Step 1). Each consumer pins an exact wheel; move to 4.0.0 in one change. The census of 2026-11-21 lists the call sites that must change: infra2 `common/deploy/app_contract.py` (`HOOK_SLOTS`, `HookSlotSpec`), finance_report `common/runtime/env_reference.py` (`run_hook_slot`), truealpha `apps/data-engine/src/data_engine/sources/llm.py` (`LlmClient`).
+
 ### Removed (breaking, 4.0.0)
 
 - `LlmClient`, `LlmResponse` and the `LlmSettings` fields that only `LlmClient` read (`chat_completions_path`, `json_timeout_seconds`, `json_max_tokens`, `json_disable_thinking`, `json_seed`, `extract_max_attempts`, `encryption_keys`). Use `create_llm_agent` ([#236](https://github.com/wangzitian0/infra2-sdk/issues/236) Release B).
 - The LLM environment aliases `AI_PROVIDER`, `AI_BASE_URL`, `AI_API_KEY`, `ZAI_API_KEY`, `LARGE_MODEL`, `SMALL_MODEL`, `MULTIMODAL_MODEL` are no longer read; `check_shared_env_conformance` still flags them (`retired`). `LLM_ENCRYPTION_KEYS` leaves the contract.
+- Runtime hooks manifest `schema_version: 2`. `load_hooks_manifest` and `RuntimeHooksManifest` refuse it with an error that names `schema_version` 3 and `run_cell`. `SUPPORTED_HOOKS_SCHEMA_VERSIONS` is `(3,)` ([#1644](https://github.com/wangzitian0/infra2/issues/1644) K6).
+- `run_hook_slot`, the `--run-hook` option of `python -m infra2_sdk.manifests`, `HOOK_SLOTS`, `SLOT_MAX_TIMEOUT_SECONDS`, `HookSlotSpec` and `CheckSpec`. Run a cell with `run_cell`; the cell budget comes from `CELL_POLICIES`.
+- `RuntimeHooksManifest.slots` (the schema 2 slot view). `build_hook_env` takes `required_env` and `optional_env` instead of a `HookSlotSpec`.
+- The hook environment names `DEPLOY_BASE_URL`, `STAGING_BASE_URL`, `TA_BASE_URL` and `EXPECTED_SHA`. Use `APP_URL` and `APP_VERSION_REF`.
+- `format_check_grid` no longer renders schema 2 manifests.
 
 ### Changed (4.0.0)
 
@@ -24,14 +33,6 @@ backfill from the merged pull requests.
 - `runtime.render_env_markdown(manifest)` renders the Markdown reference of an `EnvironmentManifest`. `python -m infra2_sdk.runtime.config_schema module:Settings --json P --markdown P [--check]` writes the manifest JSON and the reference, or exits 1 on a stale file ([#239](https://github.com/wangzitian0/infra2-sdk/issues/239)).
 - `compile_compose(..., mode="preview")` applies each service `x-preview` block: `remove` drops the service, `database_url` points `DATABASE_URL` at one added `db` service (`PREVIEW_DB_IMAGE`, `postgres:16-alpine`) and `environment` sets `ENVIRONMENT=$ENV`; both overrides run after `/secrets/.env` is sourced. `mode="deploy"` (the default) drops the blocks ([#238](https://github.com/wangzitian0/infra2-sdk/issues/238)).
 - `compile_compose` expands a service `x-capabilities` block (`s3`, `openpanel`, `otel`, `browser_otel`) into the environment block that finance_report and truealpha carry today. A key that the service also sets with another value raises `ComposeCompileError` ([#238](https://github.com/wangzitian0/infra2-sdk/issues/238)).
-
-### Removed (breaking, 4.0.0)
-
-- Runtime hooks manifest `schema_version: 2`. `load_hooks_manifest` and `RuntimeHooksManifest` refuse it with an error that names `schema_version` 3 and `run_cell`. `SUPPORTED_HOOKS_SCHEMA_VERSIONS` is `(3,)` ([#1644](https://github.com/wangzitian0/infra2/issues/1644) K6).
-- `run_hook_slot`, the `--run-hook` option of `python -m infra2_sdk.manifests`, `HOOK_SLOTS`, `SLOT_MAX_TIMEOUT_SECONDS`, `HookSlotSpec` and `CheckSpec`. Run a cell with `run_cell`; the cell budget comes from `CELL_POLICIES`.
-- `RuntimeHooksManifest.slots` (the schema 2 slot view). `build_hook_env` takes `required_env` and `optional_env` instead of a `HookSlotSpec`.
-- The hook environment names `DEPLOY_BASE_URL`, `STAGING_BASE_URL`, `TA_BASE_URL` and `EXPECTED_SHA`. Use `APP_URL` and `APP_VERSION_REF`.
-- `format_check_grid` no longer renders schema 2 manifests.
 
 ## 3.35.1 - 2026-11-20
 

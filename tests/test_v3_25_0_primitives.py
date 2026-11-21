@@ -58,17 +58,10 @@ def test_sdk_source_byte_budget() -> None:
         for p in SRC_ROOT.rglob("*")
         if p.is_file() and "__pycache__" not in p.parts
     )
-    # Release A (#236) retains deprecated LlmClient alongside pydantic-ai adapters
-    # until Release B (#236 Slice 4) and G4/K6 delete LlmClient and schema 2.
-    # 383_000: the x-infra2 compose compiler of #238 slice 1 adds about 11 KB.
-    # 387_000: the x-routes compiler of #238 slice 2 adds about 4.5 KB.
-    # 392_000: the x-capabilities blocks of #238 slice 3 add about 5 KB. 4.0.0 removes
-    # LlmClient and schema 2 (about 12 KB) and lowers this cap again.
-    # 398_000: the preview mode of #238 slice 4 adds about 5.5 KB.
-    # 402_000: render_env_markdown and the config_schema CLI of #239 slice 1 add about 4 KB.
-    # 434_000: runtime.schema_check of #239 slice 2 moves about 30.6 KB from infra2.
-    # 436_000: merge_manifests of #238 slice 5 moves about 1.2 KB from infra2.
-    assert 150_000 <= total <= 436_000, f"src/infra2_sdk byte budget drifted: {total} B"
+    # 4.0.0 measured 409,805 B after #236 Release B and K6 removed LlmClient and schema 2
+    # and #238/#239 added the compose compiler, schema_check and the settings reference.
+    # A new feature raises this cap with a comment; a removal lowers it.
+    assert 150_000 <= total <= 412_000, f"src/infra2_sdk byte budget drifted: {total} B"
 
 
 def test_init_service_multi_checks_and_manifest(monkeypatch: pytest.MonkeyPatch) -> None:
