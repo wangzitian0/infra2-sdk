@@ -66,15 +66,42 @@ def _is_tc(test: ast.expr) -> bool:
     return isinstance(name, str) and name.lower() == "type_checking"
 
 
+def _import_module_call(node: ast.AST) -> ast.Import | None:
+    """`importlib.import_module("a.b")` or a bare `import_module("a.b")` as `import a.b`.
+
+    Only a literal absolute name counts. A relative name (".x") or a method of another
+    object (`loader.import_module`) is not an edge.
+    """
+    if not (isinstance(node, ast.Call) and node.args):
+        return None
+    func, arg = node.func, node.args[0]
+    is_call = (isinstance(func, ast.Name) and func.id == "import_module") or (
+        isinstance(func, ast.Attribute)
+        and func.attr == "import_module"
+        and isinstance(func.value, ast.Name)
+        and func.value.id == "importlib"
+    )
+    if (
+        is_call
+        and isinstance(arg, ast.Constant)
+        and isinstance(arg.value, str)
+        and not arg.value.startswith(".")
+    ):
+        return ast.Import(names=[ast.alias(name=arg.value)])
+    return None
+
+
 def _walk_imports(node: ast.AST, *, ignore_tc: bool) -> list[ast.stmt]:
     out: list[ast.stmt] = []
     for child in ast.iter_child_nodes(node):
         if ignore_tc and isinstance(child, ast.If) and _is_tc(child.test):
-            for orelse in child.orelse:
-                out.extend(_walk_imports(orelse, ignore_tc=ignore_tc))
+            branch = ast.Module(body=child.orelse, type_ignores=[])
+            out.extend(_walk_imports(branch, ignore_tc=ignore_tc))
         elif isinstance(child, (ast.Import, ast.ImportFrom)):
             out.append(child)
         else:
+            if (call := _import_module_call(child)) is not None:
+                out.append(call)
             out.extend(_walk_imports(child, ignore_tc=ignore_tc))
     return out
 
@@ -93,7 +120,15 @@ def _scan(
 ]:
     trees: dict[str, tuple[ast.Module, bool]] = {}
     exports: dict[str, frozenset[str] | None] = {}
-    for p in sorted(f for f in base.rglob("*.py") if "__pycache__" not in f.parts):
+    # Hidden directories (.venv, .git, .tox) hold no first-party code.
+    files = (
+        f
+        for f in base.rglob("*.py")
+        if not any(
+            part.startswith(".") or part == "__pycache__" for part in f.relative_to(base).parts
+        )
+    )
+    for p in sorted(files):
         if mod := _module_name(base, p, prefix):
             is_pkg = p.name == "__init__.py"
             tree = ast.parse(p.read_text(encoding="utf-8"), filename=str(p))
