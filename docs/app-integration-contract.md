@@ -67,7 +67,6 @@ when they are stale. Regenerate them with `python scripts/render_app_contract.py
 | llm | `LLM_LARGE_MODEL` | no | finance_report |
 | llm | `LLM_SMALL_MODEL` | no | infra2, finance_report, truealpha |
 | llm | `LLM_MULTIMODAL_MODEL` | no | finance_report |
-| llm | `LLM_ENCRYPTION_KEYS` | yes | finance_report |
 | frontend_telemetry | `NEXT_PUBLIC_APP_URL` | no | infra2, finance_report, truealpha |
 | frontend_telemetry | `NEXT_PUBLIC_API_URL` | no | infra2, finance_report |
 | frontend_telemetry | `NEXT_PUBLIC_OTEL_EXPORTER_OTLP_ENDPOINT` | no | infra2, finance_report, truealpha |
@@ -78,6 +77,13 @@ when they are stale. Regenerate them with `python scripts/render_app_contract.py
 
 | Retired name | Use |
 |---|---|
+| `AI_PROVIDER` | `LLM_PROVIDER` |
+| `AI_BASE_URL` | `LLM_BASE_URL` |
+| `AI_API_KEY` | `LLM_API_KEY` |
+| `ZAI_API_KEY` | `LLM_API_KEY` |
+| `LARGE_MODEL` | `LLM_LARGE_MODEL` |
+| `SMALL_MODEL` | `LLM_SMALL_MODEL` |
+| `MULTIMODAL_MODEL` | `LLM_MULTIMODAL_MODEL` |
 | `CANARY_POSTGRES_USER` | `DATABASE_URL` |
 | `CANARY_POSTGRES_PASSWORD` | `DATABASE_URL` |
 | `CANARY_POSTGRES_DATABASE` | `DATABASE_URL` |
