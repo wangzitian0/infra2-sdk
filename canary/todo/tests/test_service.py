@@ -628,3 +628,138 @@ def test_todo_store_connects_with_the_database_url_login(monkeypatch) -> None:
         "connect_timeout": 5,
         "options": "-c statement_timeout=5000",
     }
+
+
+def test_an_unset_address_makes_its_check_unconfigured_without_a_connection(monkeypatch) -> None:
+    from conftest import DEPLOYMENT_ADDRESSES
+
+    todo_mod = load_todo_module("todo_app_no_addresses")
+    for name in (*DEPLOYMENT_ADDRESSES, "S3_ENDPOINT", "DATABASE_URL", "REDIS_PASSWORD"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("REDIS_PASSWORD", "r" * 24)
+    monkeypatch.setattr(todo_mod.socket, "create_connection", lambda *a, **k: pytest.fail("redis"))
+    monkeypatch.setattr(todo_mod, "_probe_http", lambda *a, **k: pytest.fail("http"))
+    monkeypatch.setattr(todo_mod, "_probe_http_async", lambda *a, **k: pytest.fail("http"))
+
+    report = todo_mod.run_all_checks()
+
+    details = {name: (c["status"], c["detail"]) for name, c in report["checks"].items()}
+    assert details["redis"] == ("unconfigured", "REDIS_HOST is not configured")
+    assert details["postgres"] == ("unconfigured", "DATABASE_URL is not configured")
+    assert details["s3"][0] == "unconfigured" and "S3_ENDPOINT" in details["s3"][1]
+    assert details["signoz"] == ("unconfigured", "SIGNOZ_OTEL_COLLECTOR is not configured")
+    assert details["openpanel"] == ("unconfigured", "OPENPANEL_API_URL is not configured")
+    assert details["authentik"] == ("unconfigured", "AUTHENTIK_ENDPOINT is not configured")
+    assert report["ok"] is False
+
+
+def test_an_unset_liveness_address_does_not_gate_the_verdict(monkeypatch) -> None:
+    todo_mod = load_todo_module("todo_app_no_liveness")
+    for name in ("SIGNOZ_OTEL_COLLECTOR", "OPENPANEL_API_URL", "AUTHENTIK_ENDPOINT"):
+        monkeypatch.delenv(name, raising=False)
+    ok = {"status": "pass", "latency_ms": 1.0, "detail": "ok"}
+    for probe in ("_probe_redis", "_probe_postgres", "_probe_s3"):
+        monkeypatch.setattr(todo_mod, probe, lambda *a, **k: dict(ok))
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:pppppppppppppppp@h/d")
+
+    report = todo_mod.run_all_checks()
+
+    assert report["ok"] is True
+    assert {report["checks"][n]["status"] for n in todo_mod.INFORMATIONAL_CHECKS} == {
+        "unconfigured"
+    }
+
+
+def test_no_setting_default_names_a_host() -> None:
+    from canary_settings import CanarySettings
+
+    settings = CanarySettings.from_environ({})
+    text = {
+        name: getattr(settings, name)
+        for name, info in CanarySettings.model_fields.items()
+        if info.annotation is str
+    }
+    assert len(text) == 20
+    assert text == dict.fromkeys(text, ""), "a text default would name a host or a value"
+    assert (settings.port, settings.redis_port) == (8000, 6379)
+
+
+def test_a_sensitive_value_keeps_its_edge_whitespace_and_a_blank_value_is_unset() -> None:
+    from canary_settings import CanarySettings
+
+    settings = CanarySettings.from_environ(
+        {"REDIS_PASSWORD": " p w ", "REDIS_HOST": "  redis  ", "S3_SECRET_KEY": "   "}
+    )
+    assert settings.redis_password == " p w "
+    assert settings.redis_host == "redis"
+    assert settings.s3_secret_key == ""
+
+
+def test_a_malformed_port_is_not_reported_as_a_database_fault(monkeypatch) -> None:
+    todo_mod = load_todo_module("todo_app_bad_port")
+    monkeypatch.setenv("REDIS_PORT", "not-a-port")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:pppppppppppppppp@h:6543/d")
+    assert todo_mod._database_target() == ("h", 6543, "u", "pppppppppppppppp", "d")
+
+
+def test_the_manifest_file_is_the_output_of_the_settings_class() -> None:
+    import json
+
+    from canary_settings import CanarySettings
+
+    from infra2_sdk.runtime.config_schema import environment_manifest_from_model
+
+    manifest = environment_manifest_from_model(CanarySettings, source="canary/todo")
+    expected = json.dumps(manifest.to_dict(), indent=2, sort_keys=True) + "\n"
+    assert (TODO_APP.parent / "env.manifest.json").read_text(encoding="utf-8") == expected
+    # The app manifest holds no binding of one platform.
+    assert [f.env for f in manifest.fields if f.provided_by or f.composed_from] == []
+    assert manifest.validate_offline() == []
+
+
+def test_app_reads_the_process_environment_only_through_the_settings_class() -> None:
+    import ast
+
+    tree = ast.parse(TODO_APP.read_text(encoding="utf-8"))
+    # `os` has one name in the module: no alias and no `from os import ...`.
+    imports = [node for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))]
+    assert [n for n in imports if isinstance(n, ast.ImportFrom) and n.module == "os"] == []
+    assert [
+        alias.asname
+        for n in imports
+        if isinstance(n, ast.Import)
+        for alias in n.names
+        if alias.name == "os"
+    ] == [None]
+
+    def reads(node: ast.AST) -> bool:
+        return (
+            isinstance(node, ast.Attribute) and node.attr in {"environ", "getenv", "putenv"}
+        ) or (isinstance(node, ast.Name) and node.id in {"environ", "getenv"})
+
+    functions = [
+        node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    inside = {id(node): func.name for func in functions for node in ast.walk(func) if reads(node)}
+    every = [node for node in ast.walk(tree) if reads(node)]
+    assert every, "the guard must see the reads"
+    assert [node.lineno for node in every if id(node) not in inside] == [], (
+        "a read outside a function"
+    )
+    # `_settings` builds the settings. `_database_target` reads its one field through the
+    # class. `summarize_recent_todos` hands the whole mapping to the SDK LLM settings reader.
+    assert sorted(set(inside.values())) == [
+        "_database_target",
+        "_settings",
+        "summarize_recent_todos",
+        # Its `environ` parameter goes to the SDK manifest validation.
+        "validate_startup_environment",
+    ]
+    # Each read passes the mapping on as a call argument: no `os.environ.get(...)` and
+    # no `os.environ[...]`.
+    for node in every:
+        parent = next(p for p in ast.walk(tree) if node in ast.iter_child_nodes(p))
+        if isinstance(parent, ast.keyword):
+            parent = next(p for p in ast.walk(tree) if parent in ast.iter_child_nodes(p))
+        assert isinstance(parent, ast.Call), ast.dump(parent)[:120]
+        assert node is not parent.func and node not in ast.walk(parent.func), node.lineno

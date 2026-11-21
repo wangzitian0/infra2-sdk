@@ -12,7 +12,8 @@ RUN pip install --no-cache-dir \
        "/tmp/sdk[fastapi,postgres,s3,http,pydantic-ai]" \
     && rm -rf /tmp/sdk
 
-COPY canary/todo/app.py canary/todo/ui.py canary/todo/env.manifest.json /app/
+COPY canary/todo/app.py canary/todo/ui.py canary/todo/canary_settings.py \
+     canary/todo/env.manifest.json /app/
 
 ENV PYTHONPATH=/app
 EXPOSE 8000

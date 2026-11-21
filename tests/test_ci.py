@@ -209,3 +209,30 @@ def test_a_field_may_compose_from_its_own_store_key() -> None:
     assert validate_manifest_offline(EnvironmentManifest(source="todo", fields=(other,))) == [
         "DATABASE_URL: composed_from references undeclared TODO_POSTGRES_PASSWORD"
     ]
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"source": "code"},
+        {"source": "release", "injected": True},
+        {"source": "runtime", "provided_by": "platform/pg:PW"},
+        {"source": "runtime", "empty_ok": True, "required": False},
+    ],
+    ids=["code", "release", "provided-by", "empty-ok"],
+)
+def test_only_a_written_store_key_may_compose(extra) -> None:
+    """Review of #271: the resolver writes a field's own store key only for a
+    store-backed, non-empty_ok field. Any other shape would render an unset key."""
+    from infra2_sdk.ci import validate_manifest_offline
+    from infra2_sdk.runtime.config_schema import EnvironmentField, EnvironmentManifest
+
+    field = EnvironmentField(
+        "url",
+        "SOME_URL",
+        **{"required": True, "has_default": False, **extra},
+        store_key="X",
+        composed_from="a{X}b",
+    )
+    errors = validate_manifest_offline(EnvironmentManifest(source="t", fields=(field,)))
+    assert "SOME_URL: composed_from references undeclared X" in errors, errors

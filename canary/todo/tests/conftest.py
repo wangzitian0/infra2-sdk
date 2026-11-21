@@ -43,6 +43,21 @@ def _no_ambient_telemetry_env(monkeypatch: pytest.MonkeyPatch) -> None:
     clear_telemetry_env(monkeypatch)
 
 
+# The addresses a deployment gives the Canary. The app has no default for them.
+DEPLOYMENT_ADDRESSES = {
+    "REDIS_HOST": "platform-redis",
+    "SIGNOZ_OTEL_COLLECTOR": "http://platform-signoz-otel-collector:13133",
+    "OPENPANEL_API_URL": "http://platform-openpanel-api:3000/healthcheck",
+    "AUTHENTIK_ENDPOINT": "http://platform-authentik-server:9000/-/health/live/",
+}
+
+
+@pytest.fixture(autouse=True)
+def _deployment_addresses(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name, value in DEPLOYMENT_ADDRESSES.items():
+        monkeypatch.setenv(name, value)
+
+
 def load_todo_module(name: str) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, TODO_APP)
     assert spec is not None and spec.loader is not None

@@ -369,7 +369,9 @@ produce its value. Everything else is derived from that answer.
 | `code` | a default in the settings model | the model | the default | never |
 
 `provided_by="project/service:KEY"` references another service's value;
-`composed_from="…{KEY}…"` builds a value from such references. `empty_ok` is the only way a
+`composed_from="…{KEY}…"` builds a value from such references, or from the field's own
+`store_key` when the field is store-backed and not `empty_ok` (the store holds the secret part;
+only the composed value renders). `empty_ok` is the only way a
 rendered variable may be empty; `ci.validate_manifest_offline()` rejects manifests that
 would otherwise fail late, and it runs without any infrastructure.
 

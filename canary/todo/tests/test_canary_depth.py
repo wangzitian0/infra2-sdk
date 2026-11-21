@@ -710,7 +710,8 @@ def test_s3_probe_runs_in_parallel_do_not_share_a_key(app) -> None:
 def test_run_all_checks_hands_each_probe_its_credentials(app, monkeypatch) -> None:
     _env(
         monkeypatch,
-        ENV_SUFFIX="-staging",
+        REDIS_HOST="platform-redis-staging",
+        REDIS_PORT="6380",
         REDIS_PASSWORD=REDIS_PW,
         DATABASE_URL=f"postgresql://canary_ro:{PG_PASSWORD}@platform-postgres-staging:6543/canary_db",
         S3_ENDPOINT="http://platform-s3-staging:9000",
@@ -744,7 +745,7 @@ def test_run_all_checks_hands_each_probe_its_credentials(app, monkeypatch) -> No
         "authentik",
     }
     assert "minio" not in report["checks"]
-    assert calls["redis"]["args"][0] == "platform-redis-staging"
+    assert calls["redis"]["args"] == ("platform-redis-staging", 6380)
     assert calls["redis"]["kwargs"]["password"] == REDIS_PW
     assert calls["postgres"]["args"][0] == "platform-postgres-staging"
     assert calls["postgres"]["args"][1] == 6543
@@ -761,10 +762,9 @@ def test_run_all_checks_hands_each_probe_its_credentials(app, monkeypatch) -> No
 
 def test_retired_canary_s3_names_do_not_configure_the_s3_probe(app, monkeypatch) -> None:
     """CANARY_S3_* were replaced by the shared S3_* names. Setting only the old names
-    must leave the probe without an endpoint override, bucket and credentials."""
+    must leave the probe without an endpoint, bucket and credentials."""
     _env(
         monkeypatch,
-        ENV_SUFFIX="-staging",
         CANARY_S3_ENDPOINT_URL="http://old-host:9000",
         CANARY_S3_BUCKET="old-bucket",
         CANARY_S3_ACCESS_KEY="old-access",
@@ -784,7 +784,7 @@ def test_retired_canary_s3_names_do_not_configure_the_s3_probe(app, monkeypatch)
     app.run_all_checks()
 
     assert seen == {
-        "endpoint_url": "http://platform-s3-staging:9000",
+        "endpoint_url": "",
         "bucket": "",
         "access_key": "",
         "secret_key": "",

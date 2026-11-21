@@ -216,10 +216,12 @@ class EnvironmentManifest:
             if f.source == _FieldSource.BOOTSTRAP:
                 errors.append(f"{f.env}: bootstrap values never enter an application manifest")
             provider_key = f.provided_by.split(":", 1)[1] if f.provided_by else ""
-            # A field may compose from its own store key: the store holds the secret part and
-            # only the composed value enters the process (wangzitian0/infra2#1823 N2).
+            # A store-backed field may compose from its own store key: the store holds the
+            # secret part and only the composed value enters the process (infra2#1823 N2).
+            # Only a store-backed, non-empty_ok field gets that key written by the resolver.
+            own_key = f.store_key if f.store_key and f.store_backed and not f.empty_ok else ""
             for key in f.composed_keys:
-                if key not in declared and key not in (provider_key, f.store_key):
+                if key not in declared and key not in (provider_key, own_key):
                     errors.append(f"{f.env}: composed_from references undeclared {key}")
         return errors
 
