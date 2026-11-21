@@ -8,6 +8,10 @@ backfill from the merged pull requests.
 
 ### Added
 
+- `runtime.render_env_markdown(manifest)` renders the Markdown reference of an `EnvironmentManifest`. `python -m infra2_sdk.runtime.config_schema module:Settings --json P --markdown P [--check]` writes the manifest JSON and the reference, or exits 1 on a stale file ([#239](https://github.com/wangzitian0/infra2-sdk/issues/239)).
+
+### Added
+
 - `compile_compose` expands a service `x-capabilities` block (`s3`, `openpanel`, `otel`, `browser_otel`) into the environment block that finance_report and truealpha carry today. A key that the service also sets with another value raises `ComposeCompileError` ([#238](https://github.com/wangzitian0/infra2-sdk/issues/238)).
 
 ## 3.35.1 - 2026-11-20
