@@ -53,7 +53,11 @@ SRC = Path(infra2_sdk.__file__).resolve().parent
 # (path below src/infra2_sdk, value, place) -> reason. The place is the call and the keyword that
 # hold the constant, for example "EnvironmentField(env=)". The same value in another place of the
 # same file is not allowed. An empty dict is the state to aim for.
-ALLOWED_LITERALS = {}
+ALLOWED_LITERALS = {
+    ("rules/compose.py", "S3_ENDPOINT", "other"): (
+        "x-capabilities s3 writes this key into compiled compose text; the SDK does not read it"
+    ),
+}
 
 # Fixed variable names that the source reads and that are not in the runtime env contract.
 FIXED_READS = {

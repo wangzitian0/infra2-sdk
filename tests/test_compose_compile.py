@@ -304,7 +304,7 @@ def _with(path: list[str], value: Any) -> dict[str, Any]:
         ),
         (
             _with(["services", "web", "x-capabilities"], {}),
-            r"\['x-capabilities'\] is not supported",
+            r"x-capabilities must name at least one capability",
         ),
         (_with(["services", "web", "x-preview"], {}), r"\['x-preview'\] is not supported"),
         (_with(["x-infra2", "vault", "name"], ""), r"vault.name must be a non-empty string"),
@@ -577,3 +577,108 @@ def test_x_routes_rejects_traefik_labels_and_mapping_labels_in_the_source() -> N
         source["services"]["app"]["labels"] = labels
         with pytest.raises(ComposeCompileError, match=message):
             compile_compose(source)
+
+
+# --------------------------------------------------------------------- x-capabilities
+
+
+def _caps(capabilities: Any, **service: Any) -> dict[str, Any]:
+    compiled = yaml.safe_load(
+        compile_compose(_minimal(**service, **{"x-capabilities": capabilities}))
+    )
+    return compiled["services"]["app"]["environment"]
+
+
+def test_each_capability_emits_the_env_block_the_apps_carry_today() -> None:
+    """Values match finance_report and truealpha compose files at infra2@f9c9f8b5."""
+    env = _caps(
+        {
+            "s3": {"public": True},
+            "openpanel": {"script": True},
+            "otel": {"service_name": "finance-report-backend"},
+            "browser_otel": None,
+        }
+    )
+    assert env == {
+        "S3_ENDPOINT": "http://platform-s3${ENV_SUFFIX}:9000",
+        "S3_PUBLIC_ENDPOINT": "https://s3${ENV_DOMAIN_SUFFIX}.${INTERNAL_DOMAIN}",
+        "OPENPANEL_CLIENT_ID": "${OPENPANEL_CLIENT_ID:-}",
+        "OPENPANEL_API_URL": "https://openpanel.${INTERNAL_DOMAIN}/api",
+        "OPENPANEL_ENVIRONMENT": "${OPENPANEL_ENVIRONMENT:-${ENV}}",
+        "OPENPANEL_SCRIPT_URL": "https://openpanel.${INTERNAL_DOMAIN}/op1.js",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://platform-signoz-otel-collector:4318",
+        "OTEL_SERVICE_NAME": "${OTEL_SERVICE_NAME:-finance-report-backend}",
+        "OTEL_RESOURCE_ATTRIBUTES": "${OTEL_RESOURCE_ATTRIBUTES:-}",
+        "NEXT_PUBLIC_OTEL_EXPORTER_OTLP_ENDPOINT": "${NEXT_PUBLIC_OTEL_EXPORTER_OTLP_ENDPOINT:-}",
+        "NEXT_PUBLIC_DEPLOYMENT_ENVIRONMENT": "${ENV}",
+        "NEXT_PUBLIC_GIT_SHA": "${GIT_COMMIT_SHA:-unknown}",
+    }
+
+
+def test_a_list_form_uses_the_defaults() -> None:
+    env = _caps(["s3", "openpanel"])
+    assert "S3_PUBLIC_ENDPOINT" not in env and "OPENPANEL_SCRIPT_URL" not in env
+    assert env["S3_ENDPOINT"] == "http://platform-s3${ENV_SUFFIX}:9000"
+
+
+def test_a_worker_exports_only_when_the_deploy_issued_its_identity() -> None:
+    """finance_report prefect-worker (#1431): own name and attribute variables."""
+    env = _caps(
+        {
+            "otel": {
+                "service_name": "finance-report-worker",
+                "service_name_var": "OTEL_WORKER_SERVICE_NAME",
+                "attributes_var": "OTEL_WORKER_RESOURCE_ATTRIBUTES",
+                "export": "when_issued",
+            }
+        }
+    )
+    assert env == {
+        "OTEL_EXPORTER_OTLP_ENDPOINT": (
+            "${OTEL_WORKER_RESOURCE_ATTRIBUTES:+http://platform-signoz-otel-collector:4318}"
+        ),
+        "OTEL_SERVICE_NAME": "${OTEL_WORKER_SERVICE_NAME:-finance-report-worker}",
+        "OTEL_RESOURCE_ATTRIBUTES": "${OTEL_WORKER_RESOURCE_ATTRIBUTES:-}",
+    }
+
+
+def test_the_service_keeps_its_own_env_and_an_equal_value_is_allowed() -> None:
+    env = _caps(
+        ["s3"],
+        environment={
+            "S3_BUCKET": "statements",
+            "S3_ENDPOINT": "http://platform-s3${ENV_SUFFIX}:9000",
+        },
+    )
+    assert env["S3_BUCKET"] == "statements"
+    assert env["S3_ENDPOINT"] == "http://platform-s3${ENV_SUFFIX}:9000"
+
+
+@pytest.mark.parametrize(
+    ("capabilities", "service", "message"),
+    [
+        (
+            ["s3"],
+            {"environment": {"S3_ENDPOINT": "http://other:9000"}},
+            r"set by the service and by the capability",
+        ),
+        (["prefect"], {}, r"unknown capability 'prefect'"),
+        (["s3", "s3"], {}, r"listed twice"),
+        ([1], {}, r"capability names only"),
+        ({"s3": {"bucket": "x"}}, {}, r"s3: unknown key\(s\) \['bucket'\]"),
+        ({"s3": {"public": "yes"}}, {}, r"public must be true or false"),
+        ({"otel": {"export": "sometimes"}}, {}, r"export must be 'always' or 'when_issued'"),
+        ({"otel": {"attributes_var": "lower"}}, {}, r"attributes_var must be an UPPER_CASE"),
+        ({"otel": {"service_name": 3}}, {}, r"service_name must be a string"),
+        (["s3"], {"environment": ["A=1"]}, r"`environment` must be a mapping"),
+        ("s3", {}, r"x-capabilities must be a mapping"),
+    ],
+)
+def test_invalid_capabilities_fail_closed(capabilities: Any, service: dict, message: str) -> None:
+    with pytest.raises(ComposeCompileError, match=message):
+        compile_compose(_minimal(**service, **{"x-capabilities": capabilities}))
+
+
+def test_capability_output_is_byte_deterministic() -> None:
+    source = _minimal(**{"x-capabilities": {"otel": {"service_name": "a"}, "s3": None}})
+    assert compile_compose(source) == compile_compose(copy.deepcopy(source))
