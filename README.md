@@ -338,6 +338,18 @@ arbitrary display identity through the standard
 `OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=<name>` attribute. The SDK does not impose
 an infra2 naming grammar on that display identity.
 
+### Settings manifest and reference
+
+`environment_manifest_from_model(Settings)` extracts the `EnvironmentManifest` of a
+Pydantic settings class. `render_env_markdown(manifest)` renders its Markdown reference:
+one table for each field group. The CLI writes both files, or with `--check` exits 1 when
+one is stale:
+
+```bash
+python -m infra2_sdk.runtime.config_schema app.config:Settings \
+  --json required-env.generated.json --markdown env-reference.generated.md --check
+```
+
 ## Configuration supply chain
 
 Manifest contract version 2 gives every field a *source class*: who may legitimately

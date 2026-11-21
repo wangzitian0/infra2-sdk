@@ -368,6 +368,97 @@ def manifest_config_fingerprint(manifest: EnvironmentManifest, values: Mapping[s
     return _canonical_sha256(lines)
 
 
+def render_env_markdown(manifest: EnvironmentManifest, *, title: str = "") -> str:
+    """Render one Markdown reference of the manifest: one table for each group.
+
+    The output is deterministic: groups and rows keep the field order of the settings
+    model. A sensitive field shows no default and no example value.
+    """
+    groups: dict[str, list[EnvironmentField]] = {}
+    for field in manifest.fields:
+        groups.setdefault(field.group, []).append(field)
+    lines = [f"# {title or 'Environment reference'}", "", f"Source: `{manifest.source}`", ""]
+    for group, fields in groups.items():
+        lines += [f"## {group}", "", "| Variable | Required | Sensitive | Source | Description |"]
+        lines.append("|---|---|---|---|---|")
+        for field in fields:
+            name = f"`{field.env}`"
+            if field.aliases:
+                name += " (aliases: " + ", ".join(f"`{a}`" for a in field.aliases) + ")"
+            description = " ".join(field.description.split()).replace("|", "\\|")
+            lines.append(
+                f"| {name} | {'yes' if field.required else 'no'} | "
+                f"{'yes' if field.sensitive else 'no'} | {field.source} | {description} |"
+            )
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _load_settings_class(target: str) -> type:
+    import importlib
+
+    module_name, _, attr = target.partition(":")
+    if not module_name or not attr:
+        raise ValueError(f"settings target must be 'module:Class', not {target!r}")
+    obj: Any = importlib.import_module(module_name)
+    for part in attr.split("."):
+        obj = getattr(obj, part)
+    if not isinstance(obj, type):
+        raise ValueError(f"{target} is not a class")
+    return obj
+
+
+def _main(argv: list[str] | None = None) -> int:
+    """``python -m infra2_sdk.runtime.config_schema MODULE:CLASS [--json P] [--markdown P]``.
+
+    It writes the manifest JSON and the Markdown reference of a Pydantic settings class.
+    With ``--check`` it writes nothing and exits 1 when a file differs from the output.
+    """
+    import argparse
+    import difflib
+    import sys
+
+    parser = argparse.ArgumentParser(prog="python -m infra2_sdk.runtime.config_schema")
+    parser.add_argument("settings", help="settings class as module:Class")
+    parser.add_argument("--source", default=None, help="manifest source label")
+    parser.add_argument("--json", type=Path, default=None, help="manifest JSON path")
+    parser.add_argument("--markdown", type=Path, default=None, help="Markdown reference path")
+    parser.add_argument("--title", default="", help="Markdown title")
+    parser.add_argument("--check", action="store_true", help="compare, do not write")
+    args = parser.parse_args(argv)
+    if args.json is None and args.markdown is None:
+        parser.error("name at least one of --json and --markdown")
+    manifest = environment_manifest_from_model(
+        _load_settings_class(args.settings), source=args.source
+    )
+    outputs: list[tuple[Path, str]] = []
+    if args.json is not None:
+        text = json.dumps(manifest.to_dict(), indent=2, sort_keys=True) + "\n"
+        outputs.append((args.json, text))
+    if args.markdown is not None:
+        outputs.append((args.markdown, render_env_markdown(manifest, title=args.title) + "\n"))
+    drift = 0
+    for path, text in outputs:
+        current = path.read_text(encoding="utf-8") if path.exists() else ""
+        if current == text:
+            continue
+        if args.check:
+            drift += 1
+            sys.stdout.writelines(
+                difflib.unified_diff(
+                    current.splitlines(keepends=True),
+                    text.splitlines(keepends=True),
+                    fromfile=str(path),
+                    tofile=f"{path} (generated)",
+                )
+            )
+        else:
+            path.write_text(text, encoding="utf-8")
+    if drift:
+        print(f"{drift} generated file(s) are stale; run without --check to update")
+    return 1 if drift else 0
+
+
 def _validation_aliases(alias: Any) -> tuple[str, ...]:
     if isinstance(alias, str):
         return (alias,)
@@ -389,4 +480,9 @@ __all__ = [
     "assert_environment",
     "environment_manifest_from_model",
     "manifest_config_fingerprint",
+    "render_env_markdown",
 ]
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())
