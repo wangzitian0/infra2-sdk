@@ -28,7 +28,7 @@ from infra2_sdk.runtime.config_schema import (
 )
 
 CURRENT_HOOKS_SCHEMA_VERSION = 3
-SUPPORTED_HOOKS_SCHEMA_VERSIONS = (2, 3)
+SUPPORTED_HOOKS_SCHEMA_VERSIONS = (3,)
 
 _STAGES = ("local", "ci", "preview", "staging", "prod")
 _PHASES = ("pre", "operation", "post")
@@ -164,19 +164,7 @@ class StageHookPlan:
     stage_id: str = field(kw_only=True)
 
 
-def _derive_views(
-    policies: Mapping[str, CellPolicy],
-) -> tuple[tuple[str, ...], Mapping[str, int], Mapping[str, StageHookPlan]]:
-    slots: list[str] = []
-    timeouts: dict[str, int] = {}
-    for p in policies.values():
-        if (
-            p.stage in ("preview", "staging", "prod", "schedule")
-            and isinstance(p.check_list, str)
-            and p.check_list not in timeouts
-        ):
-            slots.append(p.check_list)
-            timeouts[p.check_list] = p.budget_seconds
+def _derive_stage_plans(policies: Mapping[str, CellPolicy]) -> Mapping[str, StageHookPlan]:
     plans: dict[str, StageHookPlan] = {}
     for st in ("preview", "staging", "prod", "schedule"):
         pre_p = policies.get(f"{st}.pre")
@@ -186,10 +174,10 @@ def _derive_views(
         op_slot = op_p.check_list if op_p and isinstance(op_p.check_list, str) else None
         post_slot = post_p.check_list if isinstance(post_p.check_list, str) else None
         plans[st] = StageHookPlan(st, pre_checks, op_slot, post_slot, stage_id=post_p.stage_id)
-    return tuple(slots), MappingProxyType(timeouts), MappingProxyType(plans)
+    return MappingProxyType(plans)
 
 
-HOOK_SLOTS, SLOT_MAX_TIMEOUT_SECONDS, STAGE_HOOK_PLANS = _derive_views(CELL_POLICIES)
+STAGE_HOOK_PLANS = _derive_stage_plans(CELL_POLICIES)
 
 _SLOT_TO_CELL: Mapping[str, str] = MappingProxyType(
     {
@@ -197,17 +185,6 @@ _SLOT_TO_CELL: Mapping[str, str] = MappingProxyType(
         "preview_gate": "preview.post",
         "staging_gate": "staging.post",
         "prod_gate": "prod.post",
-        "scheduled_audit": "scheduled_audit",
-    }
-)
-_V2_CELL_TO_SLOT: Mapping[str, str] = MappingProxyType(
-    {
-        "preview.operation": "smoke",
-        "staging.operation": "smoke",
-        "prod.operation": "smoke",
-        "preview.post": "preview_gate",
-        "staging.post": "staging_gate",
-        "prod.post": "prod_gate",
         "scheduled_audit": "scheduled_audit",
     }
 )
@@ -250,20 +227,7 @@ _HOOK_PASSTHROUGH_KEYS = frozenset(
         "PLAYWRIGHT_BROWSERS_PATH",
     }
 )
-_HOOK_SLOT_FIELDS = frozenset(
-    {
-        "run",
-        "bootstrap",
-        "timeout_seconds",
-        "required_env",
-        "optional_env",
-        "artifacts_dir",
-        "checkout_lineage",
-        "checks",
-    }
-)
-_HOOK_MANIFEST_V2_FIELDS = frozenset({"schema_version", "service", "slots"})
-_HOOK_MANIFEST_V3_FIELDS = frozenset(
+_HOOK_MANIFEST_FIELDS = frozenset(
     {"schema_version", "service", "artifacts_dir", "required_env", "optional_env", "checks"}
 )
 _CHECK_ROW_FIELDS = frozenset(
@@ -517,144 +481,20 @@ def resolve_check_cells(
     return resolved
 
 
-@dataclass(frozen=True)
-class CheckSpec:
-    id: str
-    argv: tuple[str, ...]
-
-    def __post_init__(self) -> None:
-        a = self.argv
-        argv_ok = isinstance(a, (list, tuple)) and a and all(isinstance(x, str) and x for x in a)
-        if not (isinstance(self.id, str) and self.id.strip() and argv_ok):
-            raise ValueError(f"hook check {self.id!r} needs an id and a non-empty argv of strings")
-        object.__setattr__(self, "argv", tuple(a))
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> CheckSpec:
-        reject_unknown(data, {"id", "argv"}, "hook check")
-        return cls(data.get("id", ""), data.get("argv", ()))
-
-
-@dataclass(frozen=True)
-class HookSlotSpec:
-    run: str = ""
-    bootstrap: str = ""
-    timeout_seconds: int = 300
-    required_env: tuple[str, ...] = ()
-    optional_env: tuple[str, ...] = ()
-    artifacts_dir: str = ".artifacts/hooks"
-    checkout_lineage: bool = field(default=False, kw_only=True)
-    checks: tuple[CheckSpec, ...] = field(default=(), kw_only=True)
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.run, str) or bool(self.run.strip()) == bool(self.checks):
-            raise ValueError("hook slot needs a non-empty 'run' or 'checks', not both")
-        if len({c.id for c in self.checks}) != len(self.checks):
-            raise ValueError("duplicate hook check id")
-        if not isinstance(self.bootstrap, str):
-            raise ValueError("hook slot 'bootstrap' must be a string")
-        _check_timeout(self.timeout_seconds, owner="hook slot")
-        if not isinstance(self.checkout_lineage, bool):
-            raise ValueError("hook slot 'checkout_lineage' must be a bool")
-        req_t, opt_t = _validate_env_lists(self.required_env, self.optional_env, owner="hook slot")
-        object.__setattr__(self, "required_env", req_t)
-        object.__setattr__(self, "optional_env", opt_t)
-        if not isinstance(self.artifacts_dir, str) or not self.artifacts_dir.strip():
-            raise ValueError("hook slot 'artifacts_dir' must be a non-empty string")
-
-    def to_dict(self) -> dict[str, Any]:
-        out: dict[str, Any] = {
-            "run": self.run,
-            "bootstrap": self.bootstrap,
-            "timeout_seconds": self.timeout_seconds,
-            "required_env": list(self.required_env),
-            "optional_env": list(self.optional_env),
-            "artifacts_dir": self.artifacts_dir,
-        }
-        if self.checkout_lineage:
-            out["checkout_lineage"] = True
-        if self.checks:
-            out["checks"] = [asdict(c) for c in self.checks]
-        return out
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> HookSlotSpec:
-        if not isinstance(data, Mapping):
-            raise ValueError("hook slot spec must be a JSON object")
-        reject_unknown(data, _HOOK_SLOT_FIELDS, "hook slot")
-        checks = tuple(CheckSpec.from_dict(c) for c in data.get("checks", ()))
-        return cls(**{**data, "checks": checks})
-
-
-def _check_slot_keys(slots: Mapping[str, Any]) -> None:
-    if invalid := sorted(set(slots) - set(HOOK_SLOTS)):
-        raise ValueError(f"unknown hook slot(s) {invalid}; allowed slots are {list(HOOK_SLOTS)}")
-    if missing := [s for s in HOOK_SLOTS if s not in slots]:
-        raise ValueError(f"runtime hooks manifest is missing required slot(s): {missing}")
-
-
 def _check_schema_version(sv: Any) -> int:
-    if isinstance(sv, bool) or sv not in SUPPORTED_HOOKS_SCHEMA_VERSIONS:
-        raise ValueError(f"runtime hooks manifest requires schema_version 2 or 3, got {sv!r}")
-    return sv
-
-
-def _synthesize_v3_slots(
-    checks: tuple[CheckRow, ...],
-    *,
-    artifacts_dir: str,
-    required_env: tuple[str, ...],
-    optional_env: tuple[str, ...],
-) -> Mapping[str, HookSlotSpec]:
-    by_cell: dict[str, list[CheckRow]] = {cid: [] for cid in CELL_POLICIES}
-    for c in checks:
-        for cid in resolve_check_cells(c):
-            by_cell[cid].append(c)
-    out: dict[str, HookSlotSpec] = {}
-    for slot in HOOK_SLOTS:
-        if slot == "smoke":
-            rows = next(
-                (
-                    by_cell[c]
-                    for c in ("preview.operation", "staging.operation", "prod.operation")
-                    if by_cell[c]
-                ),
-                [],
-            )
-        else:
-            rows = by_cell[_SLOT_TO_CELL[slot]]
-        active = [r for r in rows if r.off is None]
-        if not active:
-            continue
-        boot = " && ".join(
-            dict.fromkeys(r.bootstrap.strip() for r in active if r.bootstrap.strip())
+    if not isinstance(sv, bool) and sv in SUPPORTED_HOOKS_SCHEMA_VERSIONS:
+        return sv
+    if sv == 2 and not isinstance(sv, bool):
+        raise ValueError(
+            "runtime hooks manifest schema_version 2 was removed in 4.0.0; "
+            "migrate it to schema_version 3 and run it with run_cell"
         )
-        req = tuple(dict.fromkeys([*required_env, *(e for r in active for e in r.required_env)]))
-        opt = tuple(
-            dict.fromkeys(
-                e
-                for e in [*optional_env, *(e for r in active for e in r.optional_env)]
-                if e not in req
-            )
-        )
-        out[slot] = HookSlotSpec(
-            bootstrap=boot,
-            timeout_seconds=min(
-                sum(r.timeout_seconds for r in active), SLOT_MAX_TIMEOUT_SECONDS[slot]
-            ),
-            required_env=req,
-            optional_env=opt,
-            artifacts_dir=artifacts_dir,
-            checkout_lineage=any(r.checkout_lineage for r in active),
-            checks=tuple(CheckSpec(r.id, r.argv) for r in active),
-        )
-    return MappingProxyType(out)
+    raise ValueError(f"runtime hooks manifest requires schema_version 3, got {sv!r}")
 
 
 @dataclass(frozen=True)
 class RuntimeHooksManifest:
     service: str
-    slots: Mapping[str, HookSlotSpec] = field(default_factory=lambda: MappingProxyType({}))
     schema_version: int = CURRENT_HOOKS_SCHEMA_VERSION
     checks: tuple[CheckRow, ...] = field(default=(), kw_only=True)
     artifacts_dir: str = field(default=".artifacts/hooks", kw_only=True)
@@ -665,23 +505,6 @@ class RuntimeHooksManifest:
         _check_schema_version(self.schema_version)
         if not isinstance(self.service, str) or not self.service.strip():
             raise ValueError("runtime hooks manifest 'service' must be a non-empty string")
-        if self.schema_version == 2:
-            if not isinstance(self.slots, Mapping):
-                raise ValueError("runtime hooks manifest 'slots' must be a mapping")
-            norm = dict(self.slots)
-            _check_slot_keys(norm)
-            for s in HOOK_SLOTS:
-                spec = norm[s]
-                if not isinstance(spec, HookSlotSpec):
-                    raise ValueError(f"slot {s!r} must be a HookSlotSpec")
-                if spec.timeout_seconds > (lim := SLOT_MAX_TIMEOUT_SECONDS[s]):
-                    raise ValueError(
-                        f"slot {s!r} timeout_seconds {spec.timeout_seconds} exceeds {lim}"
-                    )
-                if s == "smoke" and spec.bootstrap.strip():
-                    raise ValueError("slot 'smoke' cannot declare bootstrap in schema_version 2")
-            object.__setattr__(self, "slots", MappingProxyType({s: norm[s] for s in HOOK_SLOTS}))
-            return
         if not isinstance(self.artifacts_dir, str) or not self.artifacts_dir.strip():
             raise ValueError("runtime hooks manifest 'artifacts_dir' must be a non-empty string")
         req_t, opt_t = _validate_env_lists(
@@ -695,36 +518,14 @@ class RuntimeHooksManifest:
             raise ValueError("every entry in 'checks' must be a CheckRow")
         if len({c.id for c in self.checks}) != len(self.checks):
             raise ValueError("duplicate check id in manifest")
-        checks_t = tuple(self.checks)
-        object.__setattr__(self, "checks", checks_t)
-        object.__setattr__(
-            self,
-            "slots",
-            _synthesize_v3_slots(
-                checks_t,
-                artifacts_dir=self.artifacts_dir,
-                required_env=req_t,
-                optional_env=opt_t,
-            ),
-        )
+        object.__setattr__(self, "checks", tuple(self.checks))
 
     def checks_for_cell(self, cell_id: str) -> tuple[CheckRow, ...]:
         if cell_id not in CELL_POLICIES:
             raise ValueError(f"unknown cell {cell_id!r}")
-        if self.schema_version == 3:
-            return tuple(c for c in self.checks if cell_id in resolve_check_cells(c))
-        slot = _V2_CELL_TO_SLOT.get(cell_id)
-        if not slot or slot not in self.slots:
-            return ()
-        return _v2_slot_rows(self.slots[slot], slot, cell_id)
+        return tuple(c for c in self.checks if cell_id in resolve_check_cells(c))
 
     def to_dict(self) -> dict[str, Any]:
-        if self.schema_version == 2:
-            return {
-                "schema_version": 2,
-                "service": self.service,
-                "slots": {s: self.slots[s].to_dict() for s in HOOK_SLOTS},
-            }
         out: dict[str, Any] = {"schema_version": 3, "service": self.service}
         if self.artifacts_dir != ".artifacts/hooks":
             out["artifacts_dir"] = self.artifacts_dir
@@ -741,22 +542,8 @@ class RuntimeHooksManifest:
             raise ValueError("runtime hooks manifest must be a JSON object")
         if "schema_version" not in data:
             raise ValueError("runtime hooks manifest requires 'schema_version'")
-        sv = _check_schema_version(data["schema_version"])
-        if sv == 2:
-            reject_unknown(data, _HOOK_MANIFEST_V2_FIELDS, "runtime hooks manifest")
-            raw = data.get("slots")
-            if not isinstance(raw, Mapping):
-                raise ValueError("runtime hooks manifest 'slots' must be a JSON object")
-            _check_slot_keys(raw)
-            return cls(
-                schema_version=2,
-                service=data.get("service", ""),
-                slots={
-                    s: HookSlotSpec.from_dict(raw[s]) if isinstance(raw[s], Mapping) else raw[s]
-                    for s in HOOK_SLOTS
-                },
-            )
-        reject_unknown(data, _HOOK_MANIFEST_V3_FIELDS, "runtime hooks manifest")
+        _check_schema_version(data["schema_version"])
+        reject_unknown(data, _HOOK_MANIFEST_FIELDS, "runtime hooks manifest")
         raw_checks = data.get("checks")
         if not isinstance(raw_checks, list):
             raise ValueError("schema_version 3 manifest 'checks' must be a JSON list")
@@ -807,8 +594,9 @@ class HookRunResult:
 
 
 def build_hook_env(
-    slot_spec: HookSlotSpec,
     *,
+    required_env: tuple[str, ...] = (),
+    optional_env: tuple[str, ...] = (),
     slot: str,
     app_url: str,
     environment: str,
@@ -822,28 +610,17 @@ def build_hook_env(
     }
     for env_key, env_val in (("PYTHONPATH", "."),):
         clean[env_key] = env_val
-    if missing := [k for k in slot_spec.required_env if not ambient_env.get(k, "").strip()]:
+    if missing := [k for k in required_env if not ambient_env.get(k, "").strip()]:
         raise ValueError(f"missing required hook env: {', '.join(missing)}")
-    for k in slot_spec.required_env:
+    for k in required_env:
         clean[k] = ambient_env[k]
-    for k in slot_spec.optional_env:
+    for k in optional_env:
         if (v := ambient_env.get(k, "")).strip():
             clean[k] = v
-    url_pairs = (
-        (
-            ("APP_URL", app_url),
-            ("DEPLOY_BASE_URL", app_url),
-            ("STAGING_BASE_URL", app_url),
-            ("TA_BASE_URL", app_url),
-        )
-        if app_url
-        else ()
-    )
     for env_key, env_val in (
-        *url_pairs,
+        *((("APP_URL", app_url),) if app_url else ()),
         ("ENVIRONMENT", environment),
         ("APP_VERSION_REF", version_ref),
-        ("EXPECTED_SHA", version_ref),
         ("HOOK_SLOT", slot),
         ("HOOK_ARTIFACTS_DIR", artifacts_dir),
     ):
@@ -896,49 +673,9 @@ def _resolve_cell_id(stage_or_cell: str, phase: str | None = None, *, environmen
     return cid
 
 
-def _v2_slot_rows(spec: HookSlotSpec, slot: str, cell_id: str) -> tuple[CheckRow, ...]:
-    steps = spec.checks or (CheckSpec(slot, ("sh", "-lc", spec.run)),)
-    op_remove = (
-        {
-            op: OverrideReason("v2 post slot", "v2")
-            for op in ("preview.operation", "staging.operation", "prod.operation")
-        }
-        if not cell_id.endswith(".operation")
-        else {}
-    )
-    return tuple(
-        CheckRow(
-            id=c.id,
-            argv=c.argv,
-            needs=("running_service",),
-            writes=False,
-            accepts_scale=False,
-            timeout_seconds=spec.timeout_seconds,
-            bootstrap=spec.bootstrap,
-            required_env=spec.required_env,
-            optional_env=spec.optional_env,
-            checkout_lineage=spec.checkout_lineage,
-            cells=CellOverrides(
-                add={cell_id: OverrideReason("v2 slot", "v2")},
-                remove=op_remove,
-            )
-            if c.id == "smoke" and not cell_id.endswith(".operation")
-            else CellOverrides(),
-        )
-        for c in steps
-    )
-
-
 def _cell_rows_and_spec(
-    manifest: RuntimeHooksManifest, cell_id: str, slot_name: str | None
+    manifest: RuntimeHooksManifest, cell_id: str
 ) -> tuple[list[CheckRow], str, int, tuple[str, ...], tuple[str, ...]]:
-    if manifest.schema_version == 2:
-        slot = slot_name or _V2_CELL_TO_SLOT.get(cell_id, "")
-        if slot not in manifest.slots:
-            raise ValueError(f"unknown hook slot {slot!r}; available: {list(manifest.slots)}")
-        spec = manifest.slots[slot]
-        rows = list(_v2_slot_rows(spec, slot, cell_id))
-        return rows, spec.artifacts_dir, spec.timeout_seconds, spec.required_env, spec.optional_env
     rows = [c for c in manifest.checks if cell_id in resolve_check_cells(c)]
     active = [c for c in rows if c.off is None]
     policy = CELL_POLICIES[cell_id]
@@ -1020,17 +757,14 @@ def _execute_cell(
     ambient_env: Mapping[str, str] | None,
     result_path: Path | None,
     runner: Callable[..., subprocess.CompletedProcess[str]],
-    stop_on_fail: bool | None = None,
 ) -> HookRunResult:
     policy = CELL_POLICIES[cell_id]
-    effective_stop = policy.stop_on_fail if stop_on_fail is None else stop_on_fail
+    effective_stop = policy.stop_on_fail
     if "running_service" in policy.capabilities and (not app_url or not app_url.strip()):
         raise ValueError("app_url must be a non-empty string")
     src_env = os.environ if ambient_env is None else ambient_env
     url, start = app_url.strip(), time.monotonic()
-    rows, artifacts_dir, budget, req_env, opt_env = _cell_rows_and_spec(
-        manifest, cell_id, slot_label if manifest.schema_version == 2 else None
-    )
+    rows, artifacts_dir, budget, req_env, opt_env = _cell_rows_and_spec(manifest, cell_id)
     checks_file = (cwd or Path()) / artifacts_dir / HOOK_CHECKS_FILE
     checks_file.unlink(missing_ok=True)
     done: list[CheckVerdict] = []
@@ -1084,15 +818,10 @@ def _execute_cell(
         "HOOK_POLICY_VERSION": str(POLICY_VERSION),
         **({"HOOK_SCALE": policy.scale} if any(r.accepts_scale for r in active) else {}),
     }
-    slot_for_env = HookSlotSpec(
-        run="__cell__",
-        required_env=req_env,
-        optional_env=opt_env,
-        artifacts_dir=artifacts_dir,
-    )
     try:
         clean_env = build_hook_env(
-            slot_for_env,
+            required_env=req_env,
+            optional_env=opt_env,
             slot=slot_label,
             app_url=url,
             environment=environment,
@@ -1105,11 +834,7 @@ def _execute_cell(
         return finish("fail", 2, "env", str(err), str(err))
 
     end = start + budget
-    if manifest.schema_version == 2:
-        v2_boot = manifest.slots[slot_label].bootstrap.strip()
-        boot_cmds = [v2_boot] if v2_boot else []
-    else:
-        boot_cmds = list(dict.fromkeys(r.bootstrap.strip() for r in active if r.bootstrap.strip()))
+    boot_cmds = list(dict.fromkeys(r.bootstrap.strip() for r in active if r.bootstrap.strip()))
     for cmd in boot_cmds:
         boot_label = f"after {budget}s (cell budget {budget}s)"
         ok, code, fstep, tail, _ = _run_step(
@@ -1202,38 +927,6 @@ def run_cell(
     )
 
 
-def run_hook_slot(
-    manifest: RuntimeHooksManifest,
-    slot: str,
-    *,
-    app_url: str,
-    environment: str = "local_dev",
-    version_ref: str = "local",
-    cwd: Path | None = None,
-    ambient_env: Mapping[str, str] | None = None,
-    result_path: Path | None = None,
-    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
-) -> HookRunResult:
-    if slot not in manifest.slots:
-        raise ValueError(f"unknown hook slot {slot!r}; available: {list(manifest.slots)}")
-    if not app_url or not app_url.strip():
-        raise ValueError("app_url must be a non-empty string")
-    cell_id = _resolve_cell_id(slot, environment=environment)
-    return _execute_cell(
-        manifest,
-        cell_id,
-        slot_label=slot,
-        app_url=app_url,
-        environment=environment,
-        version_ref=version_ref,
-        cwd=cwd,
-        ambient_env=ambient_env,
-        result_path=result_path,
-        runner=runner,
-        stop_on_fail=True,
-    )
-
-
 def format_check_grid(manifest: RuntimeHooksManifest) -> str:
     """Render a markdown table of checks by hook-grid cells for ``manifest``."""
     cols = [cid for cid, p in CELL_POLICIES.items() if p.owner == "app" or p.check_list == "smoke"]
@@ -1246,31 +939,15 @@ def format_check_grid(manifest: RuntimeHooksManifest) -> str:
         "| Check | " + " | ".join(cols) + " |",
         "|---|" + "|".join("---" for _ in cols) + "|",
     ]
-    if manifest.schema_version == 3:
-        for row in manifest.checks:
-            resolved = set(resolve_check_cells(row))
-            cells = [
-                ("off" if row.off is not None else f"{row.timeout_seconds}s")
-                if cid in resolved
-                else "-"
-                for cid in cols
-            ]
-            lines.append(f"| `{row.id}` | " + " | ".join(cells) + " |")
-        return "\n".join(lines)
-    by_check: dict[str, set[str]] = {}
-    timeouts: dict[str, int] = {}
-    for cid in cols:
-        slot = _V2_CELL_TO_SLOT.get(cid)
-        if not slot or slot not in manifest.slots:
-            continue
-        spec = manifest.slots[slot]
-        steps = spec.checks or (CheckSpec(slot, ("sh", "-lc", spec.run)),)
-        for c in steps:
-            by_check.setdefault(c.id, set()).add(cid)
-            timeouts.setdefault(c.id, spec.timeout_seconds)
-    for check_id, cids in by_check.items():
-        cells = [f"{timeouts[check_id]}s" if cid in cids else "-" for cid in cols]
-        lines.append(f"| `{check_id}` | " + " | ".join(cells) + " |")
+    for row in manifest.checks:
+        resolved = set(resolve_check_cells(row))
+        cells = [
+            ("off" if row.off is not None else f"{row.timeout_seconds}s")
+            if cid in resolved
+            else "-"
+            for cid in cols
+        ]
+        lines.append(f"| `{row.id}` | " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
 
@@ -1366,7 +1043,6 @@ def main(
         m.add_argument(flag, action="store_true")
     for flag in ("--validate-env", "--check-hooks"):
         m.add_argument(flag)
-    m.add_argument("--run-hook", choices=HOOK_SLOTS)
     p.add_argument("--no-require-injected", action="store_true")
     p.add_argument("--hooks-manifest", default="runtime-hooks.manifest.json")
     p.add_argument("--app-url", "--base-url", dest="app_url", default="")
@@ -1390,32 +1066,9 @@ def main(
         except (OSError, ValueError) as err:
             echo(f"{a.check_hooks}: {err}")
             return 1
-        detail = (
-            f"{len(hm.checks)} checks" if hm.schema_version == 3 else f"{len(HOOK_SLOTS)} slots"
-        )
-        echo(f"runtime hooks manifest: ok ({hm.service}, v{hm.schema_version}, {detail})")
+        detail = f"{hm.service}, v{hm.schema_version}, {len(hm.checks)} checks"
+        echo(f"runtime hooks manifest: ok ({detail})")
         return 0
-    if a.run_hook:
-        if not a.app_url.strip():
-            echo("--run-hook requires --app-url")
-            return 2
-        try:
-            hm = load_hooks_manifest(a.hooks_manifest, root=r)
-        except (OSError, ValueError) as err:
-            echo(f"{a.hooks_manifest}: {err}")
-            return 2
-        rp = (c if (c := Path(a.result_file)).is_absolute() else r / c) if a.result_file else None
-        res = run_hook_slot(
-            hm,
-            a.run_hook,
-            app_url=a.app_url,
-            environment=a.environment,
-            version_ref=a.version_ref,
-            cwd=r,
-            result_path=rp,
-        )
-        echo(json.dumps(res.to_dict(), ensure_ascii=False))
-        return 0 if res.status == "pass" else (res.exit_code or 1)
     missing = _validate_env(a.validate_env, root=r, require_injected=not a.no_require_injected)
     for name in missing:
         echo(f"missing: {name}")
@@ -1429,17 +1082,13 @@ __all__ = [
     "FORBIDDEN_HOOK_ENV_NAMES",
     "FORBIDDEN_HOOK_ENV_PREFIXES",
     "HOOK_CHECKS_FILE",
-    "HOOK_SLOTS",
     "POLICY_VERSION",
-    "SLOT_MAX_TIMEOUT_SECONDS",
     "STAGE_HOOK_PLANS",
     "SUPPORTED_HOOKS_SCHEMA_VERSIONS",
     "CellOverrides",
     "CellPolicy",
     "CheckRow",
-    "CheckSpec",
     "HookRunResult",
-    "HookSlotSpec",
     "ManifestSpec",
     "OverrideReason",
     "RuntimeHooksManifest",
@@ -1453,7 +1102,6 @@ __all__ = [
     "main",
     "resolve_check_cells",
     "run_cell",
-    "run_hook_slot",
     "stage_hook_plan",
 ]
 

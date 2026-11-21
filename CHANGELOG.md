@@ -13,6 +13,14 @@ backfill from the merged pull requests.
 - `compile_compose(..., mode="preview")` applies each service `x-preview` block: `remove` drops the service, `database_url` points `DATABASE_URL` at one added `db` service (`PREVIEW_DB_IMAGE`, `postgres:16-alpine`) and `environment` sets `ENVIRONMENT=$ENV`; both overrides run after `/secrets/.env` is sourced. `mode="deploy"` (the default) drops the blocks ([#238](https://github.com/wangzitian0/infra2-sdk/issues/238)).
 - `compile_compose` expands a service `x-capabilities` block (`s3`, `openpanel`, `otel`, `browser_otel`) into the environment block that finance_report and truealpha carry today. A key that the service also sets with another value raises `ComposeCompileError` ([#238](https://github.com/wangzitian0/infra2-sdk/issues/238)).
 
+### Removed (breaking, 4.0.0)
+
+- Runtime hooks manifest `schema_version: 2`. `load_hooks_manifest` and `RuntimeHooksManifest` refuse it with an error that names `schema_version` 3 and `run_cell`. `SUPPORTED_HOOKS_SCHEMA_VERSIONS` is `(3,)` ([#1644](https://github.com/wangzitian0/infra2/issues/1644) K6).
+- `run_hook_slot`, the `--run-hook` option of `python -m infra2_sdk.manifests`, `HOOK_SLOTS`, `SLOT_MAX_TIMEOUT_SECONDS`, `HookSlotSpec` and `CheckSpec`. Run a cell with `run_cell`; the cell budget comes from `CELL_POLICIES`.
+- `RuntimeHooksManifest.slots` (the schema 2 slot view). `build_hook_env` takes `required_env` and `optional_env` instead of a `HookSlotSpec`.
+- The hook environment names `DEPLOY_BASE_URL`, `STAGING_BASE_URL`, `TA_BASE_URL` and `EXPECTED_SHA`. Use `APP_URL` and `APP_VERSION_REF`.
+- `format_check_grid` no longer renders schema 2 manifests.
+
 ## 3.35.1 - 2026-11-20
 
 ### Changed
