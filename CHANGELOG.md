@@ -9,9 +9,7 @@ backfill from the merged pull requests.
 ### Added
 
 - `runtime.render_env_markdown(manifest)` renders the Markdown reference of an `EnvironmentManifest`. `python -m infra2_sdk.runtime.config_schema module:Settings --json P --markdown P [--check]` writes the manifest JSON and the reference, or exits 1 on a stale file ([#239](https://github.com/wangzitian0/infra2-sdk/issues/239)).
-
-### Added
-
+- `compile_compose(..., mode="preview")` applies each service `x-preview` block: `remove` drops the service, `database_url` points `DATABASE_URL` at one added `db` service (`PREVIEW_DB_IMAGE`, `postgres:16-alpine`) and `environment` sets `ENVIRONMENT=$ENV`; both overrides run after `/secrets/.env` is sourced. `mode="deploy"` (the default) drops the blocks ([#238](https://github.com/wangzitian0/infra2-sdk/issues/238)).
 - `compile_compose` expands a service `x-capabilities` block (`s3`, `openpanel`, `otel`, `browser_otel`) into the environment block that finance_report and truealpha carry today. A key that the service also sets with another value raises `ComposeCompileError` ([#238](https://github.com/wangzitian0/infra2-sdk/issues/238)).
 
 ## 3.35.1 - 2026-11-20

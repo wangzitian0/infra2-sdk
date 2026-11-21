@@ -306,7 +306,10 @@ def _with(path: list[str], value: Any) -> dict[str, Any]:
             _with(["services", "web", "x-capabilities"], {}),
             r"x-capabilities must name at least one capability",
         ),
-        (_with(["services", "web", "x-preview"], {}), r"\['x-preview'\] is not supported"),
+        (
+            _with(["services", "web", "x-preview"], {"keep": True}),
+            r"services.web.x-preview: unknown key\(s\) \['keep'\]",
+        ),
         (_with(["x-infra2", "vault", "name"], ""), r"vault.name must be a non-empty string"),
         (_with(["services", "api", "command"], "run-api"), r"needs `command` as a non-empty list"),
         (_with(["services", "api", "entrypoint"], ["x"]), r"x-vault owns `entrypoint`"),
@@ -682,3 +685,162 @@ def test_invalid_capabilities_fail_closed(capabilities: Any, service: dict, mess
 def test_capability_output_is_byte_deterministic() -> None:
     source = _minimal(**{"x-capabilities": {"otel": {"service_name": "a"}, "s3": None}})
     assert compile_compose(source) == compile_compose(copy.deepcopy(source))
+
+
+# ------------------------------------------------------------------ preview mode (Slice 4)
+
+
+def _preview_source() -> dict[str, Any]:
+    """finance_report shape: backend on Vault with its own DB in preview, a worker that
+    preview drops, a frontend that only takes the preview ENVIRONMENT."""
+    return {
+        "x-infra2": {
+            "vault": {"name": "finance_report"},
+            "preview": {"db_container": "finance_report-preview-db${ENV_SUFFIX}"},
+        },
+        "services": {
+            "backend": {
+                "image": "backend:1",
+                "mem_limit": "512m",
+                "command": ["uvicorn", "src.main:app"],
+                "x-vault": {},
+                "x-preview": {"database_url": "postgresql+asyncpg"},
+            },
+            "worker": {
+                "image": "backend:1",
+                "mem_limit": "512m",
+                "command": ["prefect", "worker"],
+                "x-vault": {},
+                "x-preview": {"remove": True},
+            },
+            "frontend": {
+                "image": "frontend:1",
+                "mem_limit": "256m",
+                "command": ["node", "server.js"],
+                "x-vault": {},
+                "x-preview": {"environment": True},
+            },
+        },
+    }
+
+
+def _compile(source: dict[str, Any], mode: str) -> dict[str, Any]:
+    return yaml.safe_load(compile_compose(source, vault_template="T\n", mode=mode))
+
+
+def test_deploy_mode_drops_x_preview_and_adds_no_database() -> None:
+    compiled = _compile(_preview_source(), "deploy")
+    assert set(compiled["services"]) == {"vault-agent", "backend", "worker", "frontend"}
+    assert "preview_db" not in compiled.get("volumes", {})
+    script = compiled["services"]["backend"]["entrypoint"][2]
+    assert "DATABASE_URL" not in script and "ENVIRONMENT" not in script
+
+
+def test_preview_mode_adds_the_db_and_overrides_after_the_secrets_are_sourced() -> None:
+    compiled = _compile(_preview_source(), "preview")
+    services = compiled["services"]
+    assert set(services) == {"vault-agent", "backend", "frontend", "db"}
+    db = services["db"]
+    assert db["image"] == "postgres:16-alpine"
+    assert db["container_name"] == "finance_report-preview-db${ENV_SUFFIX}"
+    assert db["volumes"] == ["preview_db:/var/lib/postgresql/data"]
+    assert compiled["volumes"]["preview_db"] == {}
+    backend = services["backend"]
+    script = backend["entrypoint"][2]
+    source_at = script.index(". /secrets/.env")
+    url = (
+        "postgresql+asyncpg://ephemeral:ephemeral@"
+        "finance_report-preview-db$${ENV_SUFFIX}:5432/preview"
+    )
+    assert script.index(f'export DATABASE_URL="{url}"') > source_at
+    assert script.index('export ENVIRONMENT="$$ENV"') > source_at
+    assert script.index('export ENVIRONMENT="$$ENV"') < script.index('exec "$$@"')
+    assert backend["depends_on"] == {
+        "vault-agent": {"condition": "service_started"},
+        "db": {"condition": "service_healthy"},
+    }
+    frontend_script = services["frontend"]["entrypoint"][2]
+    assert 'export ENVIRONMENT="$$ENV"' in frontend_script
+    assert "DATABASE_URL" not in frontend_script
+
+
+def test_preview_output_is_byte_deterministic() -> None:
+    assert compile_compose(_preview_source(), vault_template="T\n", mode="preview") == (
+        compile_compose(copy.deepcopy(_preview_source()), vault_template="T\n", mode="preview")
+    )
+
+
+def test_the_preview_db_image_is_one_constant() -> None:
+    from infra2_sdk.rules import compose as rules_compose
+
+    assert rules_compose.PREVIEW_DB_IMAGE == "postgres:16-alpine"
+    text = Path(rules_compose.__file__).read_text(encoding="utf-8")
+    assert text.count("postgres:16-alpine") == 1
+
+
+def _preview_with(path: list[str], value: Any) -> dict[str, Any]:
+    source = _preview_source()
+    node: Any = source
+    for key in path[:-1]:
+        node = node[key]
+    node[path[-1]] = value
+    return source
+
+
+@pytest.mark.parametrize(
+    ("source", "mode", "message"),
+    [
+        (
+            _preview_with(["services", "backend", "x-preview"], {"database_url": "mysql"}),
+            "preview",
+            r"must be a postgresql URL scheme",
+        ),
+        (
+            _preview_with(
+                ["services", "worker", "x-preview"], {"remove": True, "environment": True}
+            ),
+            "preview",
+            r"`remove` takes no other key",
+        ),
+        (
+            _preview_with(["services", "frontend", "x-preview"], {"environment": "yes"}),
+            "preview",
+            r"environment must be true or false",
+        ),
+        (
+            _preview_with(["x-infra2", "preview"], {"db_container": ""}),
+            "preview",
+            r"db_container must be a non-empty string",
+        ),
+        (
+            _preview_with(["x-infra2", "preview"], {"image": "x"}),
+            "preview",
+            r"x-infra2.preview: unknown key\(s\) \['image'\]",
+        ),
+        (
+            _preview_with(["services", "frontend", "depends_on"], ["worker"]),
+            "preview",
+            r"depends on \['worker'\], which x-preview removes",
+        ),
+        (
+            _preview_with(["services", "db"], {"image": "x", "mem_limit": "64m"}),
+            "preview",
+            r"'db' is reserved in preview",
+        ),
+        (_preview_source(), "staging", r"mode must be one of \['deploy', 'preview'\]"),
+    ],
+)
+def test_invalid_preview_input_fails_closed(source: dict, mode: str, message: str) -> None:
+    with pytest.raises(ComposeCompileError, match=message):
+        compile_compose(source, vault_template="T\n", mode=mode)
+
+
+def test_a_database_url_needs_the_db_container_and_x_vault() -> None:
+    source = _preview_source()
+    del source["x-infra2"]["preview"]
+    with pytest.raises(ComposeCompileError, match=r"needs x-infra2.preview.db_container"):
+        compile_compose(source, vault_template="T\n", mode="preview")
+    source = _preview_source()
+    del source["services"]["backend"]["x-vault"]
+    with pytest.raises(ComposeCompileError, match=r"it needs x-vault"):
+        compile_compose(source, vault_template="T\n", mode="preview")
