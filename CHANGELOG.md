@@ -6,6 +6,10 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+### Changed (4.0.0)
+
+- `refs.classify_ref` also returns `pr` for `pr-<N>` and a 1-6 digit PR number, and accepts an `int`. It replaces infra2 `common/deploy/contract.classify_version_ref` (K6, wangzitian0/infra2#1644). Before, those inputs raised `ValueError`.
+
 ### Added
 
 - `runtime.schema_check`: the pre-deploy enum and data precondition check moved from infra2 `tools/pre_deploy_schema_check.py`. The application names its metadata (`EnumSchemaSpec` or `--metadata`, `--import`, `--requires-migration`, `--precondition`); the SDK keeps no table of applications and reads no environment variable (`--db-url` is explicit). The stdout lines `ROLLBACK_CLASS:`, `NEW_TABLE_COVERS:` and `APPLIED_MIGRATION:` keep their format ([#239](https://github.com/wangzitian0/infra2-sdk/issues/239)).
