@@ -186,7 +186,8 @@ def _database_target() -> tuple[str, int, str, str, str]:
     parts are read: query parameters are ignored. Raise `ValueError` with a
     message that has no part of the value when the URL is unset or malformed.
     """
-    raw = _settings().database_url
+    # One field only: a malformed REDIS_PORT is not a database fault.
+    raw = CanarySettings.read(os.environ, "database_url").strip()
     if not raw:
         raise ValueError(_DATABASE_URL_UNSET)
     try:

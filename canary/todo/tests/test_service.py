@@ -674,18 +674,32 @@ def test_no_setting_default_names_a_host() -> None:
     from canary_settings import CanarySettings
 
     settings = CanarySettings.from_environ({})
-    addresses = (
-        "database_url",
-        "redis_host",
-        "s3_endpoint",
-        "signoz_otel_collector",
-        "openpanel_api_url",
-        "authentik_endpoint",
-        "otel_exporter_otlp_endpoint",
-        "llm_base_url",
-    )
-    assert {name: getattr(settings, name) for name in addresses} == dict.fromkeys(addresses, "")
+    text = {
+        name: getattr(settings, name)
+        for name, info in CanarySettings.model_fields.items()
+        if info.annotation is str
+    }
+    assert len(text) == 20
+    assert text == dict.fromkeys(text, ""), "a text default would name a host or a value"
     assert (settings.port, settings.redis_port) == (8000, 6379)
+
+
+def test_a_sensitive_value_keeps_its_edge_whitespace_and_a_blank_value_is_unset() -> None:
+    from canary_settings import CanarySettings
+
+    settings = CanarySettings.from_environ(
+        {"REDIS_PASSWORD": " p w ", "REDIS_HOST": "  redis  ", "S3_SECRET_KEY": "   "}
+    )
+    assert settings.redis_password == " p w "
+    assert settings.redis_host == "redis"
+    assert settings.s3_secret_key == ""
+
+
+def test_a_malformed_port_is_not_reported_as_a_database_fault(monkeypatch) -> None:
+    todo_mod = load_todo_module("todo_app_bad_port")
+    monkeypatch.setenv("REDIS_PORT", "not-a-port")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:pppppppppppppppp@h:6543/d")
+    assert todo_mod._database_target() == ("h", 6543, "u", "pppppppppppppppp", "d")
 
 
 def test_the_manifest_file_is_the_output_of_the_settings_class() -> None:
@@ -707,25 +721,45 @@ def test_app_reads_the_process_environment_only_through_the_settings_class() -> 
     import ast
 
     tree = ast.parse(TODO_APP.read_text(encoding="utf-8"))
-    owners: list[str] = []
-    for func in ast.walk(tree):
-        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for node in ast.walk(func):
-            if (
-                isinstance(node, ast.Attribute)
-                and node.attr in {"environ", "getenv"}
-                and isinstance(node.value, ast.Name)
-                and node.value.id == "os"
-            ):
-                owners.append(func.name)
-    module_level = [
-        node
-        for stmt in tree.body
-        if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-        for node in ast.walk(stmt)
-        if isinstance(node, ast.Attribute) and node.attr in {"environ", "getenv"}
+    # `os` has one name in the module: no alias and no `from os import ...`.
+    imports = [node for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))]
+    assert [n for n in imports if isinstance(n, ast.ImportFrom) and n.module == "os"] == []
+    assert [
+        alias.asname
+        for n in imports
+        if isinstance(n, ast.Import)
+        for alias in n.names
+        if alias.name == "os"
+    ] == [None]
+
+    def reads(node: ast.AST) -> bool:
+        return (
+            isinstance(node, ast.Attribute) and node.attr in {"environ", "getenv", "putenv"}
+        ) or (isinstance(node, ast.Name) and node.id in {"environ", "getenv"})
+
+    functions = [
+        node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     ]
-    assert module_level == []
-    # `summarize_recent_todos` hands the whole mapping to the SDK LLM settings reader.
-    assert sorted(set(owners)) == ["_settings", "summarize_recent_todos"]
+    inside = {id(node): func.name for func in functions for node in ast.walk(func) if reads(node)}
+    every = [node for node in ast.walk(tree) if reads(node)]
+    assert every, "the guard must see the reads"
+    assert [node.lineno for node in every if id(node) not in inside] == [], (
+        "a read outside a function"
+    )
+    # `_settings` builds the settings. `_database_target` reads its one field through the
+    # class. `summarize_recent_todos` hands the whole mapping to the SDK LLM settings reader.
+    assert sorted(set(inside.values())) == [
+        "_database_target",
+        "_settings",
+        "summarize_recent_todos",
+        # Its `environ` parameter goes to the SDK manifest validation.
+        "validate_startup_environment",
+    ]
+    # Each read passes the mapping on as a call argument: no `os.environ.get(...)` and
+    # no `os.environ[...]`.
+    for node in every:
+        parent = next(p for p in ast.walk(tree) if node in ast.iter_child_nodes(p))
+        if isinstance(parent, ast.keyword):
+            parent = next(p for p in ast.walk(tree) if parent in ast.iter_child_nodes(p))
+        assert isinstance(parent, ast.Call), ast.dump(parent)[:120]
+        assert node is not parent.func and node not in ast.walk(parent.func), node.lineno

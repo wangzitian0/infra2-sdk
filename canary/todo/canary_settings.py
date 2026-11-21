@@ -100,12 +100,22 @@ class CanarySettings(BaseModel):
         return field.upper()
 
     @classmethod
+    def read(cls, environ: Mapping[str, str], field: str) -> str:
+        """The text of one declared variable, or an empty string. A sensitive value keeps
+        its edge whitespace; a blank value reads as not set."""
+        raw = environ.get(cls.env_name(field), "")
+        if not raw.strip():
+            return ""
+        extra = cls.model_fields[field].json_schema_extra
+        sensitive = isinstance(extra, Mapping) and bool(extra.get("sensitive"))
+        return raw if sensitive else raw.strip()
+
+    @classmethod
     def from_environ(cls, environ: Mapping[str, str]) -> CanarySettings:
         """Read each declared variable. An unset `DATABASE_URL` reads as an empty string:
         startup validation refuses it, and each caller reports it at run time."""
         values: dict[str, str] = {"database_url": ""}
         for field in cls.model_fields:
-            raw = environ.get(cls.env_name(field), "").strip()
-            if raw:
+            if raw := cls.read(environ, field):
                 values[field] = raw
         return cls(**values)

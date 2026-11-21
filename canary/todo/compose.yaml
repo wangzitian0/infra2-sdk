@@ -48,6 +48,7 @@ services:
       context: ../..
       dockerfile: canary/todo/Dockerfile
     image: infra2-canary-todo:local
+    pull_policy: build
     depends_on:
       s3:
         condition: service_healthy
@@ -72,7 +73,9 @@ services:
         s3.create_bucket(Bucket=os.environ["S3_BUCKET"])
 
   todo:
+    # The image that s3-init builds.
     image: infra2-canary-todo:local
+    pull_policy: never
     depends_on:
       postgres:
         condition: service_healthy
