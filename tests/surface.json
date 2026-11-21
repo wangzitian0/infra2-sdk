@@ -81,6 +81,7 @@
     "EnvironmentField": "consumer: infra2",
     "EnvironmentManifest": "consumer: finance_report, infra2, truealpha",
     "environment_manifest_from_model": "consumer: finance_report",
+    "merge_manifests": "documented: README section Settings manifest and reference",
     "render_env_markdown": "documented: README section Settings manifest and reference",
     "manifest_config_fingerprint": "consumer: truealpha",
     "Dependency": "consumer: truealpha",

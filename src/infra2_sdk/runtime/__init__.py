@@ -16,6 +16,7 @@ from infra2_sdk.runtime.config_schema import (
     EnvironmentManifest,
     environment_manifest_from_model,
     manifest_config_fingerprint,
+    merge_manifests,
     render_env_markdown,
 )
 from infra2_sdk.runtime.environment import (
@@ -105,6 +106,7 @@ __all__ = [
     "EnvironmentManifest",
     "environment_manifest_from_model",
     "manifest_config_fingerprint",
+    "merge_manifests",
     "render_env_markdown",
     "Dependency",
     "DependencyKind",
