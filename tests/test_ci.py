@@ -168,3 +168,44 @@ def test_pr_behind_window_contract() -> None:
     assert not is_pr_behind_fresh(datetime(2026, 11, 11, 11, 0, 0), now=now_dt)
     assert not is_pr_behind_fresh(now_iso, now="bad")
     assert not is_pr_behind_fresh(now_iso, now=now_iso, max_age_seconds=-1)
+
+
+def test_a_field_may_compose_from_its_own_store_key() -> None:
+    """infra2 platform/30.todo: DATABASE_URL keeps its password in the store under
+    TODO_POSTGRES_PASSWORD, a retired env name, and renders only the composed URL."""
+    from infra2_sdk.ci import validate_manifest_offline
+    from infra2_sdk.runtime.config_schema import EnvironmentField, EnvironmentManifest
+    from infra2_sdk.secrets import render_agent_template
+
+    url = EnvironmentField(
+        "database_url",
+        "DATABASE_URL",
+        source="runtime",
+        sensitive=True,
+        required=True,
+        has_default=False,
+        store_key="TODO_POSTGRES_PASSWORD",
+        composed_from="postgresql://todo_app:{TODO_POSTGRES_PASSWORD}@db{env:ENV_SUFFIX}:5432/postgres",
+    )
+    suffix = EnvironmentField("env_suffix", "ENV_SUFFIX", source="code", empty_ok=True)
+    manifest = EnvironmentManifest(source="todo", fields=(url, suffix))
+    assert validate_manifest_offline(manifest) == []
+    assert url.store_backed and url.key == "TODO_POSTGRES_PASSWORD"
+    template = render_agent_template(manifest, project="platform", service="todo")
+    assert ".Data.data.TODO_POSTGRES_PASSWORD" in template
+    assert "DATABASE_URL=" in template
+    assert "TODO_POSTGRES_PASSWORD=" not in template
+
+    other = EnvironmentField(
+        "database_url",
+        "DATABASE_URL",
+        source="runtime",
+        sensitive=True,
+        required=True,
+        has_default=False,
+        store_key="OTHER_KEY",
+        composed_from="postgresql://todo_app:{TODO_POSTGRES_PASSWORD}@db",
+    )
+    assert validate_manifest_offline(EnvironmentManifest(source="todo", fields=(other,))) == [
+        "DATABASE_URL: composed_from references undeclared TODO_POSTGRES_PASSWORD"
+    ]

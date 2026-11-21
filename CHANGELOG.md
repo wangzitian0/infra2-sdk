@@ -6,6 +6,8 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+- `validate_manifest_offline` accepts a `composed_from` placeholder that names the field's own `store_key`. One field can then keep a secret part in the store (for example `TODO_POSTGRES_PASSWORD`) and render only the composed value (`DATABASE_URL`) (wangzitian0/infra2#1823 N2).
+
 ## 4.2.0 - 2026-11-22
 
 Minor release (wangzitian0/infra2#1822). The `x-vault` sidecar that `compile_compose` injects gains one environment key, `ENV_SUFFIX`. No public name changes.
