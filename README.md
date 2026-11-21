@@ -47,7 +47,7 @@ python -m pip install \
 | `infra2_sdk.runtime.environment` | Canonical six-tier environment vocabulary, variable resolution, and contract definitions |
 | `infra2_sdk.runtime.health` | Framework-agnostic readiness checks (`check_health`), probe runners, and dependency declarations |
 | `infra2_sdk.runtime.http` | Retry-After HTTP request execution (`request_with_retry`, `arequest_with_retry`), `HttpClientSettings`, and the HTTP reachability probe |
-| `infra2_sdk.runtime.llm` | `LlmSettings`, `DecodingSpec`, `create_llm_agent`, `create_llm_model`, `GuardedLlmModel`, `llm_call_context`, SHA-256 helpers, redaction, VCR replay config, and deprecated `LlmClient` |
+| `infra2_sdk.runtime.llm` | `LlmSettings`, `DecodingSpec`, `create_llm_agent`, `create_llm_model`, `GuardedLlmModel`, `llm_call_context`, SHA-256 helpers, redaction, and VCR replay config |
 | `infra2_sdk.runtime.otel` | Explicit OTLP provider bootstrap, probe span suppression, and env-configured samplers |
 | `infra2_sdk.runtime.postgres` | `PostgresSettings`, credential redaction, and psycopg reachability/write probe (`probe_postgres`) |
 | `infra2_sdk.runtime.s3` | Standard boto3 S3 client, probe, and safe bucket/object primitives (`put_object_bytes`, `read_object_bytes`) |
@@ -63,7 +63,7 @@ python -m pip install \
 | Worker bootstrap | `init_worker` | `infra2_sdk.runtime.otel` | Configures JSON logs and OpenTelemetry providers for non-HTTP workers |
 | Health probes | `check_health`, `run_probes`, `probe_orchestrator` | `infra2_sdk.runtime.health` | Framework-agnostic readiness evaluation across declared dependency probes |
 | HTTP client | `request_with_retry`, `arequest_with_retry`, `probe_http` | `infra2_sdk.runtime.http` | Standard httpx retry helpers honoring `Retry-After` plus a reachability probe |
-| LLM runtime | `create_llm_agent`, `create_llm_model`, `GuardedLlmModel`, `DecodingSpec`, `LlmSettings`, `LlmClient`, `llm_call_context`, `prompt_sha256`, `schema_sha256`, `request_sha256`, `redact_llm_error`, `redact_uri`, `sanitize_headers`, `vcr_llm_config`, `allow_vcr_model_requests` | `infra2_sdk.runtime.llm` | Unified pydantic-ai Agent factory, single-layer retry, OTel instrumentation, error/URI redaction, and VCR helpers |
+| LLM runtime | `create_llm_agent`, `create_llm_model`, `GuardedLlmModel`, `DecodingSpec`, `LlmSettings`, `llm_call_context`, `prompt_sha256`, `schema_sha256`, `request_sha256`, `redact_llm_error`, `redact_uri`, `sanitize_headers`, `vcr_llm_config`, `allow_vcr_model_requests` | `infra2_sdk.runtime.llm` | Unified pydantic-ai Agent factory, single-layer retry, OTel instrumentation, error/URI redaction, and VCR helpers |
 | PostgreSQL | `probe_postgres`, `redact_postgres_error` | `infra2_sdk.runtime.postgres` | Psycopg reachability/write probe with credential redaction |
 | S3 storage | `create_s3_client`, `probe_s3`, `ensure_bucket`, `put_object_bytes` | `infra2_sdk.runtime.s3` | Boto3 client initialization, bucket reachability probe, bucket creation, and byte writes |
 | Secret manifests | `render_agent_template`, `render_agent_policy` | `infra2_sdk.secrets` | Manifest-driven Vault Agent Consul template and HCL policy generation |

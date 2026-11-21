@@ -14,29 +14,29 @@ def test_llm_settings_defaults() -> None:
     assert settings.provider == "zai"
     assert settings.base_url == "https://api.z.ai/api/coding/paas/v4"
     assert settings.api_key is None
-    assert settings.chat_completions_path == "/chat/completions"
-    assert settings.json_timeout_seconds == 360.0
-    assert settings.json_max_tokens == 8192
-    assert settings.json_disable_thinking is True
-    assert settings.json_seed is None
-    assert settings.extract_max_attempts == 2
-    assert settings.encryption_keys == ()
 
 
-def test_llm_settings_repr_hides_sensitive_fields() -> None:
-    settings = LlmSettings(
-        api_key="secret-key",
-        encryption_keys=("enc-key-1", "enc-key-2"),
-    )
-    rendered = repr(settings)
-    assert "secret-key" not in rendered
-    assert "enc-key-1" not in rendered
-    assert "enc-key-2" not in rendered
+def test_llm_settings_repr_hides_the_api_key() -> None:
+    assert "secret-key" not in repr(LlmSettings(api_key="secret-key"))
 
 
-def test_llm_settings_tuple_coercion() -> None:
-    assert LlmSettings(encryption_keys="key1, key2 , ").encryption_keys == ("key1", "key2")
-    assert LlmSettings(encryption_keys=["key1", " key2 "]).encryption_keys == ("key1", "key2")
+@pytest.mark.parametrize(
+    "removed",
+    [
+        "chat_completions_path",
+        "json_timeout_seconds",
+        "json_max_tokens",
+        "json_disable_thinking",
+        "json_seed",
+        "extract_max_attempts",
+        "encryption_keys",
+    ],
+)
+def test_the_release_b_fields_are_gone(removed: str) -> None:
+    """#236 Release B: the LlmClient-only fields left with LlmClient."""
+    assert removed not in {item.name for item in fields(LlmSettings)}
+    with pytest.raises(TypeError, match=removed):
+        LlmSettings(**{removed: "x"})
 
 
 def test_llm_settings_validation_errors() -> None:
@@ -48,18 +48,6 @@ def test_llm_settings_validation_errors() -> None:
 
     with pytest.raises(ValueError, match="base_url must not contain credentials"):
         LlmSettings(base_url="https://user:pass@open.bigmodel.cn/api/paas/v4")
-
-    with pytest.raises(ValueError, match="chat_completions_path must start with '/'"):
-        LlmSettings(chat_completions_path="chat/completions")
-
-    with pytest.raises(ValueError, match="json_timeout_seconds must be positive"):
-        LlmSettings(json_timeout_seconds=0.0)
-
-    with pytest.raises(ValueError, match="json_max_tokens must be at least 1"):
-        LlmSettings(json_max_tokens=0)
-
-    with pytest.raises(ValueError, match="extract_max_attempts must be at least 1"):
-        LlmSettings(extract_max_attempts=0)
 
 
 def test_llm_settings_model_roles() -> None:
@@ -83,25 +71,14 @@ def test_llm_settings_rejects_an_unknown_role_and_an_empty_role() -> None:
         LlmSettings(large_model=" ")
 
 
-_FIELDS_BEFORE_ROLES = [
-    "provider",
-    "base_url",
-    "api_key",
-    "chat_completions_path",
-    "json_timeout_seconds",
-    "json_max_tokens",
-    "json_disable_thinking",
-    "json_seed",
-    "extract_max_attempts",
-    "encryption_keys",
-]
+_FIELDS_BEFORE_ROLES = ["provider", "base_url", "api_key"]
 
 
 def test_llm_settings_positional_order_is_unchanged() -> None:
     names = [item.name for item in fields(LlmSettings)]
     assert names[: len(_FIELDS_BEFORE_ROLES)] == _FIELDS_BEFORE_ROLES
-    settings = LlmSettings("zai", "https://api.z.ai/api/coding/paas/v4", None, "/v4/chat")
-    assert settings.chat_completions_path == "/v4/chat"
+    settings = LlmSettings("zai", "https://api.z.ai/api/coding/paas/v4", "k")
+    assert settings.api_key == "k"
     assert settings.small_model == "glm-5.3-flash"
 
 

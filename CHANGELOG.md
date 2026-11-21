@@ -6,6 +6,11 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+### Removed (breaking, 4.0.0)
+
+- `LlmClient`, `LlmResponse` and the `LlmSettings` fields that only `LlmClient` read (`chat_completions_path`, `json_timeout_seconds`, `json_max_tokens`, `json_disable_thinking`, `json_seed`, `extract_max_attempts`, `encryption_keys`). Use `create_llm_agent` ([#236](https://github.com/wangzitian0/infra2-sdk/issues/236) Release B).
+- The LLM environment aliases `AI_PROVIDER`, `AI_BASE_URL`, `AI_API_KEY`, `ZAI_API_KEY`, `LARGE_MODEL`, `SMALL_MODEL`, `MULTIMODAL_MODEL` are no longer read; `check_shared_env_conformance` still flags them (`retired`). `LLM_ENCRYPTION_KEYS` leaves the contract.
+
 ### Added
 
 - `docs/app-integration-contract.md`: what an app does to run on infra2 with the SDK; its tables come from `data/shared_env.yaml` and `data/stages.yaml` (`scripts/render_app_contract.py`, test-locked) ([#241](https://github.com/wangzitian0/infra2-sdk/issues/241)).

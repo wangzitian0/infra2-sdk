@@ -304,18 +304,7 @@ def test_postgres_settings_extended_fields_are_keyword_only_and_guarded_across_r
             "enabled",
             "export_interval_millis",
         ),
-        LlmSettings: (
-            "provider",
-            "base_url",
-            "api_key",
-            "chat_completions_path",
-            "json_timeout_seconds",
-            "json_max_tokens",
-            "json_disable_thinking",
-            "json_seed",
-            "extract_max_attempts",
-            "encryption_keys",
-        ),
+        LlmSettings: ("provider", "base_url", "api_key"),
     }
     for cls, allowed_positional in expected_positional.items():
         actual_positional = tuple(f.name for f in fields(cls) if not f.kw_only)
