@@ -6,6 +6,12 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+## 4.2.0 - 2026-11-22
+
+Minor release (wangzitian0/infra2#1822). The `x-vault` sidecar that `compile_compose` injects gains one environment key, `ENV_SUFFIX`. No public name changes.
+
+### Changed (4.2.0)
+
 - The release workflow builds and publishes only. It runs no lint, test or wheel smoke on the tag. It fails unless a `ci.yml` run on `main` passed for the tagged commit (#264).
 - `docs/app-integration-contract.md` states that `local.post` is a manual cell for a person (#264).
 - `README.md` and `CONTRIBUTING.md` name no full-suite or build command for local use (#264).
