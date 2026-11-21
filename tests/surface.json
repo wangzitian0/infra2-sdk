@@ -111,7 +111,6 @@
     "init_worker": "documented: README section Core runtime entrypoints",
     "signal_endpoint": "consumer: finance_report",
     "LlmSettings": "consumer: finance_report",
-    "LlmClient": "consumer: truealpha",
     "DecodingSpec": "documented: README section Core runtime entrypoints",
     "GuardedLlmModel": "documented: README section Core runtime entrypoints",
     "allow_vcr_model_requests": "documented: README section Core runtime entrypoints",

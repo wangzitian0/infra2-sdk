@@ -10,7 +10,6 @@ from infra2_sdk.runtime import (
     check_shared_env_conformance,
     shared_env_contract,
 )
-from infra2_sdk.runtime.environment import EnvironmentConflictError
 
 
 def test_shared_env_contract_covers_converged_cross_repo_groups() -> None:
@@ -18,8 +17,10 @@ def test_shared_env_contract_covers_converged_cross_repo_groups() -> None:
     groups = contract["groups"]
     assert set(groups) >= {"runtime", "postgres_redis", "s3", "llm", "frontend_telemetry"}
     llm_names = {entry["name"]: entry for entry in groups["llm"]}
-    assert "AI_API_KEY" in llm_names["LLM_API_KEY"]["deprecated_aliases"]
-    assert "ZAI_API_KEY" in llm_names["LLM_API_KEY"]["deprecated_aliases"]
+    # #236 Release B: the LLM aliases are retired, not read.
+    assert llm_names["LLM_API_KEY"]["deprecated_aliases"] == []
+    retired = {entry["name"]: entry["use"] for entry in contract["retired"]}
+    assert retired["AI_API_KEY"] == retired["ZAI_API_KEY"] == "LLM_API_KEY"
     assert llm_names["LLM_API_KEY"]["sensitive"] is True
 
 
@@ -124,7 +125,6 @@ def test_llm_settings_from_mapping_prefers_canonical_and_rejects_conflicts() -> 
             "LLM_LARGE_MODEL": "model-l",
             "LLM_SMALL_MODEL": "model-s",
             "LLM_MULTIMODAL_MODEL": "model-mm",
-            "LLM_ENCRYPTION_KEYS": "k1, k2",
         }
     )
     assert cfg.provider == "openai-compatible"
@@ -133,14 +133,13 @@ def test_llm_settings_from_mapping_prefers_canonical_and_rejects_conflicts() -> 
     assert cfg.large_model == "model-l"
     assert cfg.small_model == "model-s"
     assert cfg.multimodal_model == "model-mm"
-    assert cfg.encryption_keys == ("k1", "k2")
 
+    # #236 Release B: a retired name is not read, so it cannot shadow or conflict.
     legacy = LlmSettings.from_mapping(
-        {"ZAI_API_KEY": "tok-old", "AI_PROVIDER": "zai", "SMALL_MODEL": "legacy-small"}
+        {"ZAI_API_KEY": "tok-old", "AI_PROVIDER": "other", "SMALL_MODEL": "legacy-small"}
     )
-    assert legacy.api_key == "tok-old"
+    assert legacy.api_key is None
     assert legacy.provider == "zai"
-    assert legacy.small_model == "legacy-small"
-
-    with pytest.raises(EnvironmentConflictError, match="LLM_API_KEY"):
-        LlmSettings.from_mapping({"LLM_API_KEY": "tok-1", "AI_API_KEY": "tok-2"})
+    assert legacy.small_model == "glm-5.3-flash"
+    both = LlmSettings.from_mapping({"LLM_API_KEY": "tok-1", "AI_API_KEY": "tok-2"})
+    assert both.api_key == "tok-1"

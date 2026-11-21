@@ -42,7 +42,6 @@ from pydantic_ai.models.wrapper import WrapperModel
 from infra2_sdk.runtime.llm import (
     DecodingSpec,
     GuardedLlmModel,
-    LlmClient,
     LlmSettings,
     allow_vcr_model_requests,
     create_llm_agent,
@@ -869,9 +868,3 @@ def test_google_model_allows_one_vendor_attempt() -> None:
     )
     retry = model.client._api_client._http_options.retry_options
     assert retry is not None and retry.attempts == 1
-
-
-def test_llm_client_construction_emits_deprecation_warning_at_caller() -> None:
-    with pytest.warns(DeprecationWarning, match="create_llm_agent") as record:
-        LlmClient(LlmSettings(api_key="k"))
-    assert record[0].filename == __file__

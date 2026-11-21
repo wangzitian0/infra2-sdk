@@ -14,7 +14,6 @@ from typing import Any
 
 import pytest
 from fastapi import FastAPI
-from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -46,7 +45,6 @@ from infra2_sdk.runtime.health import (
     ProbeResult,
 )
 from infra2_sdk.runtime.http import arequest_with_retry, request_with_retry
-from infra2_sdk.runtime.llm import LlmClient, LlmSettings
 from infra2_sdk.runtime.otel import OtelSettings, _build_sampler
 from infra2_sdk.runtime.postgres import PostgresSettings, probe_postgres
 from infra2_sdk.runtime.s3 import put_object_bytes
@@ -326,137 +324,6 @@ def test_rate_limit_window_sliding_budget_and_cost() -> None:
     now += 7.1
     assert win.used == 1
     assert win.acquire(2) == (True, 0.0)
-
-
-@pytest.mark.asyncio
-async def test_llm_client_chat_json_fallbacks_embeddings_and_otel_spans(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    settings = LlmSettings(
-        provider="zai",
-        base_url="https://llm.example.test/v4",
-        api_key="sk-secret",
-        json_seed=42,
-        extract_max_attempts=2,
-    )
-    sync_http = _SequenceSyncClient(
-        [
-            _FakeHttpResponse(500, {}),
-            _FakeHttpResponse(
-                200,
-                {
-                    "model": "glm-fallback",
-                    "choices": [{"message": {"content": "not valid json"}}],
-                    "usage": {"prompt_tokens": 10, "completion_tokens": 5},
-                },
-            ),
-            _FakeHttpResponse(
-                200,
-                {
-                    "model": "glm-primary",
-                    "choices": [{"message": {"content": '```json\n{"answer": 7}\n```'}}],
-                    "usage": {"prompt_tokens": 12, "completion_tokens": 8},
-                },
-            ),
-        ]
-    )
-
-    exporter = InMemorySpanExporter()
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
-    tracer = provider.get_tracer("llm-test")
-    monkeypatch.setattr(trace, "get_current_span", trace.get_current_span)
-
-    llm = LlmClient(settings, client=sync_http, max_retries=1, sleep=lambda _: None)
-    with tracer.start_as_current_span("llm-call") as span:
-        monkeypatch.setattr(trace, "get_current_span", lambda: span)
-        parsed = llm.chat_json(
-            [{"role": "user", "content": "hi"}],
-            model="glm-primary",
-            fallback_models=["glm-fallback"],
-            extra_body={"temperature": 0.1},
-        )
-    assert parsed == {"answer": 7}
-    finished = exporter.get_finished_spans()[-1]
-    assert finished.attributes["gen_ai.system"] == "zai"
-    assert finished.attributes["gen_ai.request.model"] == "glm-primary"
-    assert finished.attributes["gen_ai.usage.input_tokens"] == 12
-    assert finished.attributes["gen_ai.usage.output_tokens"] == 8
-    sent_body = sync_http.calls[-1][2]["json"]
-    assert sent_body["response_format"] == {"type": "json_object"}
-    assert sent_body["seed"] == 42
-    assert sent_body["thinking"] == {"type": "disabled"}
-    assert sent_body["temperature"] == 0.1
-    assert not sync_http.closed
-
-    async_http = _SequenceAsyncClient(
-        [
-            _FakeHttpResponse(
-                200,
-                {
-                    "model": "glm-5.3-flash",
-                    "choices": [{"message": {"content": '{"async_ok": true}'}}],
-                    "usage": {"prompt_tokens": 4, "completion_tokens": 3},
-                },
-            ),
-            _FakeHttpResponse(
-                200,
-                {"data": [{"embedding": [0.25, 0.75]}]},
-            ),
-        ]
-    )
-    allm = LlmClient(settings, async_client=async_http, max_retries=1)
-    ares = await allm.achat_json([{"role": "user", "content": "ping"}])
-    assert ares == {"async_ok": True}
-    vecs = await allm.aembed("hello")
-    assert vecs == [[0.25, 0.75]]
-
-    emb_sync = _SequenceSyncClient([_FakeHttpResponse(200, {"data": [{"embedding": [1, 2]}]})])
-    assert LlmClient(settings, client=emb_sync, max_retries=1).embed(["a"]) == [[1.0, 2.0]]
-
-    bad_chat = _SequenceSyncClient([_FakeHttpResponse(200, {"choices": []})])
-    with pytest.raises(ValueError, match="missing choices"):
-        LlmClient(settings, client=bad_chat, max_retries=1).chat([{"role": "user", "content": "x"}])
-
-    bad_json = _SequenceSyncClient(
-        [
-            _FakeHttpResponse(200, {"choices": [{"message": {"content": "nope"}}]}),
-            _FakeHttpResponse(200, {"choices": [{"message": {"content": "still nope"}}]}),
-        ]
-    )
-    with pytest.raises(ValueError):
-        LlmClient(settings, client=bad_json, max_retries=1).chat_json(
-            [{"role": "user", "content": "x"}]
-        )
-
-    bad_emb = _SequenceSyncClient([_FakeHttpResponse(502, {})])
-    with pytest.raises(RuntimeError, match="embeddings HTTP 502"):
-        LlmClient(settings, client=bad_emb, max_retries=1).embed("x")
-
-    bad_emb_body = _SequenceSyncClient([_FakeHttpResponse(200, {})])
-    with pytest.raises(ValueError, match="missing data"):
-        LlmClient(settings, client=bad_emb_body, max_retries=1).embed("x")
-
-    bad_aemb = _SequenceAsyncClient([_FakeHttpResponse(500, {})])
-    with pytest.raises(RuntimeError, match="embeddings HTTP 500"):
-        await LlmClient(settings, async_client=bad_aemb, max_retries=1).aembed("x")
-
-    bad_achat_json = _SequenceAsyncClient(
-        [
-            _FakeHttpResponse(200, {"choices": [{"message": {"content": "bad"}}]}),
-            _FakeHttpResponse(200, {"choices": [{"message": {"content": "bad2"}}]}),
-        ]
-    )
-    with pytest.raises(ValueError):
-        await LlmClient(settings, async_client=bad_achat_json, max_retries=1).achat_json(
-            [{"role": "user", "content": "x"}]
-        )
-
-    bad_achat_http = _SequenceAsyncClient([_FakeHttpResponse(401, {})])
-    with pytest.raises(RuntimeError, match="LLM HTTP 401"):
-        await LlmClient(settings, async_client=bad_achat_http, max_retries=1).achat(
-            [{"role": "user", "content": "x"}]
-        )
 
 
 def test_probe_postgres_custom_query_and_put_object_bytes() -> None:
