@@ -19,15 +19,8 @@ Use an independent branch and PR. Preserve public import paths and wire compatib
 apply the README's semantic-version rules before release. Add regression tests for
 changed behavior, including failure paths and secret redaction where applicable.
 
-```bash
-uv sync --extra dev
-uv run ruff check .
-uv run pytest --cov
-uv run python -m build
-```
-
-Run focused tests during development. Release changes require the repository CI and
-wheel checks in `.github/workflows/`. Report the revision tested and any missing proof;
+Before a PR, run the focused tests of the change. CI runs the full suite. Release changes
+require the repository CI and wheel checks in `.github/workflows/ci.yml`. Report the revision tested and any missing proof;
 do not treat a locally built wheel as a published release or update consumers to it.
 
 ## Releasing
@@ -50,8 +43,8 @@ The release workflow publishes each release. Do not publish manually. A change u
    The agent tags releases; `.github/workflows/release.yml` needs no approval (owner,
    2026-10-26). The workflow verifies that `$GITHUB_SHA` is on `origin/main`
    (`git merge-base --is-ancestor "$GITHUB_SHA" origin/main`). It also verifies that the tag
-   matches `pyproject.toml`, runs lint and tests, smoke-tests each wheel extra, and runs
-   `gh release create --verify-tag`.
+   matches `pyproject.toml`, builds the package, and runs `gh release create --verify-tag`.
+   It runs no test: `.github/workflows/ci.yml` ran them on that commit of `main`.
 3. Do not create the GitHub release manually before the workflow finishes. A manual release
    causes the publish step to fail and leaves unverified assets attached to the tag.
    Follow the release identity contract in `.github/workflows/release.yml`

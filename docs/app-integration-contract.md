@@ -103,4 +103,6 @@ when they are stale. Regenerate them with `python scripts/render_app_contract.py
 | `staging.post` | release_tag | 600 | staging_gate |
 | `prod.post` | owner_approval | 300 | prod_gate |
 | `scheduled_audit` | clock | 3600 | scheduled_audit |
+
+`local.post` is a manual cell for a person. No rule tells an agent to run it.
 <!-- app-contract:end -->

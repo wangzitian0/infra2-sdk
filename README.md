@@ -576,9 +576,4 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) for ownership, compatibility, and valida
 Named manifest override tables must resolve to mappings; missing or invalid tables fail
 before generating a file, so source classifications cannot silently disappear.
 
-```bash
-uv sync --extra dev
-uv run ruff check .
-uv run pytest --cov
-uv run python -m build
-```
+Before a PR, run the focused tests of the change. CI runs the full suite.
