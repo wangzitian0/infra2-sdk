@@ -9,6 +9,7 @@ from infra2_sdk.runtime import (
     otel,
     postgres,
     s3,
+    schema_check,
 )
 from infra2_sdk.runtime.config_schema import (
     EnvironmentField,
@@ -92,6 +93,7 @@ __all__ = [
     "otel",
     "postgres",
     "s3",
+    "schema_check",
     "EnvironmentTier",
     "resolve_environment_tier",
     "RuntimeEnvKey",
