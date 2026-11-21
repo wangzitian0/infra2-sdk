@@ -271,3 +271,25 @@ def test_contributing_documents_release_guards_and_usage_census() -> None:
     text = CONTRIBUTING_PATH.read_text(encoding="utf-8")
     assert 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main' in text
     assert "tools.sdk_usage_census" in text
+
+
+def test_release_ci_success_gate_script_behavior(tmp_path: Path) -> None:
+    steps = _load_yaml(RELEASE_WORKFLOW_PATH)["jobs"]["release"]["steps"]
+    step = _find_step_by_script(steps, "gh run list --workflow ci.yml")
+    assert step is not None, "release.yml: missing the CI success step"
+    fake_gh = tmp_path / "gh"
+
+    def run(body: str) -> int:
+        fake_gh.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+        fake_gh.chmod(0o755)
+        return subprocess.run(
+            ["bash", "-e", "-c", str(step["run"])],
+            env={**os.environ, "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}"},
+            capture_output=True,
+            check=False,
+        ).returncode
+
+    assert run("echo 1") == 0
+    assert run("echo 0") != 0
+    assert run("exit 0") != 0
+    assert run("exit 1") != 0
