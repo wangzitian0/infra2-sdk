@@ -61,7 +61,7 @@ Application processes import these modules directly at runtime:
 | `infra2_sdk.runtime.config_schema` | `EnvironmentField`, `EnvironmentManifest`, `assert_environment`, and manifest config fingerprints |
 | `infra2_sdk.runtime.health` | Framework-agnostic readiness probes (`check_health`, `run_probes`, `probe_orchestrator`) and dependency status contracts |
 | `infra2_sdk.runtime.http` | `HttpClientSettings`, Retry-After retry helpers (`request_with_retry`, `arequest_with_retry`), and `probe_http` |
-| `infra2_sdk.runtime.llm` | `LlmSettings`, `DecodingSpec`, `create_llm_agent`, `create_llm_model`, `GuardedLlmModel`, `llm_call_context`, `prompt_sha256`, `schema_sha256`, `request_sha256`, `redact_llm_error`, `redact_uri`, `sanitize_headers`, `vcr_llm_config`, `allow_vcr_model_requests`, deprecated `LlmClient`, and `large`/`small`/`multimodal` role defaults |
+| `infra2_sdk.runtime.llm` | `LlmSettings`, `DecodingSpec`, `create_llm_agent`, `create_llm_model`, `GuardedLlmModel`, `llm_call_context`, `prompt_sha256`, `schema_sha256`, `request_sha256`, `redact_llm_error`, `redact_uri`, `sanitize_headers`, `vcr_llm_config`, `allow_vcr_model_requests`, and `large`/`small`/`multimodal` role defaults |
 | `infra2_sdk.runtime.otel` | Explicit OTLP/HTTP trace, metric, and log provider bootstrap (`OtelSettings`, `PROBE_PATHS`, `configure_telemetry`) |
 | `infra2_sdk.runtime.postgres` | `PostgresSettings`, `redact_postgres_error`, and `probe_postgres` |
 | `infra2_sdk.runtime.s3` | `S3Settings`, `boto3` S3 client initialization, bucket reachability probe (`probe_s3`), `ensure_bucket`, and `put_object_bytes` |

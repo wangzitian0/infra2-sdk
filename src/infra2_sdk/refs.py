@@ -14,6 +14,7 @@ from infra2_sdk.transport import HttpResponse, HttpTransport, urllib_transport
 
 _SHA_RE = re.compile(r"\A[0-9a-fA-F]{7,40}\Z")
 _TAG_RE = re.compile(r"\Av\d+\.\d+\.\d+\Z")
+_PR_RE = re.compile(r"\A(?:pr-[1-9]\d*|[1-9]\d{0,5})\Z")
 _LS_REMOTE_TIMEOUT_SECONDS = 30
 _SHORT_SHA_LENGTH = 7
 _FULL_SHA_RE = re.compile(r"\A[0-9a-f]{40}\Z")
@@ -55,17 +56,27 @@ class ReleaseError(RuntimeError):
     pass
 
 
-def classify_ref(ref: str) -> str:
-    c = ref.strip()
+def classify_ref(ref: str | int) -> str:
+    """Classify a deploy ref into one of four disjoint forms.
+
+    ``branch`` is ``main``; ``tag`` is ``vX.Y.Z``; ``pr`` is ``pr-<N>`` or a positive integer
+    of 1-6 digits; ``sha`` is 7-40 hex characters. Anything else raises ``ValueError``.
+    """
+    c = str(ref).strip() if ref is not None else ""
     if not c:
         raise ValueError("deploy ref must be non-empty")
     if _TAG_RE.match(c):
         return "tag"
     if c == "main":
         return "branch"
+    if _PR_RE.fullmatch(c):
+        return "pr"
     if _SHA_RE.match(c):
         return "sha"
-    raise ValueError(f"unrecognized deploy ref {ref!r}: expected 'main', 'vX.Y.Z', or a commit sha")
+    raise ValueError(
+        f"unrecognized deploy ref {ref!r}: expected 'main', 'vX.Y.Z', 'pr-<N>', "
+        "a 1-6 digit PR number, or a 7-40 hex commit sha"
+    )
 
 
 def identifier_kind(value: str) -> str:

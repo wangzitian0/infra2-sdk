@@ -36,6 +36,15 @@ def test_classify_ref() -> None:
     assert classify_ref("main") == "branch"
     assert classify_ref("v1.2.3") == "tag"
     assert classify_ref(SHA) == "sha"
+    # 4.0.0 (K6, infra2#1644): the pr form of infra2 contract.classify_version_ref
+    assert classify_ref("pr-42") == "pr"
+    assert classify_ref(42) == "pr"
+    assert classify_ref("999999") == "pr"
+    assert classify_ref("1234567") == "sha", "7 digits is a short sha, not a PR"
+    assert classify_ref(" main ") == "branch"
+    for bad in ("pr-0", "0", "pr-", "v1.2", ""):
+        with pytest.raises(ValueError):
+            classify_ref(bad)
     with pytest.raises(ValueError, match="unrecognized"):
         classify_ref("feature/example")
 

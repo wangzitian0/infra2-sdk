@@ -71,32 +71,28 @@ groups:
       owners: [finance_report, truealpha]
   llm:
     - name: LLM_PROVIDER
-      deprecated_aliases: [AI_PROVIDER]
+      deprecated_aliases: []
       sensitive: false
       owners: [infra2, finance_report, truealpha]
     - name: LLM_BASE_URL
-      deprecated_aliases: [AI_BASE_URL]
+      deprecated_aliases: []
       sensitive: false
       owners: [infra2, finance_report, truealpha]
     - name: LLM_API_KEY
-      deprecated_aliases: [AI_API_KEY, ZAI_API_KEY]
+      deprecated_aliases: []
       sensitive: true
       owners: [infra2, finance_report, truealpha]
     - name: LLM_LARGE_MODEL
-      deprecated_aliases: [LARGE_MODEL]
+      deprecated_aliases: []
       sensitive: false
       owners: [finance_report]
     - name: LLM_SMALL_MODEL
-      deprecated_aliases: [SMALL_MODEL]
+      deprecated_aliases: []
       sensitive: false
       owners: [infra2, finance_report, truealpha]
     - name: LLM_MULTIMODAL_MODEL
-      deprecated_aliases: [MULTIMODAL_MODEL]
-      sensitive: false
-      owners: [finance_report]
-    - name: LLM_ENCRYPTION_KEYS
       deprecated_aliases: []
-      sensitive: true
+      sensitive: false
       owners: [finance_report]
   frontend_telemetry:
     - name: NEXT_PUBLIC_APP_URL
@@ -128,6 +124,21 @@ groups:
       sensitive: false
       owners: [infra2, finance_report]
 retired:
+  # #236 Release B (4.0.0): no longer read as aliases; still flagged.
+  - name: AI_PROVIDER
+    use: LLM_PROVIDER
+  - name: AI_BASE_URL
+    use: LLM_BASE_URL
+  - name: AI_API_KEY
+    use: LLM_API_KEY
+  - name: ZAI_API_KEY
+    use: LLM_API_KEY
+  - name: LARGE_MODEL
+    use: LLM_LARGE_MODEL
+  - name: SMALL_MODEL
+    use: LLM_SMALL_MODEL
+  - name: MULTIMODAL_MODEL
+    use: LLM_MULTIMODAL_MODEL
   - name: CANARY_POSTGRES_USER
     use: DATABASE_URL
   - name: CANARY_POSTGRES_PASSWORD

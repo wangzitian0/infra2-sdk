@@ -6,9 +6,19 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+### Removed (breaking, 4.0.0)
+
+- `LlmClient`, `LlmResponse` and the `LlmSettings` fields that only `LlmClient` read (`chat_completions_path`, `json_timeout_seconds`, `json_max_tokens`, `json_disable_thinking`, `json_seed`, `extract_max_attempts`, `encryption_keys`). Use `create_llm_agent` ([#236](https://github.com/wangzitian0/infra2-sdk/issues/236) Release B).
+- The LLM environment aliases `AI_PROVIDER`, `AI_BASE_URL`, `AI_API_KEY`, `ZAI_API_KEY`, `LARGE_MODEL`, `SMALL_MODEL`, `MULTIMODAL_MODEL` are no longer read; `check_shared_env_conformance` still flags them (`retired`). `LLM_ENCRYPTION_KEYS` leaves the contract.
+
+### Changed (4.0.0)
+
+- `refs.classify_ref` also returns `pr` for `pr-<N>` and a 1-6 digit PR number, and accepts an `int`. It replaces infra2 `common/deploy/contract.classify_version_ref` (K6, wangzitian0/infra2#1644). Before, those inputs raised `ValueError`.
+
 ### Added
 
 - `python -m infra2_sdk.manifests --run-cell CELL --hooks-manifest P --app-url U [--env E] [--version-ref R] [--result-file F]` runs one schema 3 cell through `run_cell` and prints the result JSON; it replaces the removed `--run-hook` (K6).
+- `docs/app-integration-contract.md`: what an app does to run on infra2 with the SDK; its tables come from `data/shared_env.yaml` and `data/stages.yaml` (`scripts/render_app_contract.py`, test-locked) ([#241](https://github.com/wangzitian0/infra2-sdk/issues/241)).
 - `runtime.merge_manifests(...)` joins the manifests of one stack; a variable declared twice must agree on `source`, `provided_by`, `composed_from`, `store_key`, `empty_ok` and `scope` (moved from infra2 `common/security/registry.merged_manifest`, [#238](https://github.com/wangzitian0/infra2-sdk/issues/238)).
 - `runtime.schema_check`: the pre-deploy enum and data precondition check moved from infra2 `tools/pre_deploy_schema_check.py`. The application names its metadata (`EnumSchemaSpec` or `--metadata`, `--import`, `--requires-migration`, `--precondition`); the SDK keeps no table of applications and reads no environment variable (`--db-url` is explicit). The stdout lines `ROLLBACK_CLASS:`, `NEW_TABLE_COVERS:` and `APPLIED_MIGRATION:` keep their format ([#239](https://github.com/wangzitian0/infra2-sdk/issues/239)).
 - `runtime.render_env_markdown(manifest)` renders the Markdown reference of an `EnvironmentManifest`. `python -m infra2_sdk.runtime.config_schema module:Settings --json P --markdown P [--check]` writes the manifest JSON and the reference, or exits 1 on a stale file ([#239](https://github.com/wangzitian0/infra2-sdk/issues/239)).
