@@ -67,12 +67,26 @@ def _is_tc(test: ast.expr) -> bool:
 
 
 def _import_module_call(node: ast.AST) -> ast.Import | None:
-    """`importlib.import_module("a.b")` or `import_module("a.b")` as an `import a.b`."""
+    """`importlib.import_module("a.b")` or a bare `import_module("a.b")` as `import a.b`.
+
+    Only a literal absolute name counts. A relative name (".x") or a method of another
+    object (`loader.import_module`) is not an edge.
+    """
     if not (isinstance(node, ast.Call) and node.args):
         return None
     func, arg = node.func, node.args[0]
-    name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-    if name == "import_module" and isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+    is_call = (isinstance(func, ast.Name) and func.id == "import_module") or (
+        isinstance(func, ast.Attribute)
+        and func.attr == "import_module"
+        and isinstance(func.value, ast.Name)
+        and func.value.id == "importlib"
+    )
+    if (
+        is_call
+        and isinstance(arg, ast.Constant)
+        and isinstance(arg.value, str)
+        and not arg.value.startswith(".")
+    ):
         return ast.Import(names=[ast.alias(name=arg.value)])
     return None
 
@@ -81,8 +95,8 @@ def _walk_imports(node: ast.AST, *, ignore_tc: bool) -> list[ast.stmt]:
     out: list[ast.stmt] = []
     for child in ast.iter_child_nodes(node):
         if ignore_tc and isinstance(child, ast.If) and _is_tc(child.test):
-            for orelse in child.orelse:
-                out.extend(_walk_imports(orelse, ignore_tc=ignore_tc))
+            branch = ast.Module(body=child.orelse, type_ignores=[])
+            out.extend(_walk_imports(branch, ignore_tc=ignore_tc))
         elif isinstance(child, (ast.Import, ast.ImportFrom)):
             out.append(child)
         else:

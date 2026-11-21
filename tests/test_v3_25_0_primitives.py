@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import email.utils
 import logging
 import subprocess
@@ -619,3 +620,40 @@ def test_rules_imports_skip_hidden_dirs_and_read_import_module_strings(tmp_path:
         ("lib.core", "layer_rank"),
         ("lib.late", "layer_rank"),
     ]
+
+
+def test_rules_imports_dynamic_edges_only_for_importlib_and_absolute_literals() -> None:
+    from infra2_sdk.rules.imports import _walk_imports
+
+    def names(source: str, *, ignore_tc: bool = True) -> list[str]:
+        nodes = _walk_imports(ast.parse(source), ignore_tc=ignore_tc)
+        return sorted(
+            node.module or "" if isinstance(node, ast.ImportFrom) else alias.name
+            for node in nodes
+            for alias in node.names
+        )
+
+    assert names('import importlib\nimportlib.import_module("a.b")\n') == ["a.b", "importlib"]
+    assert names('loader.import_module("a.b")\n') == []
+    assert names('import importlib\nimportlib.import_module(".rel", package="p")\n') == [
+        "importlib"
+    ]
+    assert names("import importlib\nimportlib.import_module(name)\n") == ["importlib"]
+    tc = (
+        "from typing import TYPE_CHECKING\n"
+        "if TYPE_CHECKING:\n"
+        "    import_module('tc.only')\n"
+        "else:\n"
+        "    import else_direct\n"
+    )
+    assert names(tc) == ["else_direct", "typing"]
+    assert names(tc, ignore_tc=False) == ["else_direct", "tc.only", "typing"]
+
+
+def test_rules_imports_scan_root_under_a_hidden_directory(tmp_path: Path) -> None:
+    root = tmp_path / ".cache" / "repo"
+    (root / "pkg").mkdir(parents=True)
+    (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "pkg" / "a.py").write_text("from pkg import b\n", encoding="utf-8")
+    (root / "pkg" / "b.py").write_text("", encoding="utf-8")
+    assert scan_module_imports(root)["pkg.a"] == {"pkg.b"}
