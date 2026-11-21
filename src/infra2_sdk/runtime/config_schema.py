@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from enum import StrEnum
 from pathlib import Path
@@ -368,6 +368,42 @@ def manifest_config_fingerprint(manifest: EnvironmentManifest, values: Mapping[s
     return _canonical_sha256(lines)
 
 
+# Keys that decide how a variable is produced and rendered. Two manifests that declare one
+# variable must agree on them (infra2 registry.merged_manifest, #1320).
+_RENDER_KEYS = ("source", "provided_by", "composed_from", "store_key", "empty_ok", "scope")
+
+
+def merge_manifests(
+    manifests: Sequence[tuple[str, EnvironmentManifest]],
+    *,
+    source: str,
+    exclude: Collection[str] = (),
+) -> EnvironmentManifest:
+    """Union of several manifests of one stack, in order.
+
+    ``manifests`` holds ``(label, manifest)`` pairs; the label names the manifest in an
+    error. Two manifests may declare the same variable (both truealpha apps read
+    ``DATABASE_URL``): they must agree on how it is produced and rendered (``source``,
+    ``provided_by``, ``composed_from``, ``store_key``, ``empty_ok``, ``scope``), else
+    ``ValueError``. The first declaration wins for the rest (requiredness, description).
+    Variables in ``exclude`` are dropped.
+    """
+    excluded = set(exclude)
+    fields: dict[str, EnvironmentField] = {}
+    for label, manifest in manifests:
+        for entry in manifest.fields:
+            if entry.env in excluded:
+                continue
+            existing = fields.get(entry.env)
+            if existing is None:
+                fields[entry.env] = entry
+                continue
+            for key in _RENDER_KEYS:
+                if getattr(existing, key) != getattr(entry, key):
+                    raise ValueError(f"{source}: {entry.env}.{key} declared differently in {label}")
+    return EnvironmentManifest(source=source, fields=tuple(fields.values()))
+
+
 def render_env_markdown(manifest: EnvironmentManifest, *, title: str = "") -> str:
     """Render one Markdown reference of the manifest: one table for each group.
 
@@ -480,6 +516,7 @@ __all__ = [
     "assert_environment",
     "environment_manifest_from_model",
     "manifest_config_fingerprint",
+    "merge_manifests",
     "render_env_markdown",
 ]
 
