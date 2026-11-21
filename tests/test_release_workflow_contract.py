@@ -59,7 +59,8 @@ def validate_workflow_contracts(
     if publish_step is None:
         violations.append("release.yml:release: missing gh release create step")
     ci_step = _find_step_by_script(
-        rel_steps, 'gh run list --workflow ci.yml --commit "$GITHUB_SHA" --event push --status success'
+        rel_steps,
+        'gh run list --workflow ci.yml --commit "$GITHUB_SHA" --event push --status success',
     )
     if ci_step is None or (
         publish_step is not None and rel_steps.index(ci_step) > rel_steps.index(publish_step)
