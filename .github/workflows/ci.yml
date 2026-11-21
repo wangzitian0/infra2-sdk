@@ -91,3 +91,5 @@ jobs:
         run: docker build -f canary/todo/Dockerfile -t infra2-canary-todo:ci .
       - name: The image runs the SDK version of this commit
         run: scripts/check_canary_image_sdk.sh infra2-canary-todo:ci
+      - name: The Canary runs without a platform
+        run: scripts/check_canary_standalone.sh

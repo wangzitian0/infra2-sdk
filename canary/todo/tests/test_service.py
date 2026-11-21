@@ -628,3 +628,104 @@ def test_todo_store_connects_with_the_database_url_login(monkeypatch) -> None:
         "connect_timeout": 5,
         "options": "-c statement_timeout=5000",
     }
+
+
+def test_an_unset_address_makes_its_check_unconfigured_without_a_connection(monkeypatch) -> None:
+    from conftest import DEPLOYMENT_ADDRESSES
+
+    todo_mod = load_todo_module("todo_app_no_addresses")
+    for name in (*DEPLOYMENT_ADDRESSES, "S3_ENDPOINT", "DATABASE_URL", "REDIS_PASSWORD"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("REDIS_PASSWORD", "r" * 24)
+    monkeypatch.setattr(todo_mod.socket, "create_connection", lambda *a, **k: pytest.fail("redis"))
+    monkeypatch.setattr(todo_mod, "_probe_http", lambda *a, **k: pytest.fail("http"))
+    monkeypatch.setattr(todo_mod, "_probe_http_async", lambda *a, **k: pytest.fail("http"))
+
+    report = todo_mod.run_all_checks()
+
+    details = {name: (c["status"], c["detail"]) for name, c in report["checks"].items()}
+    assert details["redis"] == ("unconfigured", "REDIS_HOST is not configured")
+    assert details["postgres"] == ("unconfigured", "DATABASE_URL is not configured")
+    assert details["s3"][0] == "unconfigured" and "S3_ENDPOINT" in details["s3"][1]
+    assert details["signoz"] == ("unconfigured", "SIGNOZ_OTEL_COLLECTOR is not configured")
+    assert details["openpanel"] == ("unconfigured", "OPENPANEL_API_URL is not configured")
+    assert details["authentik"] == ("unconfigured", "AUTHENTIK_ENDPOINT is not configured")
+    assert report["ok"] is False
+
+
+def test_an_unset_liveness_address_does_not_gate_the_verdict(monkeypatch) -> None:
+    todo_mod = load_todo_module("todo_app_no_liveness")
+    for name in ("SIGNOZ_OTEL_COLLECTOR", "OPENPANEL_API_URL", "AUTHENTIK_ENDPOINT"):
+        monkeypatch.delenv(name, raising=False)
+    ok = {"status": "pass", "latency_ms": 1.0, "detail": "ok"}
+    for probe in ("_probe_redis", "_probe_postgres", "_probe_s3"):
+        monkeypatch.setattr(todo_mod, probe, lambda *a, **k: dict(ok))
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:pppppppppppppppp@h/d")
+
+    report = todo_mod.run_all_checks()
+
+    assert report["ok"] is True
+    assert {report["checks"][n]["status"] for n in todo_mod.INFORMATIONAL_CHECKS} == {
+        "unconfigured"
+    }
+
+
+def test_no_setting_default_names_a_host() -> None:
+    from canary_settings import CanarySettings
+
+    settings = CanarySettings.from_environ({})
+    addresses = (
+        "database_url",
+        "redis_host",
+        "s3_endpoint",
+        "signoz_otel_collector",
+        "openpanel_api_url",
+        "authentik_endpoint",
+        "otel_exporter_otlp_endpoint",
+        "llm_base_url",
+    )
+    assert {name: getattr(settings, name) for name in addresses} == dict.fromkeys(addresses, "")
+    assert (settings.port, settings.redis_port) == (8000, 6379)
+
+
+def test_the_manifest_file_is_the_output_of_the_settings_class() -> None:
+    import json
+
+    from canary_settings import CanarySettings
+
+    from infra2_sdk.runtime.config_schema import environment_manifest_from_model
+
+    manifest = environment_manifest_from_model(CanarySettings, source="canary/todo")
+    expected = json.dumps(manifest.to_dict(), indent=2, sort_keys=True) + "\n"
+    assert (TODO_APP.parent / "env.manifest.json").read_text(encoding="utf-8") == expected
+    # The app manifest holds no binding of one platform.
+    assert [f.env for f in manifest.fields if f.provided_by or f.composed_from] == []
+    assert manifest.validate_offline() == []
+
+
+def test_app_reads_the_process_environment_only_through_the_settings_class() -> None:
+    import ast
+
+    tree = ast.parse(TODO_APP.read_text(encoding="utf-8"))
+    owners: list[str] = []
+    for func in ast.walk(tree):
+        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for node in ast.walk(func):
+            if (
+                isinstance(node, ast.Attribute)
+                and node.attr in {"environ", "getenv"}
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "os"
+            ):
+                owners.append(func.name)
+    module_level = [
+        node
+        for stmt in tree.body
+        if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        for node in ast.walk(stmt)
+        if isinstance(node, ast.Attribute) and node.attr in {"environ", "getenv"}
+    ]
+    assert module_level == []
+    # `summarize_recent_todos` hands the whole mapping to the SDK LLM settings reader.
+    assert sorted(set(owners)) == ["_settings", "summarize_recent_todos"]
