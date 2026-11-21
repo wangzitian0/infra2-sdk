@@ -58,6 +58,14 @@ def validate_workflow_contracts(
     publish_step = _find_step_by_script(rel_steps, "gh release create")
     if publish_step is None:
         violations.append("release.yml:release: missing gh release create step")
+    ci_step = _find_step_by_script(
+        rel_steps,
+        'gh run list --workflow ci.yml --commit "$GITHUB_SHA" --event push --status success',
+    )
+    if ci_step is None or (
+        publish_step is not None and rel_steps.index(ci_step) > rel_steps.index(publish_step)
+    ):
+        violations.append("release.yml:release: missing CI success check before gh release create")
     if ancestor_step is None:
         violations.append("release.yml:release: missing origin/main ancestor verification step")
     else:
@@ -117,6 +125,17 @@ def test_mutation_removing_release_ancestor_check_or_publish_fails_guard() -> No
     assert (
         "release.yml:release: missing origin/main ancestor verification step"
         in validate_workflow_contracts(ci_data, mutated_anc)
+    )
+
+    mutated_ci_check = copy.deepcopy(release_data)
+    mutated_ci_check["jobs"]["release"]["steps"] = [
+        s
+        for s in mutated_ci_check["jobs"]["release"]["steps"]
+        if "gh run list" not in str(s.get("run", ""))
+    ]
+    assert (
+        "release.yml:release: missing CI success check before gh release create"
+        in validate_workflow_contracts(ci_data, mutated_ci_check)
     )
 
     mutated_pub = copy.deepcopy(release_data)
@@ -252,3 +271,25 @@ def test_contributing_documents_release_guards_and_usage_census() -> None:
     text = CONTRIBUTING_PATH.read_text(encoding="utf-8")
     assert 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main' in text
     assert "tools.sdk_usage_census" in text
+
+
+def test_release_ci_success_gate_script_behavior(tmp_path: Path) -> None:
+    steps = _load_yaml(RELEASE_WORKFLOW_PATH)["jobs"]["release"]["steps"]
+    step = _find_step_by_script(steps, "gh run list --workflow ci.yml")
+    assert step is not None, "release.yml: missing the CI success step"
+    fake_gh = tmp_path / "gh"
+
+    def run(body: str) -> int:
+        fake_gh.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+        fake_gh.chmod(0o755)
+        return subprocess.run(
+            ["bash", "-e", "-c", str(step["run"])],
+            env={**os.environ, "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}"},
+            capture_output=True,
+            check=False,
+        ).returncode
+
+    assert run("echo 1") == 0
+    assert run("echo 0") != 0
+    assert run("exit 0") != 0
+    assert run("exit 1") != 0

@@ -6,6 +6,10 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+- The release workflow builds and publishes only. It runs no lint, test or wheel smoke on the tag. It fails unless a `ci.yml` run on `main` passed for the tagged commit (#264).
+- `docs/app-integration-contract.md` states that `local.post` is a manual cell for a person (#264).
+- `README.md` and `CONTRIBUTING.md` name no full-suite or build command for local use (#264).
+
 ## 4.1.0 - 2026-11-21
 
 Minor release (wangzitian0/infra2#1823 N1). No public name leaves the package. infra2 supplies `DATABASE_URL` to the Canary Todo since infra2 `v3.1.132`.

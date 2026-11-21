@@ -40,3 +40,6 @@ def test_the_block_names_every_canonical_name_retired_name_and_app_cell() -> Non
         assert f"| `{entry['name']}` | `{entry['use']}` |" in block
     for cell_id, policy in CELL_POLICIES.items():
         assert (f"| `{cell_id}` |" in block) is (policy.owner == "app"), cell_id
+        manual = f"`{cell_id}` is a manual cell for a person. No rule tells an agent to run it."
+        assert (manual in block) is (policy.owner == "app" and policy.trigger == "manual"), cell_id
+    assert "`local.post` is a manual cell for a person." in block

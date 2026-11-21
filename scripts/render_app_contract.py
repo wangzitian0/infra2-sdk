@@ -21,7 +21,7 @@ from infra2_sdk.runtime.environment import shared_env_contract  # noqa: E402
 
 
 def render() -> str:
-    """Two tables: the shared environment names by group, and the cells that an app owns."""
+    """The shared environment names by group, the cells that an app owns, and its manual cells."""
     contract = shared_env_contract()
     lines = ["| Group | Canonical name | Sensitive | Owners |", "|---|---|---|---|"]
     for group, entries in contract["groups"].items():
@@ -42,6 +42,12 @@ def render() -> str:
         lines.append(
             f"| `{cell_id}` | {policy.trigger} | {policy.budget_seconds} | {check_list or '-'} |"
         )
+    for cell_id, policy in CELL_POLICIES.items():
+        if policy.owner == "app" and policy.trigger == "manual":
+            lines += [
+                "",
+                f"`{cell_id}` is a manual cell for a person. No rule tells an agent to run it.",
+            ]
     return "\n".join(lines) + "\n"
 
 
