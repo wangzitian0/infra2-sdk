@@ -8,6 +8,10 @@ backfill from the merged pull requests.
 
 ### Added
 
+- `runtime.schema_check`: the pre-deploy enum and data precondition check moved from infra2 `tools/pre_deploy_schema_check.py`. The application names its metadata (`EnumSchemaSpec` or `--metadata`, `--import`, `--requires-migration`, `--precondition`); the SDK keeps no table of applications and reads no environment variable (`--db-url` is explicit). The stdout lines `ROLLBACK_CLASS:`, `NEW_TABLE_COVERS:` and `APPLIED_MIGRATION:` keep their format ([#239](https://github.com/wangzitian0/infra2-sdk/issues/239)).
+
+### Added
+
 - `compile_compose(..., mode="preview")` applies each service `x-preview` block: `remove` drops the service, `database_url` points `DATABASE_URL` at one added `db` service (`PREVIEW_DB_IMAGE`, `postgres:16-alpine`) and `environment` sets `ENVIRONMENT=$ENV`; both overrides run after `/secrets/.env` is sourced. `mode="deploy"` (the default) drops the blocks ([#238](https://github.com/wangzitian0/infra2-sdk/issues/238)).
 - `compile_compose` expands a service `x-capabilities` block (`s3`, `openpanel`, `otel`, `browser_otel`) into the environment block that finance_report and truealpha carry today. A key that the service also sets with another value raises `ComposeCompileError` ([#238](https://github.com/wangzitian0/infra2-sdk/issues/238)).
 
