@@ -73,6 +73,7 @@
     "otel": "consumer: finance_report, truealpha",
     "postgres": "consumer: infra2, truealpha",
     "s3": "consumer: finance_report, infra2, truealpha",
+    "schema_check": "documented: README section Modules",
     "EnvironmentTier": "consumer: truealpha",
     "resolve_environment_tier": "consumer: finance_report, truealpha",
     "RuntimeEnvKey": "consumer: truealpha",
