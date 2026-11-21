@@ -6,6 +6,10 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+### Added
+
+- `compile_compose` expands a service `x-capabilities` block (`s3`, `openpanel`, `otel`, `browser_otel`) into the environment block that finance_report and truealpha carry today. A key that the service also sets with another value raises `ComposeCompileError` ([#238](https://github.com/wangzitian0/infra2-sdk/issues/238)).
+
 ## 3.35.1 - 2026-11-20
 
 ### Changed

@@ -64,7 +64,9 @@ def test_sdk_source_byte_budget() -> None:
     # until Release B (#236 Slice 4) and G4/K6 delete LlmClient and schema 2.
     # 383_000: the x-infra2 compose compiler of #238 slice 1 adds about 11 KB.
     # 387_000: the x-routes compiler of #238 slice 2 adds about 4.5 KB.
-    assert 150_000 <= total <= 387_000, f"src/infra2_sdk byte budget drifted: {total} B"
+    # 392_000: the x-capabilities blocks of #238 slice 3 add about 5 KB. 4.0.0 removes
+    # LlmClient and schema 2 (about 12 KB) and lowers this cap again.
+    assert 150_000 <= total <= 392_000, f"src/infra2_sdk byte budget drifted: {total} B"
 
 
 def test_init_service_multi_checks_and_manifest(monkeypatch: pytest.MonkeyPatch) -> None:

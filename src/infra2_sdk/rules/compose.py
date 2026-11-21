@@ -65,7 +65,7 @@ _XINFRA2_VAULT_KEYS = frozenset({"name"})
 _SERVICE_XVAULT_KEYS = frozenset({"max_wait_seconds"})
 # Later slices of infra2-sdk#238 own these service keys. A silent pass-through would
 # make Compose ignore them, so the compiler rejects them until that slice ships.
-_RESERVED_SERVICE_KEYS = frozenset({"x-capabilities", "x-preview"})
+_RESERVED_SERVICE_KEYS = frozenset({"x-preview"})
 _ROUTES_KEYS = frozenset({"service", "port", "routes"})
 _ROUTE_KEYS = frozenset({"name", "rule", "priority", "tls", "strip_prefix", "sso"})
 # Compose interpolates these in the labels on purpose, so the SDK does not escape them.
@@ -324,6 +324,107 @@ def _route_labels(spec: dict[str, Any], options: dict[str, Any], where: str) -> 
     spec["labels"] = [*existing, *labels]
 
 
+_COLLECTOR = "http://platform-signoz-otel-collector:4318"
+_CAPABILITY_KEYS: dict[str, frozenset[str]] = {
+    "s3": frozenset({"public"}),
+    "openpanel": frozenset({"script"}),
+    "otel": frozenset({"service_name", "service_name_var", "attributes_var", "export"}),
+    "browser_otel": frozenset(),
+}
+_ENV_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+
+
+def _flag(options: dict[str, Any], key: str, where: str) -> bool:
+    value = options.get(key, False)
+    if not isinstance(value, bool):
+        raise ComposeCompileError(f"{where}.{key} must be true or false")
+    return value
+
+
+def _env_name(options: dict[str, Any], key: str, default: str, where: str) -> str:
+    value = options.get(key, default)
+    if not isinstance(value, str) or not _ENV_NAME_RE.match(value):
+        raise ComposeCompileError(f"{where}.{key} must be an UPPER_CASE variable name")
+    return value
+
+
+def _capability_env(name: str, options: dict[str, Any], where: str) -> dict[str, str]:
+    """The environment block of one capability. Values keep `${...}` for Compose."""
+    if name == "s3":
+        env = {"S3_ENDPOINT": "http://platform-s3${ENV_SUFFIX}:9000"}
+        if _flag(options, "public", where):
+            env = {**env, "S3_PUBLIC_ENDPOINT": "https://s3${ENV_DOMAIN_SUFFIX}.${INTERNAL_DOMAIN}"}
+        return env
+    if name == "openpanel":
+        env = {
+            "OPENPANEL_CLIENT_ID": "${OPENPANEL_CLIENT_ID:-}",
+            "OPENPANEL_API_URL": "https://openpanel.${INTERNAL_DOMAIN}/api",
+            "OPENPANEL_ENVIRONMENT": "${OPENPANEL_ENVIRONMENT:-${ENV}}",
+        }
+        if _flag(options, "script", where):
+            env = {**env, "OPENPANEL_SCRIPT_URL": "https://openpanel.${INTERNAL_DOMAIN}/op1.js"}
+        return env
+    if name == "otel":
+        service_name = options.get("service_name", "")
+        if not isinstance(service_name, str):
+            raise ComposeCompileError(f"{where}.service_name must be a string")
+        name_var = _env_name(options, "service_name_var", "OTEL_SERVICE_NAME", where)
+        attrs_var = _env_name(options, "attributes_var", "OTEL_RESOURCE_ATTRIBUTES", where)
+        export = options.get("export", "always")
+        if export == "always":
+            endpoint = _COLLECTOR
+        elif export == "when_issued":
+            # Export turns on only when the deploy issued the identity (#1431).
+            endpoint = f"${{{attrs_var}:+{_COLLECTOR}}}"
+        else:
+            raise ComposeCompileError(f"{where}.export must be 'always' or 'when_issued'")
+        return {
+            "OTEL_EXPORTER_OTLP_ENDPOINT": endpoint,
+            "OTEL_SERVICE_NAME": f"${{{name_var}:-{service_name}}}",
+            "OTEL_RESOURCE_ATTRIBUTES": f"${{{attrs_var}:-}}",
+        }
+    return {
+        "NEXT_PUBLIC_OTEL_EXPORTER_OTLP_ENDPOINT": "${NEXT_PUBLIC_OTEL_EXPORTER_OTLP_ENDPOINT:-}",
+        "NEXT_PUBLIC_DEPLOYMENT_ENVIRONMENT": "${ENV}",
+        "NEXT_PUBLIC_GIT_SHA": "${GIT_COMMIT_SHA:-unknown}",
+    }
+
+
+def _apply_capabilities(spec: dict[str, Any], capabilities: object, where: str) -> None:
+    """Merge the environment blocks of `x-capabilities` into the service environment.
+
+    `x-capabilities` is a list of names or a mapping of name to options. A key that the
+    service also sets with another value raises: one fact has one source.
+    """
+    where = f"{where}.x-capabilities"
+    if isinstance(capabilities, list):
+        if not all(isinstance(item, str) for item in capabilities):
+            raise ComposeCompileError(f"{where}: a list holds capability names only")
+        if len(set(capabilities)) != len(capabilities):
+            raise ComposeCompileError(f"{where}: a capability is listed twice")
+        capabilities = {item: {} for item in capabilities}
+    blocks = _require_mapping(capabilities, where)
+    if not blocks:
+        raise ComposeCompileError(f"{where} must name at least one capability")
+    environment = spec.setdefault("environment", {})
+    if not isinstance(environment, dict):
+        raise ComposeCompileError(f"{where}: `environment` must be a mapping")
+    for name, options in blocks.items():
+        if name not in _CAPABILITY_KEYS:
+            raise ComposeCompileError(
+                f"{where}: unknown capability {name!r}; known: {sorted(_CAPABILITY_KEYS)}"
+            )
+        options = {} if options is None else _require_mapping(options, f"{where}.{name}")
+        _reject_unknown(options, _CAPABILITY_KEYS[name], f"{where}.{name}")
+        for key, value in _capability_env(name, options, f"{where}.{name}").items():
+            if key in environment and str(environment[key]) != value:
+                raise ComposeCompileError(
+                    f"{where}.{name}: environment {key} is set by the service and by the "
+                    "capability; remove one"
+                )
+            environment[key] = value
+
+
 def _apply_service_defaults(spec: dict[str, Any]) -> None:
     spec.setdefault("restart", "always")
     spec.setdefault(
@@ -368,6 +469,9 @@ def _compile_mapping(source: Mapping[str, Any], vault_template: str | None) -> d
         routes = spec.pop("x-routes", None)
         if routes is not None:
             _route_labels(spec, _require_mapping(routes, f"{where}.x-routes"), where)
+        capabilities = spec.pop("x-capabilities", None)
+        if capabilities is not None:
+            _apply_capabilities(spec, capabilities, where)
         out_services[svc_name] = spec
     for spec in out_services.values():
         _apply_service_defaults(spec)
@@ -406,9 +510,10 @@ def compile_compose(source: str | Mapping[str, Any], *, vault_template: str | No
 
     The function is pure: it does no file, network, or environment access, and it returns
     the same bytes for the same input. It applies the baseline service defaults and expands
-    `x-vault` into one inline `vault-agent` sidecar and `x-routes` into Traefik labels.
+    `x-vault` into one inline `vault-agent` sidecar, `x-routes` into Traefik labels and
+    `x-capabilities` (`s3`, `openpanel`, `otel`, `browser_otel`) into environment blocks.
     `vault_template` holds the rendered Vault Agent template text. Any unknown `x-infra2`,
-    `x-vault` or `x-routes` key raises `ComposeCompileError`.
+    `x-vault`, `x-routes` or capability key raises `ComposeCompileError`.
     """
     if isinstance(source, str):
         yaml = _yaml()
