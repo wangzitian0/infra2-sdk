@@ -97,7 +97,7 @@ CANARY_DEPENDENCY_MANIFEST = DependencyManifest(
             "postgres",
             DependencyKind.CODE_DOMINANT,
             _HOSTED_TIERS,
-            frozenset({"CANARY_POSTGRES_USER", "CANARY_POSTGRES_PASSWORD"}),
+            frozenset({"DATABASE_URL"}),
         ),
         Dependency(
             "redis",
@@ -156,30 +156,40 @@ def _row_to_todo(row: tuple[Any, ...]) -> dict[str, Any]:
     }
 
 
+def _database_target() -> tuple[str, int, str, str, str]:
+    """Return host, port, user, password and database name from `DATABASE_URL`.
+
+    The todo store and the Postgres probe use this one login. An unset or
+    malformed `DATABASE_URL` gives empty strings: each caller reports it.
+    """
+    raw = os.environ.get("DATABASE_URL", "").strip()
+    if not raw:
+        return "", 5432, "", "", "postgres"
+    try:
+        parts = urllib.parse.urlsplit(raw)
+        port = parts.port or 5432
+    except ValueError:
+        return "", 5432, "", "", "postgres"
+    if parts.scheme.split("+", 1)[0] not in {"postgresql", "postgres"}:
+        return "", 5432, "", "", "postgres"
+    return (
+        parts.hostname or "",
+        port,
+        urllib.parse.unquote(parts.username or ""),
+        urllib.parse.unquote(parts.password or ""),
+        urllib.parse.unquote(parts.path.lstrip("/")) or "postgres",
+    )
+
+
 def _connect_todo_db():
-    host = os.environ.get("POSTGRES_HOST", "").strip()
-    port_raw = os.environ.get("POSTGRES_PORT", "5432").strip() or "5432"
-    user = os.environ.get("TODO_POSTGRES_USER", "").strip()
-    password = os.environ.get("TODO_POSTGRES_PASSWORD", "").strip()
-    dbname = os.environ.get("TODO_POSTGRES_DATABASE", "postgres").strip() or "postgres"
-    missing = [
-        name
-        for name, val in (
-            ("POSTGRES_HOST", host),
-            ("TODO_POSTGRES_USER", user),
-            ("TODO_POSTGRES_PASSWORD", password),
-        )
-        if not val
-    ]
-    if missing:
-        raise _TodoStoreUnavailable(
-            f"Missing PostgreSQL todo storage configuration: {', '.join(missing)}"
-        )
+    host, port, user, password, dbname = _database_target()
+    if not (host and user and password):
+        raise _TodoStoreUnavailable("Missing PostgreSQL todo storage configuration: DATABASE_URL")
     import psycopg
 
     return psycopg.connect(
         host=host,
-        port=int(port_raw),
+        port=port,
         user=user,
         password=password,
         dbname=dbname,
@@ -441,7 +451,7 @@ def _probe_postgres(
     connector: Callable[..., Any] | None = None,
     verify_write: bool = True,
 ) -> dict[str, Any]:
-    """Log in as the dedicated canary role. Set the transaction read-write, run `SELECT 1`, then a temp-table write/read/delete roundtrip.
+    """Log in with the `DATABASE_URL` login. Set the transaction read-write, run `SELECT 1`, then a temp-table write/read/delete roundtrip.
 
     A server that answers the login with an ErrorResponse (`E`), such as "too many
     clients", fails the check. The password never appears in the detail: the SDK
@@ -451,7 +461,7 @@ def _probe_postgres(
     if not (user and password):
         return _unconfigured(
             start,
-            "CANARY_POSTGRES_USER and CANARY_POSTGRES_PASSWORD are not configured",
+            "DATABASE_URL is not configured",
         )
     try:
         from infra2_sdk.runtime.postgres import (
@@ -907,11 +917,7 @@ def _run_checks(
 def run_all_checks() -> dict[str, Any]:
     """Run the real probes against the platform's infrastructure capabilities."""
     suffix = os.environ.get("ENV_SUFFIX", "")
-    pg_host = os.environ.get("POSTGRES_HOST", f"platform-postgres{suffix}")
-    pg_port = int(os.environ.get("POSTGRES_PORT", "5432"))
-    pg_user = os.environ.get("CANARY_POSTGRES_USER", "")
-    pg_password = os.environ.get("CANARY_POSTGRES_PASSWORD", "")
-    pg_database = os.environ.get("CANARY_POSTGRES_DATABASE", "postgres")
+    pg_host, pg_port, pg_user, pg_password, pg_database = _database_target()
     redis_host = os.environ.get("REDIS_HOST", f"platform-redis{suffix}")
     redis_port = int(os.environ.get("REDIS_PORT", "6379"))
     redis_password = os.environ.get("REDIS_PASSWORD") or None

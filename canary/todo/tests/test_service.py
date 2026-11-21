@@ -511,21 +511,15 @@ def test_todo_db_unavailable_fails_closed_with_503(monkeypatch) -> None:
     """Missing DB credentials or psycopg OperationalError returns HTTP 503."""
     todo_mod = load_todo_module("todo_app_503")
     client = TestClient(todo_mod.fastapi_app, raise_server_exceptions=False)
-    for key in (
-        "POSTGRES_HOST",
-        "TODO_POSTGRES_USER",
-        "TODO_POSTGRES_PASSWORD",
-        "TODO_POSTGRES_DATABASE",
-    ):
-        monkeypatch.delenv(key, raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     res_unconfigured = client.get("/api/todos")
     assert res_unconfigured.status_code == 503
     assert "error" in res_unconfigured.json()
 
-    monkeypatch.setenv("POSTGRES_HOST", "platform-postgres")
-    monkeypatch.setenv("TODO_POSTGRES_USER", "todo_app")
-    monkeypatch.setenv("TODO_POSTGRES_PASSWORD", "test_todo_pg_pass_1234")
-    monkeypatch.setenv("TODO_POSTGRES_DATABASE", "postgres")
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql://todo_app:test_todo_pg_pass_1234@platform-postgres:5432/postgres",
+    )
 
     def _boom(*args, **kwargs):
         raise psycopg.OperationalError("connection refused")
@@ -546,3 +540,48 @@ def test_health_reports_the_installed_sdk_version(monkeypatch) -> None:
         assert client.get("/api/health").json()["sdk_version"] == version("infra2-sdk")
         monkeypatch.setattr(todo_mod, "_installed_sdk_version", lambda: "0.0.0")
         assert client.get("/api/health").json()["sdk_version"] == "0.0.0"
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        (
+            "postgresql://todo_app:p%40ss%2Fword@db.internal:6543/todo%20db",
+            ("db.internal", 6543, "todo_app", "p@ss/word", "todo db"),
+        ),
+        ("postgresql+psycopg://u:p@h/d", ("h", 5432, "u", "p", "d")),
+        ("postgres://u:p@h", ("h", 5432, "u", "p", "postgres")),
+        ("", ("", 5432, "", "", "postgres")),
+        ("mysql://u:p@h/d", ("", 5432, "", "", "postgres")),
+        ("postgresql://u:p@h:notaport/d", ("", 5432, "", "", "postgres")),
+    ],
+)
+def test_database_target_reads_only_database_url(monkeypatch, url, expected) -> None:
+    todo_mod = load_todo_module("todo_app_database_target")
+    for retired in ("POSTGRES_HOST", "TODO_POSTGRES_USER", "CANARY_POSTGRES_USER"):
+        monkeypatch.setenv(retired, "retired-name-must-not-be-read")
+    monkeypatch.setenv("DATABASE_URL", url)
+    assert todo_mod._database_target() == expected
+
+
+def test_todo_store_connects_with_the_database_url_login(monkeypatch) -> None:
+    todo_mod = load_todo_module("todo_app_database_connect")
+    seen: dict = {}
+
+    def _connect(**kwargs):
+        seen.update(kwargs)
+        raise psycopg.OperationalError("stop after capture")
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://todo_app:s3cret%21@db.internal:6543/todos")
+    monkeypatch.setattr(psycopg, "connect", _connect)
+    with pytest.raises(psycopg.OperationalError):
+        todo_mod._connect_todo_db()
+    assert seen == {
+        "host": "db.internal",
+        "port": 6543,
+        "user": "todo_app",
+        "password": "s3cret!",
+        "dbname": "todos",
+        "connect_timeout": 5,
+        "options": "-c statement_timeout=5000",
+    }

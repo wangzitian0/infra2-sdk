@@ -26,6 +26,7 @@ from infra2_sdk.runtime.config_schema import (
     _validate_env,
     environment_manifest_from_model,
 )
+from infra2_sdk.runtime.environment import check_shared_env_conformance
 
 CURRENT_HOOKS_SCHEMA_VERSION = 3
 SUPPORTED_HOOKS_SCHEMA_VERSIONS = (3,)
@@ -1011,6 +1012,8 @@ def check(
     ]
     for path, mf in all_manifests(root=root, specs=specs, hand_written=hand_written).items():
         problems.extend(f"{path}: {err}" for err in validate_manifest_offline(mf))
+        names = [name for fld in mf.fields for name in (fld.env, *fld.aliases)]
+        problems.extend(f"{path}: {err}" for err in check_shared_env_conformance(names))
     return problems
 
 

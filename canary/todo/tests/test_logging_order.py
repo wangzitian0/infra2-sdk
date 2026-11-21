@@ -77,9 +77,8 @@ def _run_probe(app_path: Path) -> tuple[dict, str]:
         "deployment.environment.name=staging,infra.service.id=platform/todo,"
         f"service.version={'a' * 40},infra.iac.ref={'a' * 40}"
     )
-    env["ENV"] = "staging"
-    env["CANARY_POSTGRES_PASSWORD"] = "canary_test_password_0123456789"
-    env["TODO_POSTGRES_PASSWORD"] = "todo_test_password_0123456789"
+    env["ENVIRONMENT"] = "staging"
+    env["DATABASE_URL"] = "postgresql://todo_app:todo_test_password_0123456789@127.0.0.1:1/postgres"
     env["PORT"] = "8000"
     result = subprocess.run(
         [sys.executable, "-c", _PROBE_SCRIPT, str(app_path)],

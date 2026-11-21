@@ -177,10 +177,9 @@ class FakeTodoPgStore:
 
 def wire_fake_todo_pg(monkeypatch, store: FakeTodoPgStore | None = None) -> FakeTodoPgStore:
     pg_store = store or FakeTodoPgStore()
-    monkeypatch.setenv("POSTGRES_HOST", "platform-postgres")
-    monkeypatch.setenv("POSTGRES_PORT", "5432")
-    monkeypatch.setenv("TODO_POSTGRES_USER", "todo_app")
-    monkeypatch.setenv("TODO_POSTGRES_PASSWORD", "test_todo_pg_pass_1234")
-    monkeypatch.setenv("TODO_POSTGRES_DATABASE", "postgres")
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql://todo_app:test_todo_pg_pass_1234@platform-postgres:5432/postgres",
+    )
     monkeypatch.setattr(psycopg, "connect", pg_store.connect)
     return pg_store
