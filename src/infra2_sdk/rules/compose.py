@@ -203,6 +203,8 @@ def _vault_sidecar(name: str, template: str) -> dict[str, Any]:
             "VAULT_ROLE_ID": "${VAULT_ROLE_ID:-}",
             "VAULT_SECRET_ID": "${VAULT_SECRET_ID:-}",
             "ENV": "${ENV}",
+            # A template reads it with `env "ENV_SUFFIX"`, for example to build DATABASE_URL.
+            "ENV_SUFFIX": "${ENV_SUFFIX:-}",
             _SHA_KEY: _SHA_REF,
             "VAULT_AGENT_HCL": _dollar(_VAULT_AGENT_HCL),
             "VAULT_SECRETS_TEMPLATE": _dollar(template),

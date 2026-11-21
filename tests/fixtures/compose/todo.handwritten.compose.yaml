@@ -1,4 +1,4 @@
-# Source: wangzitian0/infra2@4dd5ed29 platform/30.todo/compose.yaml (verbatim after this line)
+# Source: wangzitian0/infra2@e276d9a7 platform/30.todo/compose.yaml (verbatim after this line)
 services:
   vault-agent:
     init: true  # tini as PID1 reaps healthcheck ssl_client zombies
@@ -34,6 +34,8 @@ services:
       VAULT_ROLE_ID: ${VAULT_ROLE_ID:-}
       VAULT_SECRET_ID: ${VAULT_SECRET_ID:-}
       ENV: ${ENV}
+      # secrets.ctmpl reads it to compose DATABASE_URL.
+      ENV_SUFFIX: ${ENV_SUFFIX:-}
       CONFIGURATION_SHA256: ${CONFIGURATION_SHA256:-}
     healthcheck:
       test:
@@ -62,17 +64,17 @@ services:
       - dokploy-network
 
   todo:
-    build:
-      context: ../..
-      dockerfile: platform/30.todo/Dockerfile
-    image: platform-todo:${CONFIGURATION_SHA256:-}
+    # Built and published by infra2-sdk release.yml from canary/todo at the same tag, so the
+    # tag is the SDK version the Canary proves (infra2-sdk#247). common/deploy/canary_pin.py
+    # is the one reader of this line.
+    image: ghcr.io/wangzitian0/infra2-canary-todo:v4.1.0@sha256:0686a555ca8ab190098de6edfb1c8d5f006c84b9f2cedc81b2cb2966c5e51e3e
     container_name: platform-todo${ENV_SUFFIX}
     restart: always
     mem_limit: 256m
     cpu_shares: 512
     depends_on:
       - vault-agent
-    # The Redis password, the Postgres canary password and the S3 canary key come from the
+    # The Redis password, DATABASE_URL and the S3 canary key come from the
     # vault-agent's rendered file. They are never compose env, so Dokploy never stores them.
     entrypoint:
       - sh
@@ -100,14 +102,6 @@ services:
       CONFIGURATION_SHA256: ${CONFIGURATION_SHA256:-}
       INTERNAL_DOMAIN: ${INTERNAL_DOMAIN:-zitian.party}
       ENV_SUFFIX: ${ENV_SUFFIX:-}
-      POSTGRES_HOST: platform-postgres${ENV_SUFFIX}
-      POSTGRES_PORT: "5432"
-      # Dedicated read-only role. TodoDeployer.CANARY_PG_ROLE creates it on every sync.
-      CANARY_POSTGRES_USER: canary_ro
-      CANARY_POSTGRES_DATABASE: postgres
-      # Dedicated todos persistence role. TodoDeployer.TODO_PG_ROLE creates it with todos DML grants.
-      TODO_POSTGRES_USER: todo_app
-      TODO_POSTGRES_DATABASE: postgres
       REDIS_HOST: platform-redis${ENV_SUFFIX}
       REDIS_PORT: "6379"
       S3_ENDPOINT: http://platform-s3${ENV_SUFFIX}:9000

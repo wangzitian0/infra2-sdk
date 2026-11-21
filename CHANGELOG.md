@@ -9,6 +9,7 @@ backfill from the merged pull requests.
 - The release workflow builds and publishes only. It runs no lint, test or wheel smoke on the tag. It fails unless a `ci.yml` run on `main` passed for the tagged commit (#264).
 - `docs/app-integration-contract.md` states that `local.post` is a manual cell for a person (#264).
 - `README.md` and `CONTRIBUTING.md` name no full-suite or build command for local use (#264).
+- `compile_compose` gives the `x-vault` sidecar `ENV_SUFFIX: ${ENV_SUFFIX:-}`, as the hand-written infra2 sidecars have. infra2 `platform/30.todo/secrets.ctmpl` reads it to build `DATABASE_URL` (#238).
 
 ## 4.1.0 - 2026-11-21
 

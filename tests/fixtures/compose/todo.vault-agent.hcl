@@ -1,4 +1,4 @@
-# Source: wangzitian0/infra2@4dd5ed29 platform/30.todo/vault-agent.hcl (verbatim after this line)
+# Source: wangzitian0/infra2@e276d9a7 platform/30.todo/vault-agent.hcl (verbatim after this line)
 vault {
   # VAULT_ADDR is set via container environment variable
   # vault-agent CLI automatically uses VAULT_ADDR env var when address is not specified
