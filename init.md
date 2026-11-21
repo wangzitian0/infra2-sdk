@@ -29,7 +29,7 @@ Across the issues and releases since `v0.1.0`, consumer requirements and defect 
 ### P2 — One Source per Fact and the Manifest v2 Supply Chain (`#16`, `#38`, `#115`, `#137`)
 
 - Every environment variable in an application manifest (`EnvironmentManifest`) declares one `source` class (`bootstrap`, `human`, `runtime`, `release`, `decision`, `code`). The source class defines who produces the value, where truth lives, and how the value reaches the container (`#16`, `#38`).
-- Shared cross-repository mechanisms (the modules in §2) live in `infra2-sdk` (`v3.7.0`, `#115`). Extracting these modules from `infra2` and consumer applications ensures that all repositories share one tested implementation.
+- Shared cross-repository mechanisms (the modules in §2) live in `infra2-sdk`. The first set moved here in `v3.7.0` (`#115`). Extracting these modules from `infra2` and consumer applications ensures that all repositories share one tested implementation.
 - `LlmSettings` (`src/infra2_sdk/runtime/llm.py`, `#137`, `#236`) owns default models and reasoning efforts across three capability roles (`large`, `small`, `multimodal`). Consumer applications map per-role environment overrides (`LLM_LARGE_MODEL`, `LLM_SMALL_MODEL`, `LLM_MULTIMODAL_MODEL`) onto this single contract.
 
 ### P3 — 100% Consumer-Reachable Public Surface (`#102`, `#108`, `#121`, `#126`)
