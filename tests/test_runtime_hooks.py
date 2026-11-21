@@ -1498,3 +1498,66 @@ def test_check_timeout_detail_reports_check_timeout_vs_cell_budget(tmp_path: Pat
     assert "check timeout 10s" in res.checks[0].detail
     assert "10s" in res.summary
     assert res.checks[1].ok is True
+
+
+def test_cli_run_cell_runs_a_schema_3_cell_without_leaking_ambient_secrets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CLI end to end (review of #261): --run-cell executes the cell in a subprocess,
+    the ambient INFRA2_PAT does not reach the check, and the result file is written."""
+    manifest_path = tmp_path / "runtime-hooks.manifest.json"
+    raw = {
+        "schema_version": 3,
+        "service": "truealpha/app",
+        "checks": [
+            {
+                "id": "preview_gate",
+                "argv": [
+                    "sh",
+                    "-c",
+                    'test "$APP_URL" = "http://127.0.0.1:8000" && test -z "$INFRA2_PAT"',
+                ],
+                "needs": ["running_service"],
+                "writes": False,
+                "accepts_scale": False,
+                "timeout_seconds": 30,
+            }
+        ],
+    }
+    manifest_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+    monkeypatch.setenv("INFRA2_PAT", "must-not-leak-into-hook")
+    result_rel = ".artifacts/preview-post.json"
+    out: list[str] = []
+    args = [
+        "--run-cell",
+        "preview.post",
+        "--hooks-manifest",
+        "runtime-hooks.manifest.json",
+        "--app-url",
+        "http://127.0.0.1:8000",
+        "--env",
+        "preview",
+        "--version-ref",
+        "deadbeef",
+        "--result-file",
+        result_rel,
+    ]
+    rc = main(args, root=tmp_path, echo=out.append)
+    payload = json.loads(out[-1])
+    assert rc == 0, payload
+    assert payload["status"] == "pass"
+    assert payload["service"] == "truealpha/app"
+    assert payload["cell"] == "preview.post"
+    assert payload["version_ref"] == "deadbeef"
+    assert (tmp_path / result_rel).is_file()
+
+    out.clear()
+    assert (
+        main(
+            args[:2] + ["--hooks-manifest", "runtime-hooks.manifest.json"],
+            root=tmp_path,
+            echo=out.append,
+        )
+        == 2
+    )
+    assert out == ["--run-cell requires --app-url"]

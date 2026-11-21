@@ -1041,7 +1041,7 @@ def main(
     m = p.add_mutually_exclusive_group(required=True)
     for flag in ("--write", "--check"):
         m.add_argument(flag, action="store_true")
-    for flag in ("--validate-env", "--check-hooks"):
+    for flag in ("--validate-env", "--check-hooks", "--run-cell"):
         m.add_argument(flag)
     p.add_argument("--no-require-injected", action="store_true")
     p.add_argument("--hooks-manifest", default="runtime-hooks.manifest.json")
@@ -1069,6 +1069,31 @@ def main(
         detail = f"{hm.service}, v{hm.schema_version}, {len(hm.checks)} checks"
         echo(f"runtime hooks manifest: ok ({detail})")
         return 0
+    if a.run_cell:
+        if not a.app_url.strip():
+            echo("--run-cell requires --app-url")
+            return 2
+        try:
+            hm = load_hooks_manifest(a.hooks_manifest, root=r)
+        except (OSError, ValueError) as err:
+            echo(f"{a.hooks_manifest}: {err}")
+            return 2
+        rp = (c if (c := Path(a.result_file)).is_absolute() else r / c) if a.result_file else None
+        try:
+            res = run_cell(
+                hm,
+                a.run_cell,
+                app_url=a.app_url,
+                environment=a.environment,
+                version_ref=a.version_ref,
+                cwd=r,
+                result_path=rp,
+            )
+        except ValueError as err:
+            echo(f"--run-cell {a.run_cell}: {err}")
+            return 2
+        echo(json.dumps(res.to_dict(), ensure_ascii=False))
+        return 0 if res.status == "pass" else (res.exit_code or 1)
     missing = _validate_env(a.validate_env, root=r, require_injected=not a.no_require_injected)
     for name in missing:
         echo(f"missing: {name}")
