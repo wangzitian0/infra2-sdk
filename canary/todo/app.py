@@ -3,7 +3,7 @@
 
 Serves todo.zitian.party as the acceptance and verification tool for the platform's
 real runtime paths:
-- Postgres: login as role `canary_ro`, then `SET LOCAL transaction_read_only = off`, `SELECT 1`,
+- Postgres: login with `DATABASE_URL`, then `SET LOCAL transaction_read_only = off`, `SELECT 1`,
   and a temporary-table `canary_todo_probe` `CREATE`/`INSERT`/`SELECT`/`DELETE` roundtrip
 - Redis: AUTH, then SETEX/GET/DEL of a random value
 - S3: PUT, GET and DELETE of one object under a canary prefix
@@ -129,6 +129,22 @@ _STATUS_LOCK = threading.Lock()
 _STATUS_CACHE: tuple[float, dict[str, Any]] | None = None
 
 
+try:
+    from canary_settings import CanarySettings
+    from ui import HTML_TEMPLATE
+except ImportError:
+    _todo_dir = str(Path(__file__).resolve().parent)
+    if _todo_dir not in sys.path:
+        sys.path.insert(0, _todo_dir)
+    from canary_settings import CanarySettings
+    from ui import HTML_TEMPLATE
+
+
+def _settings() -> CanarySettings:
+    """The one reader of the process environment in this module (read at each call)."""
+    return CanarySettings.from_environ(os.environ)
+
+
 class _TodoStoreUnavailable(RuntimeError):
     """Raised when persistent PostgreSQL storage for todos is not configured."""
 
@@ -170,7 +186,8 @@ def _database_target() -> tuple[str, int, str, str, str]:
     parts are read: query parameters are ignored. Raise `ValueError` with a
     message that has no part of the value when the URL is unset or malformed.
     """
-    raw = os.environ.get("DATABASE_URL", "").strip()
+    # One field only: a malformed REDIS_PORT is not a database fault.
+    raw = CanarySettings.read(os.environ, "database_url").strip()
     if not raw:
         raise ValueError(_DATABASE_URL_UNSET)
     try:
@@ -419,16 +436,6 @@ for _model in (
 ):
     _model.model_rebuild(_types_namespace=globals())
 
-try:
-    from ui import HTML_TEMPLATE
-except ImportError:
-    from pathlib import Path
-
-    _todo_dir = str(Path(__file__).resolve().parent)
-    if _todo_dir not in sys.path:
-        sys.path.insert(0, _todo_dir)
-    from ui import HTML_TEMPLATE
-
 
 class _ProbeFailure(Exception):
     """A check failed for a stated reason. The message is safe to publish."""
@@ -644,6 +651,8 @@ def _probe_redis(
     stale key from the previous run passing a broken write.
     """
     start = time.perf_counter()
+    if not host:
+        return _unconfigured(start, "REDIS_HOST is not configured")
     if not password:
         return _unconfigured(
             start,
@@ -927,31 +936,24 @@ def _run_checks(
 
 def run_all_checks() -> dict[str, Any]:
     """Run the real probes against the platform's infrastructure capabilities."""
-    suffix = os.environ.get("ENV_SUFFIX", "")
+    cfg = _settings()
     pg_problem = ""
     pg_host, pg_port, pg_user, pg_password, pg_database = "", 5432, "", "", "postgres"
     try:
         pg_host, pg_port, pg_user, pg_password, pg_database = _database_target()
     except ValueError as exc:
         pg_problem = str(exc)
-    redis_host = os.environ.get("REDIS_HOST", f"platform-redis{suffix}")
-    redis_port = int(os.environ.get("REDIS_PORT", "6379"))
-    redis_password = os.environ.get("REDIS_PASSWORD") or None
-    s3_endpoint = os.environ.get("S3_ENDPOINT") or f"http://platform-s3{suffix}:9000"
-    s3_bucket = os.environ.get("S3_BUCKET", "")
-    s3_access_key = os.environ.get("S3_ACCESS_KEY", "")
-    s3_secret_key = os.environ.get("S3_SECRET_KEY", "")
-    signoz_url = os.environ.get(
-        "SIGNOZ_OTEL_COLLECTOR", "http://platform-signoz-otel-collector:13133"
-    )
-    openpanel_url = os.environ.get(
-        "OPENPANEL_API_URL", "http://platform-openpanel-api:3000/healthcheck"
-    )
-    authentik_url = os.environ.get(
-        "AUTHENTIK_ENDPOINT", "http://platform-authentik-server:9000/-/health/live/"
-    )
+    redis_host, redis_port = cfg.redis_host, cfg.redis_port
+    redis_password = cfg.redis_password or None
+    s3_endpoint, s3_bucket = cfg.s3_endpoint, cfg.s3_bucket
+    s3_access_key, s3_secret_key = cfg.s3_access_key, cfg.s3_secret_key
+    signoz_url = cfg.signoz_otel_collector
+    openpanel_url = cfg.openpanel_api_url
+    authentik_url = cfg.authentik_endpoint
 
-    def _http_entry(url: str) -> Callable[[], Any]:
+    def _http_entry(name: str, url: str) -> Callable[[], Any]:
+        if not url:
+            return lambda: _unconfigured(time.perf_counter(), f"{name} is not configured")
         if _probe_http is _DEFAULT_PROBE_HTTP:
 
             async def _run_http() -> dict[str, Any]:
@@ -975,9 +977,9 @@ def run_all_checks() -> dict[str, Any]:
             access_key=s3_access_key,
             secret_key=s3_secret_key,
         ),
-        "signoz": _http_entry(signoz_url),
-        "openpanel": _http_entry(openpanel_url),
-        "authentik": _http_entry(authentik_url),
+        "signoz": _http_entry("SIGNOZ_OTEL_COLLECTOR", signoz_url),
+        "openpanel": _http_entry("OPENPANEL_API_URL", openpanel_url),
+        "authentik": _http_entry("AUTHENTIK_ENDPOINT", authentik_url),
     }
     with _span("canary.run") as run_span:
         results = _run_checks(plan)
@@ -1550,7 +1552,7 @@ def validate_startup_environment(environ: Mapping[str, str] | None = None) -> No
 
 def main() -> None:
     validate_startup_environment()
-    port = int(os.environ.get("PORT", "8000"))
+    port = _settings().port
     LOGGER.info("Canary Todo service starting on port %d with FastAPI and infra2_sdk", port)
     signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
     import uvicorn

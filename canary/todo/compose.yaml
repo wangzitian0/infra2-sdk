@@ -1,0 +1,101 @@
+# Canary Todo without a platform: the app, Postgres, Redis and an S3 store on one network.
+# It proves that the app needs only the variables of env.manifest.json (canary_settings.py).
+# Every value here is a local test value. Build context: the infra2-sdk repository root.
+#
+#   docker compose -f canary/todo/compose.yaml up --build --wait
+#   curl -f http://127.0.0.1:8000/api/canary/status
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: todo
+      POSTGRES_PASSWORD: local-test-postgres
+      POSTGRES_DB: todo
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U todo -d todo"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--requirepass", "local-test-redis"]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a local-test-redis --no-auth-warning ping | grep -q PONG"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  s3:
+    image: rustfs/rustfs:1.0.0
+    command: ["--address", ":9000", "/data"]
+    environment:
+      RUSTFS_CONSOLE_ENABLE: "false"
+      RUSTFS_HEALTH_ENDPOINT_ENABLE: "true"
+      RUSTFS_ACCESS_KEY: local-test-s3
+      RUSTFS_SECRET_KEY: local-test-s3-secret
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:9000/minio/health/live"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  s3-init:
+    # One shot: create the bucket with the S3 client of the app image, then exit.
+    build:
+      context: ../..
+      dockerfile: canary/todo/Dockerfile
+    image: infra2-canary-todo:local
+    pull_policy: build
+    depends_on:
+      s3:
+        condition: service_healthy
+    restart: "no"
+    environment: &s3
+      S3_ENDPOINT: http://s3:9000
+      S3_BUCKET: canary
+      S3_ACCESS_KEY: local-test-s3
+      S3_SECRET_KEY: local-test-s3-secret
+    command:
+      - python
+      - -c
+      - |
+        import os, boto3
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=os.environ["S3_ENDPOINT"],
+            aws_access_key_id=os.environ["S3_ACCESS_KEY"],
+            aws_secret_access_key=os.environ["S3_SECRET_KEY"],
+            region_name="us-east-1",
+        )
+        s3.create_bucket(Bucket=os.environ["S3_BUCKET"])
+
+  todo:
+    # The image that s3-init builds.
+    image: infra2-canary-todo:local
+    pull_policy: never
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      s3-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *s3
+      DATABASE_URL: postgresql://todo:local-test-postgres@postgres:5432/todo
+      REDIS_HOST: redis
+      REDIS_PASSWORD: local-test-redis
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"
+      interval: 3s
+      timeout: 5s
+      retries: 20

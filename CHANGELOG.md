@@ -6,6 +6,12 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+### Changed
+
+- Canary Todo runs without a platform (wangzitian0/infra2#1823 N2). `canary/todo/canary_settings.py` is the one reader of the process environment and generates `canary/todo/env.manifest.json`. `canary/todo/compose.yaml` starts the app with Postgres, Redis and an S3 store; CI requires a green verdict from it (`scripts/check_canary_standalone.sh`).
+- Canary Todo has no default host. Without `REDIS_HOST`, `S3_ENDPOINT`, `SIGNOZ_OTEL_COLLECTOR`, `OPENPANEL_API_URL` or `AUTHENTIK_ENDPOINT` the check of that address is `unconfigured`. Before, each defaulted to an infra2 host. A deployment of the Canary image must supply each address; infra2 `platform/30.todo/compose.yaml` supplies all five.
+- The Canary manifest drops `ENV_SUFFIX` and `INTERNAL_DOMAIN` (no reader) and the binding `provided_by: platform/redis:password` (a platform fact, not an app fact).
+
 ## 4.2.0 - 2026-11-22
 
 Minor release (wangzitian0/infra2#1822). The `x-vault` sidecar that `compile_compose` injects gains one environment key, `ENV_SUFFIX`. No public name changes.
