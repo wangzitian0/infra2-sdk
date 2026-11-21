@@ -6,6 +6,8 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+- `init.md` links to the one definition of the code layers (infra2 `docs/ssot/core.harness.md` §5.3) and drops its hand-copied module list and stale release count (wangzitian0/infra2#1823 Step 4.1).
+
 ## 4.3.0 - 2026-11-22
 
 Minor release (wangzitian0/infra2#1823 N2). The Canary Todo runs without a platform and has no default host; a store-backed field may compose from its own `store_key`. No public name changes.

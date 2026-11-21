@@ -6,6 +6,8 @@
 
 `infra2-sdk` is not an `infra2` client, not a deployment orchestrator, and not an application domain library. The SDK owns environment vocabularies, manifest schemas, release reference resolution, secret-store adapters, and thin protocol clients. `infra2` owns infrastructure orchestration, Docker Compose execution, Dokploy, host operations, and deployment schedules. Consumer applications own business logic, SQL schemas, object storage keys, and domain configuration models.
 
+The code layers across repositories (`infra2-sdk`, `common/`, `tools/`) have one definition: [infra2 `docs/ssot/core.harness.md` §5.3](https://github.com/wangzitian0/infra2/blob/main/docs/ssot/core.harness.md#53-code-layers). This file defines only the internal layers of the SDK (§2).
+
 The SDK enforces a dual-mode execution invariant across all runtime environments:
 
 - In local development or standalone CI, an application passes ordinary environment variables directly to the process.
@@ -15,7 +17,7 @@ The SDK enforces a dual-mode execution invariant across all runtime environments
 
 ## 1. Five Core Decision Principles (Why the SDK Has This Shape)
 
-Across 170+ issues and 45 releases (`v0.1.0` through `v3.23.0`), consumer requirements and defect analyses shaped `infra2-sdk` around five core architectural decision principles.
+Across the issues and releases since `v0.1.0`, consumer requirements and defect analyses shaped `infra2-sdk` around five core architectural decision principles.
 
 ### P1 — Contract vs. Orchestration, Zero-I/O on Import, and Thin Open-Protocol Adapters (`#19`, `#33`, `#102`)
 
@@ -27,7 +29,7 @@ Across 170+ issues and 45 releases (`v0.1.0` through `v3.23.0`), consumer requir
 ### P2 — One Source per Fact and the Manifest v2 Supply Chain (`#16`, `#38`, `#115`, `#137`)
 
 - Every environment variable in an application manifest (`EnvironmentManifest`) declares one `source` class (`bootstrap`, `human`, `runtime`, `release`, `decision`, `code`). The source class defines who produces the value, where truth lives, and how the value reaches the container (`#16`, `#38`).
-- Shared cross-repository mechanisms (`capacity`, `ci`, `deploy`, `fastapi`, `manifests`, `observability`, `refs`, `routing`, `rules`, `runtime`, `secrets`, `transport`) live in `infra2-sdk` (`v3.7.0`, `#115`). Extracting these modules from `infra2` and consumer applications ensures that all repositories share one tested implementation.
+- Shared cross-repository mechanisms (the modules in §2) live in `infra2-sdk`. The first set moved here in `v3.7.0` (`#115`). Extracting these modules from `infra2` and consumer applications ensures that all repositories share one tested implementation.
 - `LlmSettings` (`src/infra2_sdk/runtime/llm.py`, `#137`, `#236`) owns default models and reasoning efforts across three capability roles (`large`, `small`, `multimodal`). Consumer applications map per-role environment overrides (`LLM_LARGE_MODEL`, `LLM_SMALL_MODEL`, `LLM_MULTIMODAL_MODEL`) onto this single contract.
 
 ### P3 — 100% Consumer-Reachable Public Surface (`#102`, `#108`, `#121`, `#126`)
