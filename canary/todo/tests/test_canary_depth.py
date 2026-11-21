@@ -281,8 +281,7 @@ def _s3_args(server: FakeS3) -> dict[str, object]:
 def _env(monkeypatch, **values: str) -> None:
     for key in (
         "REDIS_PASSWORD",
-        "CANARY_POSTGRES_USER",
-        "CANARY_POSTGRES_PASSWORD",
+        "DATABASE_URL",
         "S3_ENDPOINT",
         "S3_BUCKET",
         "S3_ACCESS_KEY",
@@ -537,7 +536,7 @@ def test_redis_probe_values_differ_between_runs(app) -> None:
 def test_postgres_probe_reports_unconfigured_without_credentials(app, user, password) -> None:
     result = app._probe_postgres("127.0.0.1", 1, user=user, password=password, timeout=1.0)
     assert result["status"] == "unconfigured"
-    assert "CANARY_POSTGRES" in result["detail"]
+    assert "DATABASE_URL" in result["detail"]
 
 
 def test_postgres_probe_fails_when_the_server_answers_an_error_response(app) -> None:
@@ -713,8 +712,7 @@ def test_run_all_checks_hands_each_probe_its_credentials(app, monkeypatch) -> No
         monkeypatch,
         ENV_SUFFIX="-staging",
         REDIS_PASSWORD=REDIS_PW,
-        CANARY_POSTGRES_USER="canary_ro",
-        CANARY_POSTGRES_PASSWORD=PG_PASSWORD,
+        DATABASE_URL=f"postgresql://canary_ro:{PG_PASSWORD}@platform-postgres-staging:6543/canary_db",
         S3_ENDPOINT="http://platform-s3-staging:9000",
         S3_BUCKET="platform-canary",
         S3_ACCESS_KEY=S3_ACCESS_KEY,
@@ -749,6 +747,8 @@ def test_run_all_checks_hands_each_probe_its_credentials(app, monkeypatch) -> No
     assert calls["redis"]["args"][0] == "platform-redis-staging"
     assert calls["redis"]["kwargs"]["password"] == REDIS_PW
     assert calls["postgres"]["args"][0] == "platform-postgres-staging"
+    assert calls["postgres"]["args"][1] == 6543
+    assert calls["postgres"]["kwargs"]["dbname"] == "canary_db"
     assert calls["postgres"]["kwargs"]["user"] == "canary_ro"
     assert calls["postgres"]["kwargs"]["password"] == PG_PASSWORD
     assert calls["s3"]["kwargs"] == {
@@ -1015,8 +1015,7 @@ def test_main_starts_no_second_telemetry_bootstrap(monkeypatch, telemetry_calls)
 
     for key, value in _issued_telemetry_env("staging").items():
         monkeypatch.setenv(key, value)
-    monkeypatch.setenv("CANARY_POSTGRES_PASSWORD", PG_PASSWORD)
-    monkeypatch.setenv("TODO_POSTGRES_PASSWORD", PG_PASSWORD)
+    monkeypatch.setenv("DATABASE_URL", f"postgresql://todo_app:{PG_PASSWORD}@127.0.0.1:1/postgres")
     # main() installs a SIGTERM handler and starts the server: do neither in the test run
     monkeypatch.setattr(signal, "signal", lambda *args: None)
     server = types.ModuleType("uvicorn")
@@ -1035,13 +1034,13 @@ def test_main_validates_startup_environment_against_manifest_and_fails_closed(
     monkeypatch, telemetry_calls
 ) -> None:
     """`main()` calls validate_startup_environment() and fails closed with RuntimeError
-    when CANARY_POSTGRES_PASSWORD (required by env.manifest.json) is missing."""
+    when DATABASE_URL (required by env.manifest.json) is missing."""
     for key, value in _issued_telemetry_env("staging").items():
         monkeypatch.setenv(key, value)
-    monkeypatch.delenv("CANARY_POSTGRES_PASSWORD", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     module = _load_todo_app()
 
-    with pytest.raises(RuntimeError, match="CANARY_POSTGRES_PASSWORD"):
+    with pytest.raises(RuntimeError, match="DATABASE_URL"):
         module.main()
 
 

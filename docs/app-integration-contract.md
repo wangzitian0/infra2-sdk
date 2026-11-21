@@ -15,7 +15,8 @@ when they are stale. Regenerate them with `python scripts/render_app_contract.py
 
 - Use the canonical names of the table below. A retired name is not read; replace it with
   the name in the `Use` column. `check_shared_env_conformance(names)` lists every retired or
-  deprecated name in a manifest.
+  deprecated name in a manifest. `python -m infra2_sdk.manifests --check` runs it on each
+  manifest and exits 1 on a finding.
 - Export the manifest of the settings class with
   `python -m infra2_sdk.runtime.config_schema module:Settings --json ... --check`.
 - Call `assert_environment(manifest)` at start-up, so a missing required name stops the start.
@@ -87,6 +88,9 @@ when they are stale. Regenerate them with `python scripts/render_app_contract.py
 | `CANARY_POSTGRES_USER` | `DATABASE_URL` |
 | `CANARY_POSTGRES_PASSWORD` | `DATABASE_URL` |
 | `CANARY_POSTGRES_DATABASE` | `DATABASE_URL` |
+| `TODO_POSTGRES_USER` | `DATABASE_URL` |
+| `TODO_POSTGRES_PASSWORD` | `DATABASE_URL` |
+| `TODO_POSTGRES_DATABASE` | `DATABASE_URL` |
 | `TRUEALPHA_CAPTURE_APPROVED_BY` | `CAPTURE_APPROVED_BY` |
 
 | Cell (app owned) | Trigger | Budget (s) | Check list |

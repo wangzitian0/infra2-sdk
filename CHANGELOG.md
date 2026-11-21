@@ -6,6 +6,11 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+### Changed
+
+- `manifests.check` and `python -m infra2_sdk.manifests --check` run `check_shared_env_conformance` on each manifest. A field name or alias that `data/shared_env.yaml` lists as deprecated or retired is a problem (wangzitian0/infra2#1823 N1). Census of 2026-11-21: only truealpha calls `--check`; its manifests have 0 findings. finance_report and infra2 do not call it.
+- Canary Todo reads one Postgres login from `DATABASE_URL`. The todo store and the Postgres probe use it. The names `POSTGRES_HOST`, `POSTGRES_PORT`, `TODO_POSTGRES_USER`, `TODO_POSTGRES_PASSWORD`, `TODO_POSTGRES_DATABASE`, `CANARY_POSTGRES_USER`, `CANARY_POSTGRES_PASSWORD` and `CANARY_POSTGRES_DATABASE` leave `canary/todo/env.manifest.json`; the alias `ENV` leaves its `ENVIRONMENT` field. A deployment of the Canary image of this release must supply `DATABASE_URL`. The separate `canary_ro` login is no longer proved: the probe writes its temp table with the store login, which needs the `TEMP` privilege. A malformed `DATABASE_URL` fails the Postgres check with a message that names the fault and no part of the value. `data/shared_env.yaml` retires `TODO_POSTGRES_USER`, `TODO_POSTGRES_PASSWORD` and `TODO_POSTGRES_DATABASE` (use `DATABASE_URL`).
+
 ## 4.0.0 - 2026-11-21
 
 Major release (wangzitian0/infra2#1823 Step 1). Each consumer pins an exact wheel; move to 4.0.0 in one change. The census of 2026-11-21 lists the call sites that must change: infra2 `common/deploy/app_contract.py` (`HOOK_SLOTS`, `HookSlotSpec`), finance_report `common/runtime/env_reference.py` (`run_hook_slot`), truealpha `apps/data-engine/src/data_engine/sources/llm.py` (`LlmClient`).

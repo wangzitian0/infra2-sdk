@@ -81,11 +81,10 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
     monkeypatch.delenv("LLM_BASE_URL", raising=False)
     monkeypatch.delenv("LLM_SMALL_MODEL", raising=False)
-    monkeypatch.setenv("POSTGRES_HOST", "platform-postgres")
-    monkeypatch.setenv("POSTGRES_PORT", "5432")
-    monkeypatch.setenv("TODO_POSTGRES_USER", "todo_app")
-    monkeypatch.setenv("TODO_POSTGRES_PASSWORD", "test_todo_pg_pass_1234")
-    monkeypatch.setenv("TODO_POSTGRES_DATABASE", "postgres")
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql://todo_app:test_todo_pg_pass_1234@platform-postgres:5432/postgres",
+    )
 
 
 @pytest.fixture(scope="module")

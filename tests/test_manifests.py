@@ -70,6 +70,43 @@ def test_hand_written_manifests_go_through_the_offline_gate(tmp_path: Path) -> N
     assert problems and problems[0].startswith("web.json: ")
 
 
+def _hand_manifest(*fields: dict) -> str:
+    return json.dumps({"contract_version": 2, "source": "web", "fields": list(fields)})
+
+
+def test_check_flags_retired_names_and_deprecated_aliases(tmp_path: Path) -> None:
+    (tmp_path / "web.json").write_text(
+        _hand_manifest(
+            {"field": "environment", "env": "ENVIRONMENT", "source": "code", "aliases": ["ENV"]},
+            {"field": "large_model", "env": "LARGE_MODEL", "source": "code"},
+            {"field": "llm_small_model", "env": "LLM_SMALL_MODEL", "source": "code"},
+        ),
+        encoding="utf-8",
+    )
+    assert manifests.check(root=tmp_path, specs=(), hand_written=("web.json",)) == [
+        "web.json: ENV is deprecated: use ENVIRONMENT",
+        "web.json: LARGE_MODEL is deprecated: use LLM_LARGE_MODEL",
+    ]
+    assert manifests.main(["--check"], root=tmp_path, hand_written=("web.json",), echo=str) == 1
+
+
+def test_check_flags_a_deprecated_name_in_a_generated_manifest(tmp_path: Path) -> None:
+    class Legacy(BaseSettings):
+        image_tag: str = Field(default="local")
+
+    spec = ManifestSpec("legacy.json", Legacy, source="apps/legacy")
+    manifests.main(["--write"], root=tmp_path, specs=(spec,), echo=str)
+    assert manifests.check(root=tmp_path, specs=(spec,)) == [
+        "legacy.json: IMAGE_TAG is deprecated: use SERVICE_VERSION"
+    ]
+
+
+def test_canary_manifest_passes_the_check() -> None:
+    root = Path(__file__).resolve().parents[1]
+    path = "canary/todo/env.manifest.json"
+    assert manifests.check(root=root, specs=(), hand_written=(path,)) == []
+
+
 def test_validate_env_names_only_what_is_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
