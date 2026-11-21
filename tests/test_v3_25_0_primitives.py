@@ -68,7 +68,8 @@ def test_sdk_source_byte_budget() -> None:
     # LlmClient and schema 2 (about 12 KB) and lowers this cap again.
     # 398_000: the preview mode of #238 slice 4 adds about 5.5 KB.
     # 402_000: render_env_markdown and the config_schema CLI of #239 slice 1 add about 4 KB.
-    assert 150_000 <= total <= 402_000, f"src/infra2_sdk byte budget drifted: {total} B"
+    # 404_000: merge_manifests of #238 slice 5 moves about 1.2 KB from infra2.
+    assert 150_000 <= total <= 404_000, f"src/infra2_sdk byte budget drifted: {total} B"
 
 
 def test_init_service_multi_checks_and_manifest(monkeypatch: pytest.MonkeyPatch) -> None:
