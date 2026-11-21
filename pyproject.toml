@@ -102,6 +102,9 @@ target-version = "py311"
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.ruff.lint.per-file-ignores]
+# Moved verbatim from infra2 common/tests (#239): long docstrings that name incidents.
+"tests/test_schema_check.py" = ["E501"]
+"tests/test_schema_check_new_tables.py" = ["E501"]
 # Canary Todo moved verbatim from infra2 (#247): long SQL and HTML literals, FastAPI Body() defaults.
 "canary/todo/app.py" = ["E501", "B008", "SIM117"]
 "canary/todo/ui.py" = ["E501"]

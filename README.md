@@ -51,7 +51,8 @@ python -m pip install \
 | `infra2_sdk.runtime.otel` | Explicit OTLP provider bootstrap, probe span suppression, and env-configured samplers |
 | `infra2_sdk.runtime.postgres` | `PostgresSettings`, credential redaction, and psycopg reachability/write probe (`probe_postgres`) |
 | `infra2_sdk.runtime.s3` | Standard boto3 S3 client, probe, and safe bucket/object primitives (`put_object_bytes`, `read_object_bytes`) |
-| `infra2_sdk.secrets` | Secret-store adapters (Vault KV, 1Password), manifest-driven `SecretsResolver`, Vault template renderers, and AppRole policy naming |
+| `infra2_sdk.runtime.schema_check` | Pre-deploy check of SQLAlchemy native enums against `pg_enum`, migration floor and read-only data preconditions; CLI exit 0 verified, 1 blocked, 3 not evaluated |
+| `infra2_sdk.secrets` | adapters (Vault KV, 1Password), manifest-driven `SecretsResolver`, Vault template renderers, and AppRole policy naming |
 | `infra2_sdk.transport` | Minimal injectable HTTP transport (`HttpTransport`, `urllib_transport`) |
 
 ### Core runtime entrypoints
@@ -348,6 +349,10 @@ one is stale:
 python -m infra2_sdk.runtime.config_schema app.config:Settings \
   --json required-env.generated.json --markdown env-reference.generated.md --check
 ```
+
+`merge_manifests([(label, manifest), ...], source=..., exclude=...)` joins the manifests of
+one stack. A variable that two manifests declare must agree on how it is produced and
+rendered; the first declaration wins for the rest.
 
 ## Configuration supply chain
 
