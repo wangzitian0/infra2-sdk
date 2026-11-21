@@ -484,3 +484,30 @@ def test_symbols_removed_in_3_22_0_are_absent_from_modules_and_packages(
         for package in (infra2_sdk, infra2_sdk.runtime):
             assert leaf not in package.__all__, f"{package.__name__}.__all__ lists {leaf}"
             assert not hasattr(package, leaf), f"{package.__name__} still exposes {leaf}"
+
+
+# #236 Release B (4.0.0): the LlmClient path left with LlmClient.
+REMOVED_IN_4_0_0 = (
+    ("infra2_sdk.runtime.llm", "LlmClient"),
+    ("infra2_sdk.runtime.llm", "LlmResponse"),
+    ("infra2_sdk.runtime", "LlmClient"),
+    ("infra2_sdk.runtime.llm", "LlmSettings.chat_completions_path"),
+    ("infra2_sdk.runtime.llm", "LlmSettings.json_timeout_seconds"),
+    ("infra2_sdk.runtime.llm", "LlmSettings.json_max_tokens"),
+    ("infra2_sdk.runtime.llm", "LlmSettings.json_disable_thinking"),
+    ("infra2_sdk.runtime.llm", "LlmSettings.json_seed"),
+    ("infra2_sdk.runtime.llm", "LlmSettings.extract_max_attempts"),
+    ("infra2_sdk.runtime.llm", "LlmSettings.encryption_keys"),
+)
+
+
+@pytest.mark.parametrize(
+    ("module", "dotted"), REMOVED_IN_4_0_0, ids=[f"{m}.{n}" for m, n in REMOVED_IN_4_0_0]
+)
+def test_symbols_removed_in_4_0_0_are_absent(module: str, dotted: str) -> None:
+    owner: object = importlib.import_module(module)
+    *parents, leaf = dotted.split(".")
+    for part in parents:
+        owner = getattr(owner, part)
+    fields = getattr(owner, "__dataclass_fields__", {})
+    assert not hasattr(owner, leaf) and leaf not in fields, f"{module}.{dotted} is back"

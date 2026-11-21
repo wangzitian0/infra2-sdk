@@ -41,16 +41,15 @@ from infra2_sdk.runtime.health import (
 )
 from infra2_sdk.runtime.http import (
     HttpClientSettings,
+    arequest_with_retry,
     probe_http,
     request_with_retry,
 )
 from infra2_sdk.runtime.llm import (
     DecodingSpec,
     GuardedLlmModel,
-    LlmClient,
     LlmSettings,
     allow_vcr_model_requests,
-    arequest_with_retry,
     create_llm_agent,
     create_llm_model,
     llm_call_context,
@@ -135,7 +134,6 @@ __all__ = [
     "signal_endpoint",
     "DecodingSpec",
     "GuardedLlmModel",
-    "LlmClient",
     "probe_orchestrator",
     "arequest_with_retry",
     "LlmSettings",
