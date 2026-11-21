@@ -60,12 +60,20 @@ class ComposeCompileError(ValueError):
     """Raised when an `x-infra2` compose source is invalid. The compiler fails closed."""
 
 
-_XINFRA2_KEYS = frozenset({"vault"})
+_XINFRA2_KEYS = frozenset({"vault", "preview"})
+_XINFRA2_PREVIEW_KEYS = frozenset({"db_container"})
+_SERVICE_XPREVIEW_KEYS = frozenset({"remove", "database_url", "environment"})
+_MODES = frozenset({"deploy", "preview"})
+# One constant for the image of the ephemeral preview database (#238 Slice 4).
+PREVIEW_DB_IMAGE = "postgres:16-alpine"
+_PREVIEW_DB = "db"
+_PREVIEW_DB_VOLUME = "preview_db"
+_PREVIEW_DB_URL_RE = re.compile(r"^postgresql(\+[a-z0-9]+)?$")
 _XINFRA2_VAULT_KEYS = frozenset({"name"})
 _SERVICE_XVAULT_KEYS = frozenset({"max_wait_seconds"})
 # Later slices of infra2-sdk#238 own these service keys. A silent pass-through would
 # make Compose ignore them, so the compiler rejects them until that slice ships.
-_RESERVED_SERVICE_KEYS = frozenset({"x-preview"})
+_RESERVED_SERVICE_KEYS: frozenset[str] = frozenset()
 _ROUTES_KEYS = frozenset({"service", "port", "routes"})
 _ROUTE_KEYS = frozenset({"name", "rule", "priority", "tls", "strip_prefix", "sso"})
 # Compose interpolates these in the labels on purpose, so the SDK does not escape them.
@@ -160,7 +168,7 @@ fi
 set -a
 . /secrets/.env
 set +a
-exec "$@"
+{overrides}exec "$@"
 """
 
 
@@ -214,7 +222,9 @@ def _vault_sidecar(name: str, template: str) -> dict[str, Any]:
     }
 
 
-def _wrap_vault_service(spec: dict[str, Any], options: dict[str, Any], where: str) -> None:
+def _wrap_vault_service(
+    spec: dict[str, Any], options: dict[str, Any], where: str, overrides: str = ""
+) -> None:
     _reject_unknown(options, _SERVICE_XVAULT_KEYS, f"{where}.x-vault")
     wait = options.get("max_wait_seconds", _DEFAULT_WAIT_SECONDS)
     if isinstance(wait, bool) or not isinstance(wait, int) or wait <= 0:
@@ -224,7 +234,12 @@ def _wrap_vault_service(spec: dict[str, Any], options: dict[str, Any], where: st
     command = spec.get("command")
     if not isinstance(command, list) or not command:
         raise ComposeCompileError(f"{where}: x-vault needs `command` as a non-empty list")
-    spec["entrypoint"] = ["sh", "-c", _dollar(_WAIT_SCRIPT.format(max_wait=wait)), "--"]
+    spec["entrypoint"] = [
+        "sh",
+        "-c",
+        _dollar(_WAIT_SCRIPT.format(max_wait=wait, overrides=overrides)),
+        "--",
+    ]
     depends = spec.get("depends_on", [])
     if isinstance(depends, list):
         if _VAULT_SIDECAR not in depends:
@@ -425,6 +440,64 @@ def _apply_capabilities(spec: dict[str, Any], capabilities: object, where: str) 
             environment[key] = value
 
 
+def _preview_options(spec: dict[str, Any], where: str) -> dict[str, Any]:
+    options = spec.pop("x-preview", None)
+    if options is None:
+        return {}
+    options = _require_mapping(options, f"{where}.x-preview")
+    _reject_unknown(options, _SERVICE_XPREVIEW_KEYS, f"{where}.x-preview")
+    for key in ("remove", "environment"):
+        _flag(options, key, f"{where}.x-preview")
+    scheme = options.get("database_url")
+    if scheme is not None and (not isinstance(scheme, str) or not _PREVIEW_DB_URL_RE.match(scheme)):
+        raise ComposeCompileError(
+            f"{where}.x-preview.database_url must be a postgresql URL scheme, "
+            "for example 'postgresql' or 'postgresql+asyncpg'"
+        )
+    if options.get("remove") and len(options) > 1:
+        raise ComposeCompileError(f"{where}.x-preview: `remove` takes no other key")
+    if (scheme is not None or options.get("environment")) and "x-vault" not in spec:
+        raise ComposeCompileError(
+            f"{where}.x-preview overrides values after /secrets/.env is sourced: it needs x-vault"
+        )
+    return options
+
+
+def _preview_overrides(options: dict[str, Any], db_container: str) -> str:
+    """Shell lines that run after /secrets/.env is sourced, so they win over Vault values."""
+    lines = []
+    scheme = options.get("database_url")
+    if scheme is not None:
+        url = f"{scheme}://ephemeral:ephemeral@{db_container}:5432/preview"
+        lines.append(f'export DATABASE_URL="{url}"')
+    if scheme is not None or options.get("environment"):
+        lines.append('export ENVIRONMENT="$ENV"')
+    return "".join(f"{line}\n" for line in lines)
+
+
+def _preview_db(db_container: str) -> dict[str, Any]:
+    return {
+        "image": PREVIEW_DB_IMAGE,
+        "container_name": db_container,
+        "mem_limit": "1g",
+        "environment": {
+            "POSTGRES_USER": "ephemeral",
+            "POSTGRES_PASSWORD": "ephemeral",
+            "POSTGRES_DB": "preview",
+            "PGDATA": "/var/lib/postgresql/data/pgdata",
+        },
+        "healthcheck": {
+            "test": ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"],
+            "start_period": "20s",
+            "interval": "10s",
+            "retries": 10,
+            "timeout": "5s",
+        },
+        "volumes": [f"{_PREVIEW_DB_VOLUME}:/var/lib/postgresql/data"],
+        "labels": ["traefik.enable=false"],
+    }
+
+
 def _apply_service_defaults(spec: dict[str, Any]) -> None:
     spec.setdefault("restart", "always")
     spec.setdefault(
@@ -434,7 +507,11 @@ def _apply_service_defaults(spec: dict[str, Any]) -> None:
         spec.setdefault("networks", [_NETWORK])
 
 
-def _compile_mapping(source: Mapping[str, Any], vault_template: str | None) -> dict[str, Any]:
+def _compile_mapping(
+    source: Mapping[str, Any], vault_template: str | None, mode: str = "deploy"
+) -> dict[str, Any]:
+    if mode not in _MODES:
+        raise ComposeCompileError(f"mode must be one of {sorted(_MODES)}, not {mode!r}")
     doc = copy.deepcopy(dict(source))
     infra2 = _require_mapping(doc.pop("x-infra2", None), "x-infra2")
     _reject_unknown(infra2, _XINFRA2_KEYS, "x-infra2")
@@ -454,18 +531,48 @@ def _compile_mapping(source: Mapping[str, Any], vault_template: str | None) -> d
             raise ComposeCompileError("x-infra2.vault is set: pass a non-empty vault_template")
         if _VAULT_SIDECAR in services:
             raise ComposeCompileError(f"service name {_VAULT_SIDECAR!r} is reserved for x-vault")
+    preview_cfg = infra2.get("preview")
+    db_container = ""
+    if preview_cfg is not None:
+        preview_cfg = _require_mapping(preview_cfg, "x-infra2.preview")
+        _reject_unknown(preview_cfg, _XINFRA2_PREVIEW_KEYS, "x-infra2.preview")
+        db_container = _text(preview_cfg.get("db_container"), "x-infra2.preview.db_container")
     out_services: dict[str, Any] = {}
     if vault_cfg is not None:
         out_services[_VAULT_SIDECAR] = _vault_sidecar(vault_cfg["name"], vault_template)
+    removed: list[str] = []
+    wants_db = False
     for svc_name, spec in services.items():
         where = f"services.{svc_name}"
         spec = _require_mapping(spec, where)
         reserved = sorted(set(spec) & _RESERVED_SERVICE_KEYS)
         if reserved:
             raise ComposeCompileError(f"{where}: {reserved} is not supported yet (infra2-sdk#238)")
+        preview = _preview_options(spec, where)
+        if preview.get("database_url") is not None:
+            if not db_container:
+                raise ComposeCompileError(
+                    f"{where}.x-preview.database_url needs x-infra2.preview.db_container"
+                )
+            wants_db = True
+        if mode == "preview" and preview.get("remove"):
+            removed.append(svc_name)
+            continue
+        overrides = _preview_overrides(preview, db_container) if mode == "preview" else ""
         options = spec.pop("x-vault", None)
         if options is not None:
-            _wrap_vault_service(spec, _require_mapping(options, f"{where}.x-vault"), where)
+            _wrap_vault_service(
+                spec, _require_mapping(options, f"{where}.x-vault"), where, overrides
+            )
+        if mode == "preview" and preview.get("database_url") is not None:
+            depends = spec.get("depends_on", [])
+            if isinstance(depends, list):
+                spec["depends_on"] = {
+                    **{name: {"condition": "service_started"} for name in depends},
+                    _PREVIEW_DB: {"condition": "service_healthy"},
+                }
+            else:
+                depends[_PREVIEW_DB] = {"condition": "service_healthy"}
         routes = spec.pop("x-routes", None)
         if routes is not None:
             _route_labels(spec, _require_mapping(routes, f"{where}.x-routes"), where)
@@ -473,9 +580,24 @@ def _compile_mapping(source: Mapping[str, Any], vault_template: str | None) -> d
         if capabilities is not None:
             _apply_capabilities(spec, capabilities, where)
         out_services[svc_name] = spec
+    for svc_name, spec in out_services.items():
+        gone = sorted(set(spec.get("depends_on") or []) & set(removed))
+        if gone:
+            raise ComposeCompileError(
+                f"services.{svc_name} depends on {gone}, which x-preview removes in preview"
+            )
+    if mode == "preview" and wants_db:
+        if _PREVIEW_DB in out_services:
+            raise ComposeCompileError(f"service name {_PREVIEW_DB!r} is reserved in preview")
+        out_services[_PREVIEW_DB] = _preview_db(db_container)
     for spec in out_services.values():
         _apply_service_defaults(spec)
     doc["services"] = out_services
+    if mode == "preview" and wants_db:
+        db_volumes = doc.setdefault("volumes", {})
+        if not isinstance(db_volumes, dict):
+            raise ComposeCompileError("volumes must be a mapping")
+        db_volumes.setdefault(_PREVIEW_DB_VOLUME, {})
     networks = doc.setdefault("networks", {})
     if not isinstance(networks, dict):
         raise ComposeCompileError("networks must be a mapping")
@@ -505,15 +627,23 @@ def _dump(doc: Mapping[str, Any]) -> str:
     return yaml.dump(doc, Dumper=_Dumper, sort_keys=False, width=10**6, allow_unicode=True)
 
 
-def compile_compose(source: str | Mapping[str, Any], *, vault_template: str | None = None) -> str:
+def compile_compose(
+    source: str | Mapping[str, Any],
+    *,
+    vault_template: str | None = None,
+    mode: str = "deploy",
+) -> str:
     """Compile an `x-infra2` compose source into plain Docker Compose YAML.
 
     The function is pure: it does no file, network, or environment access, and it returns
     the same bytes for the same input. It applies the baseline service defaults and expands
     `x-vault` into one inline `vault-agent` sidecar, `x-routes` into Traefik labels and
     `x-capabilities` (`s3`, `openpanel`, `otel`, `browser_otel`) into environment blocks.
-    `vault_template` holds the rendered Vault Agent template text. Any unknown `x-infra2`,
-    `x-vault`, `x-routes` or capability key raises `ComposeCompileError`.
+    `vault_template` holds the rendered Vault Agent template text. `mode="preview"` applies
+    each service `x-preview` block (`remove`, `database_url`, `environment`) and adds one
+    `db` service of `PREVIEW_DB_IMAGE`; `mode="deploy"` drops those blocks. Any unknown
+    `x-infra2`, `x-vault`, `x-routes`, `x-preview` or capability key raises
+    `ComposeCompileError`.
     """
     if isinstance(source, str):
         yaml = _yaml()
@@ -522,7 +652,7 @@ def compile_compose(source: str | Mapping[str, Any], *, vault_template: str | No
         except yaml.YAMLError as exc:
             raise ComposeCompileError(f"YAML parse error: {exc}") from exc
         source = _require_mapping(loaded, "compose source")
-    return _dump(_compile_mapping(source, vault_template))
+    return _dump(_compile_mapping(source, vault_template, mode))
 
 
 @dataclass(frozen=True)
