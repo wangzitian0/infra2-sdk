@@ -4,7 +4,8 @@
 set -euo pipefail
 
 compose=(docker compose -f canary/todo/compose.yaml)
-trap '"${compose[@]}" down --volumes >/dev/null 2>&1 || true' EXIT
+body="$(mktemp)"
+trap 'rm -f "$body"; "${compose[@]}" down --volumes >/dev/null 2>&1 || true' EXIT
 
 "${compose[@]}" up --build -d
 
@@ -12,8 +13,9 @@ trap '"${compose[@]}" down --volumes >/dev/null 2>&1 || true' EXIT
 # the body is kept to name the red check.
 status=""
 code="000"
-body="$(mktemp)"
 for _ in $(seq 1 40); do
+  # An attempt with no response leaves no body of an earlier attempt.
+  : > "$body"
   code="$(curl -sS --max-time 10 -o "$body" -w '%{http_code}' \
     http://127.0.0.1:8000/api/canary/status 2>/dev/null || true)"
   if [[ "$code" == "200" ]]; then
