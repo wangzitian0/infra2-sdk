@@ -1441,7 +1441,7 @@ def test_g1_policy_table_completeness_derived_views_and_grid_printer(tmp_path: P
     yaml_copy.write_text(
         base_yaml.replace("budget_seconds: 360\n", "budget_seconds: 444\n"), encoding="utf-8"
     )
-    pv, policies = _load_policy_table(yaml_copy)
+    pv, _cap, policies = _load_policy_table(yaml_copy)
     assert pv == 1
     assert policies["preview.post"].budget_seconds == 444
     assert _derive_stage_plans(policies)["preview"].stage_id == "preview.runtime"
@@ -1561,3 +1561,100 @@ def test_cli_run_cell_runs_a_schema_3_cell_without_leaking_ambient_secrets(
         == 2
     )
     assert out == ["--run-cell requires --app-url"]
+
+
+class _FakeClock:
+    """Monotonic clock that only moves when a fake runner advances it."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_slow_bootstrap_does_not_shorten_check_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = _FakeClock()
+    monkeypatch.setattr(_manifests_mod.time, "monotonic", clock)
+    manifest = _preview_post_manifest(_row("e2e", timeout_seconds=60, bootstrap="install"))
+    timeouts: dict[str, object] = {}
+
+    def runner(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if cmd[0] == "sh":
+            clock.now += 100  # a slow bootstrap, longer than the 60 s check budget
+            timeouts["bootstrap"] = kwargs["timeout"]
+        else:
+            clock.now += 5
+            timeouts["check"] = kwargs["timeout"]
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    res = _run_preview_post(manifest, runner=runner)
+    assert res.status == "pass"
+    assert timeouts["bootstrap"] == _manifests_mod.BOOTSTRAP_CAP_SECONDS
+    assert timeouts["check"] == 60
+    assert res.bootstrap_seconds == pytest.approx(100)
+    assert res.to_dict()["bootstrap_seconds"] == 100
+    assert res.checks[0].seconds == pytest.approx(5)
+
+
+def test_bootstrap_timeout_is_reported_as_bootstrap_timeout() -> None:
+    manifest = _preview_post_manifest(_row("e2e", timeout_seconds=60, bootstrap="install"))
+    cap = _manifests_mod.BOOTSTRAP_CAP_SECONDS
+    calls: list[list[str]] = []
+
+    def runner(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=cap, stderr="apt stalled")
+
+    res = _run_preview_post(manifest, runner=runner)
+    assert calls == [["sh", "-lc", "install"]]
+    assert res.status == "fail"
+    assert res.exit_code == 124
+    assert res.failed_step == "timeout"
+    assert res.summary == f"bootstrap timed out after {cap}s (bootstrap cap {cap}s)"
+    assert res.checks[0].detail == res.summary
+    assert "cell budget" not in res.summary
+
+
+def test_bootstrap_cap_is_shared_by_all_bootstrap_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _FakeClock()
+    monkeypatch.setattr(_manifests_mod.time, "monotonic", clock)
+    manifest = _preview_post_manifest(
+        _row("a", bootstrap="one"), _row("b", bootstrap="two"), _row("c")
+    )
+    cap = _manifests_mod.BOOTSTRAP_CAP_SECONDS
+    seen: list[object] = []
+
+    def runner(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen.append(kwargs["timeout"])
+        clock.now += 70
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    _run_preview_post(manifest, runner=runner)
+    assert seen[0] == cap
+    assert seen[1] == pytest.approx(cap - 70)
+
+
+def test_pass_without_bootstrap_reports_zero_bootstrap_seconds() -> None:
+    res = _run_preview_post(
+        _preview_post_manifest(_row("plain")),
+        runner=lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, stdout="", stderr=""),
+    )
+    assert res.bootstrap_seconds == 0
+
+
+def test_stages_yaml_bootstrap_cap_is_required_and_positive(tmp_path: Path) -> None:
+    base = (
+        Path(__file__).resolve().parents[1] / "src" / "infra2_sdk" / "data" / "stages.yaml"
+    ).read_text(encoding="utf-8")
+    assert f"bootstrap_cap_seconds: {_manifests_mod.BOOTSTRAP_CAP_SECONDS}\n" in base
+    for text in (
+        base.replace("bootstrap_cap_seconds:", "other_cap:"),
+        base.replace("bootstrap_cap_seconds: 120", "bootstrap_cap_seconds: 0"),
+    ):
+        bad_copy = tmp_path / "bad.yaml"
+        bad_copy.write_text(text, encoding="utf-8")
+        with pytest.raises(ValueError, match="bootstrap_cap_seconds"):
+            _load_policy_table(bad_copy)

@@ -25,6 +25,7 @@ stages:
     order: 7
     definition: Human adjudication or manually triggered evidence gates.
 policy_version: 1
+bootstrap_cap_seconds: 120
 cells:
   local.pre:
     stage: local

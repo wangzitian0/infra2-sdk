@@ -37,7 +37,9 @@ when they are stale. Regenerate them with `python scripts/render_app_contract.py
 
 - Declare a runtime hooks manifest of schema 3. List each check once with the cells where it
   runs. infra2 runs the platform cells; the app owns the cells of the table below.
-- Each cell has a time budget. A check list that exceeds it fails.
+- Each cell has a time budget. A check list that exceeds it fails. A check `bootstrap` has its
+  own cap (`bootstrap_cap_seconds` in `stages.yaml`), outside that budget. The hook result
+  reports `bootstrap_seconds`.
 - Run the pre-deploy enum check with `python -m infra2_sdk.runtime.schema_check` in the
   app image.
 
