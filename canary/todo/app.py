@@ -130,12 +130,14 @@ _STATUS_CACHE: tuple[float, dict[str, Any]] | None = None
 
 
 try:
+    from canary_schema import CANARY_CAPABILITY_ENUM_NAME
     from canary_settings import CanarySettings
     from ui import HTML_TEMPLATE
 except ImportError:
     _todo_dir = str(Path(__file__).resolve().parent)
     if _todo_dir not in sys.path:
         sys.path.insert(0, _todo_dir)
+    from canary_schema import CANARY_CAPABILITY_ENUM_NAME
     from canary_settings import CanarySettings
     from ui import HTML_TEMPLATE
 
@@ -384,6 +386,7 @@ class CanaryStatusResponse(BaseModel):
     informational: list[str]
     checks: dict[str, CanaryCheckOutcome]
     age_seconds: float | None = None
+    capabilities: dict[str, Any] = Field(default_factory=dict)
 
 
 class AuthMeResponse(BaseModel):
@@ -934,6 +937,18 @@ def _run_checks(
     return {name: results[name] for name in plan}
 
 
+def _capability_summary(cfg: CanarySettings) -> dict[str, Any]:
+    return {
+        "openpanel_configured": bool(cfg.openpanel_client_id),
+        "openpanel_api_url_set": bool(cfg.openpanel_api_url),
+        "openpanel_script_url_set": bool(cfg.openpanel_script_url),
+        "browser_otel_configured": bool(cfg.next_public_otel_exporter_otlp_endpoint),
+        "browser_deployment_environment": cfg.next_public_deployment_environment or None,
+        "browser_git_sha": cfg.next_public_git_sha or None,
+        "schema_enum": CANARY_CAPABILITY_ENUM_NAME,
+    }
+
+
 def run_all_checks() -> dict[str, Any]:
     """Run the real probes against the platform's infrastructure capabilities."""
     cfg = _settings()
@@ -948,7 +963,7 @@ def run_all_checks() -> dict[str, Any]:
     s3_endpoint, s3_bucket = cfg.s3_endpoint, cfg.s3_bucket
     s3_access_key, s3_secret_key = cfg.s3_access_key, cfg.s3_secret_key
     signoz_url = cfg.signoz_otel_collector
-    openpanel_url = cfg.openpanel_api_url
+    openpanel_url = cfg.openpanel_health_url or cfg.openpanel_api_url
     authentik_url = cfg.authentik_endpoint
 
     def _http_entry(name: str, url: str) -> Callable[[], Any]:
@@ -1026,6 +1041,7 @@ def run_all_checks() -> dict[str, Any]:
         "gating": list(GATING_CHECKS),
         "informational": list(INFORMATIONAL_CHECKS),
         "checks": checks,
+        "capabilities": _capability_summary(cfg),
     }
 
 

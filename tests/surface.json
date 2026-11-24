@@ -66,7 +66,7 @@
     "health": "consumer: finance_report, infra2, truealpha",
     "http": "consumer: canary_todo, truealpha",
     "llm": "consumer: finance_report",
-    "otel": "consumer: finance_report, truealpha",
+    "otel": "consumer: canary_todo, finance_report, truealpha",
     "postgres": "consumer: infra2, truealpha",
     "s3": "consumer: finance_report, infra2, truealpha",
     "schema_check": "consumer: infra2",
@@ -106,7 +106,7 @@
     "probe_http": "consumer: finance_report",
     "OtelSettings": "documented: README section Runtime extras",
     "configure_telemetry": "documented: README section Runtime extras",
-    "init_worker": "consumer: finance_report, truealpha",
+    "init_worker": "consumer: canary_todo, finance_report, truealpha",
     "signal_endpoint": "consumer: infra2",
     "LlmSettings": "consumer: finance_report",
     "DecodingSpec": "consumer: canary_todo, finance_report, truealpha",
@@ -122,7 +122,7 @@
     "sanitize_headers": "documented: README section Core runtime entrypoints",
     "schema_sha256": "consumer: canary_todo",
     "vcr_llm_config": "documented: README section Core runtime entrypoints",
-    "request_with_retry": "consumer: truealpha",
+    "request_with_retry": "consumer: canary_todo, truealpha",
     "probe_orchestrator": "consumer: finance_report, truealpha"
   }
 }
