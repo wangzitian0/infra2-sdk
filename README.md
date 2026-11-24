@@ -25,7 +25,7 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v4.5.0"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v4.6.0"
 ```
 
 ## Modules
@@ -76,10 +76,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v4.5.0'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v4.6.0'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v4.5.0'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v4.6.0'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -200,7 +200,7 @@ Install the published wheel in a fresh Python 3.11+ environment:
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install \
-  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v4.5.0/infra2_sdk-4.5.0-py3-none-any.whl'
+  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v4.6.0/infra2_sdk-4.6.0-py3-none-any.whl'
 ```
 
 For a local connectivity exercise, start this server in another terminal:
@@ -571,7 +571,7 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
 - In v4.0.0 (`#236` and `infra2#1644`), the SDK retired `LlmClient`, `LlmResponse`, legacy
   `LlmSettings` extraction fields, and hook schema v2 symbols (`HOOK_SLOTS`, `HookSlotSpec`,
   `CheckSpec`, `SLOT_MAX_TIMEOUT_SECONDS`, `run_hook_slot`).
-- In v4.6.0 (unreleased), the SDK removed zero-caller symbols `arequest_with_retry`,
+- In v4.6.0, the SDK removed zero-caller symbols `arequest_with_retry`,
   `format_check_grid`, `_validate_evidence_urls`, `"deploy-v2-canary"` routing, `"open-only"`
   mode, and the `INSTANCE_ID` fallback read, and moved 9 zero-caller aliases in `shared_env.yaml`
   to `retired`. See [CHANGELOG.md](CHANGELOG.md).
