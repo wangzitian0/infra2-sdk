@@ -56,8 +56,24 @@ print(f"standalone Canary: ok, {checks}")
 PY
 
 worker_out="$("${compose[@]}" exec -T todo python /app/worker.py --once --health-url http://127.0.0.1:8000/api/health)"
-python3 -c 'import json, sys; data = json.loads(sys.argv[1]); assert data.get("ok") is True and data.get("status_code") == 200, data' "$worker_out"
-echo "standalone Canary worker: $worker_out"
+python3 - "$worker_out" <<'PY'
+import json
+import sys
+
+records = [json.loads(line) for line in sys.argv[1].splitlines() if line.strip()]
+assert len(records) >= 2, records
+result = records[-1]
+assert (
+    result.get("ok") is True
+    and result.get("status_code") == 200
+    and result.get("service") == "platform/todo"
+), result
+assert any(
+    r.get("logger") == "platform-todo-worker" and r.get("service.name") == "platform-todo-worker"
+    for r in records[:-1]
+), records[:-1]
+PY
+echo "standalone Canary worker: verified"
 
 schema_out="$("${compose[@]}" exec -T todo python -m infra2_sdk.runtime.schema_check --metadata canary_schema:METADATA --db-url postgresql://todo:local-test-postgres@postgres:5432/todo --label canary/todo)"
 echo "$schema_out" | grep -q "ROLLBACK_CLASS: A"
