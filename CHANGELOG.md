@@ -6,6 +6,16 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+## 4.5.0 - 2026-11-24
+
+Minor release (wangzitian0/truealpha#1843). A slow bootstrap no longer takes time from the checks of a hook cell. No public name changes.
+
+### Changed (4.5.0)
+
+- `run_cell` gives the bootstrap commands of a cell their own cap, `bootstrap_cap_seconds` in `stages.yaml` (120 s), shared by all bootstrap commands of the cell. The check budget (the smaller of the sum of check timeouts and the cell budget) starts after bootstrap ends. Before, bootstrap ran inside that budget, so a slow `playwright install` made the checks time out. A cell is bounded by the bootstrap cap plus the cell budget.
+- A bootstrap timeout reads `bootstrap timed out after 120s (bootstrap cap 120s)`; before, it named the cell budget. `HookRunResult` has a new `bootstrap_seconds` field (also in `to_dict()`); it is `0.0` when the cell has no bootstrap.
+- `stages.yaml` requires a positive integer `bootstrap_cap_seconds`; a copy without it fails to load.
+
 ## 4.4.0 - 2026-11-22
 
 Minor release (wangzitian0/infra2#1823 Step 4.3). `rules.imports` can scan a repository root, so infra2 can replace its own import-boundary walker. No public name changes.

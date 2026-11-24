@@ -101,12 +101,17 @@ def _load_stages_doc(text: str) -> Mapping[str, Any]:
         return _parse_yaml_fallback(text)
 
 
-def _load_policy_table(path: str | Path | None = None) -> tuple[int, Mapping[str, CellPolicy]]:
+def _load_policy_table(
+    path: str | Path | None = None,
+) -> tuple[int, int, Mapping[str, CellPolicy]]:
     src = Path(path) if path is not None else files("infra2_sdk").joinpath("data/stages.yaml")
     data = _load_stages_doc(src.read_text(encoding="utf-8"))
     pv = data.get("policy_version")
     if type(pv) is not int or pv < 1:
         raise ValueError(f"stages.yaml: invalid policy_version {pv!r}")
+    boot_cap = data.get("bootstrap_cap_seconds")
+    if type(boot_cap) is not int or boot_cap <= 0:
+        raise ValueError(f"stages.yaml: invalid bootstrap_cap_seconds {boot_cap!r}")
     stages = data.get("stages")
     raw_cells = data.get("cells")
     if not isinstance(stages, Mapping) or not isinstance(raw_cells, Mapping):
@@ -150,10 +155,10 @@ def _load_policy_table(path: str | Path | None = None) -> tuple[int, Mapping[str
             stop_on_fail=sof,
             capabilities=frozenset(caps),
         )
-    return pv, MappingProxyType(policies)
+    return pv, boot_cap, MappingProxyType(policies)
 
 
-POLICY_VERSION, CELL_POLICIES = _load_policy_table()
+POLICY_VERSION, BOOTSTRAP_CAP_SECONDS, CELL_POLICIES = _load_policy_table()
 
 
 @dataclass(frozen=True)
@@ -577,6 +582,7 @@ class HookRunResult:
     summary: str = ""
     stderr_tail: str = ""
     checks: tuple[CheckVerdict, ...] = field(default=(), kw_only=True)
+    bootstrap_seconds: float = field(default=0.0, kw_only=True)
     cell: str = field(default="", kw_only=True)
     policy_version: int = field(default=POLICY_VERSION, kw_only=True)
 
@@ -591,6 +597,7 @@ class HookRunResult:
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["duration_seconds"] = round(self.duration_seconds, 3)
+        d["bootstrap_seconds"] = round(self.bootstrap_seconds, 3)
         return d
 
 
@@ -769,6 +776,7 @@ def _execute_cell(
     checks_file = (cwd or Path()) / artifacts_dir / HOOK_CHECKS_FILE
     checks_file.unlink(missing_ok=True)
     done: list[CheckVerdict] = []
+    boot_seconds = 0.0
 
     def flush() -> None:
         checks_file.parent.mkdir(parents=True, exist_ok=True)
@@ -795,6 +803,7 @@ def _execute_cell(
             summary,
             tail,
             checks=tuple(done),
+            bootstrap_seconds=boot_seconds,
             cell=cell_id,
             policy_version=POLICY_VERSION,
         )
@@ -834,15 +843,16 @@ def _execute_cell(
     except ValueError as err:
         return finish("fail", 2, "env", str(err), str(err))
 
-    end = start + budget
     boot_cmds = list(dict.fromkeys(r.bootstrap.strip() for r in active if r.bootstrap.strip()))
+    boot_start = time.monotonic()
+    boot_end = boot_start + BOOTSTRAP_CAP_SECONDS
+    boot_label = f"after {BOOTSTRAP_CAP_SECONDS}s (bootstrap cap {BOOTSTRAP_CAP_SECONDS}s)"
     for cmd in boot_cmds:
-        boot_label = f"after {budget}s (cell budget {budget}s)"
         ok, code, fstep, tail, _ = _run_step(
             ["sh", "-lc", cmd],
             step_name="bootstrap",
             check_id="",
-            timeout=max(end - time.monotonic(), 0.001),
+            timeout=max(boot_end - time.monotonic(), 0.001),
             clean_env=clean_env,
             cwd=cwd,
             runner=runner,
@@ -850,6 +860,7 @@ def _execute_cell(
             flush=flush,
             timeout_label=boot_label,
         )
+        boot_seconds = time.monotonic() - boot_start
         if not ok:
             msg = (
                 f"bootstrap timed out {boot_label}"
@@ -857,6 +868,8 @@ def _execute_cell(
                 else f"bootstrap exited with code {code}"
             )
             return finish("fail", code, fstep, msg, tail)
+    # The check budget starts after bootstrap, so a slow bootstrap never shortens a check.
+    end = time.monotonic() + budget
 
     first_fail: tuple[int, str, str, str] | None = None
     for r in rows:

@@ -61,8 +61,9 @@ def test_sdk_source_byte_budget() -> None:
     )
     # 4.0.0 measured 409,805 B after #236 Release B and K6 removed LlmClient and schema 2
     # and #238/#239 added the compose compiler, schema_check and the settings reference.
+    # 4.5.0 measured 412,686 B after the bootstrap cap and `bootstrap_seconds` were added.
     # A new feature raises this cap with a comment; a removal lowers it.
-    assert 150_000 <= total <= 412_000, f"src/infra2_sdk byte budget drifted: {total} B"
+    assert 150_000 <= total <= 413_000, f"src/infra2_sdk byte budget drifted: {total} B"
 
 
 def test_init_service_multi_checks_and_manifest(monkeypatch: pytest.MonkeyPatch) -> None:
