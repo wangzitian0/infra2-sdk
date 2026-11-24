@@ -10,8 +10,9 @@ The tests read the syntax trees of src/infra2_sdk. They do not import the module
   variable that no code reads.
 - Parameterized defaults and module-level join-built environment variable reads are locked in
   DYNAMIC_READS by (relative_path, function_name) -> frozenset of resolved names.
-- No read site names an alias of the contract (ENV, APP_ENV, IMAGE_TAG). An alias is read through
-  resolve_runtime_env only.
+- No read site names an alias of the contract. An alias is read through resolve_runtime_env
+  only. The contract has no alias today: ENV, APP_ENV and IMAGE_TAG are retired and are in
+  REMOVED_ENV_NAMES, so the removed-name scan covers them (infra2#1823 N1).
 
 A read site is one of these forms. The receiver can have any name.
 

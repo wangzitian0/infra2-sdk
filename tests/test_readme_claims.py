@@ -340,5 +340,5 @@ def test_the_readme_counts_the_fixed_names_and_the_variables_of_the_contract() -
     assert lost and int(lost.group(1)) == len(REMOVED_ENV_MEMBERS) == 21
 
     groups = [item for item in runtime_env_contract()["variables"] if item["aliases"]]
-    assert len(groups) == 2
-    assert "`init_service` reads two groups of aliases" in flat
+    assert groups == []
+    assert "The contract has no alias today, so this check finds no conflict." in flat

@@ -29,7 +29,7 @@ services:
       VAULT_ADDR: ${VAULT_ADDR}
       VAULT_ROLE_ID: ${VAULT_ROLE_ID:-}
       VAULT_SECRET_ID: ${VAULT_SECRET_ID:-}
-      ENV: ${ENV}
+      ENVIRONMENT: ${ENV}
       ENV_SUFFIX: ${ENV_SUFFIX:-}
       CONFIGURATION_SHA256: ${CONFIGURATION_SHA256:-}
       VAULT_AGENT_HCL: |
@@ -69,7 +69,7 @@ services:
         }
       VAULT_SECRETS_TEMPLATE: |
         {{- /* Generated from platform/todo by infra2_sdk.secrets. Do not edit. */ -}}
-        {{- $$env := env "ENV" -}}
+        {{- $$env := env "ENVIRONMENT" -}}
         {{- with secret (printf "secret/data/platform/%s/todo" $$env) }}
         DATABASE_URL={{ printf "%q" (printf "postgresql://todo_app:%s@platform-postgres%s:5432/postgres" .Data.data.TODO_POSTGRES_PASSWORD (env "ENV_SUFFIX")) }}
         {{- end }}
@@ -99,7 +99,7 @@ services:
     - secrets:/vault/secrets
     labels:
     - infra2.vault.config.sha256=8f1ed993986ab8709ef19bc161abab2fb947f60e7449dba50bb7964128a26f38
-    - infra2.vault.template.sha256=df17112e71c8b8295037c2f5e2504ab82da728baf334421b150994c97dc971e4
+    - infra2.vault.template.sha256=20c3144651298d5db438c77c8bf47d52b6d9a949401faf954cbeb2fe1bbd6a50
     logging:
       driver: json-file
       options:

@@ -138,7 +138,7 @@ def test_compiled_todo_sidecar_env_equals_handwritten_env() -> None:
 
 def test_compiled_todo_sidecar_supplies_every_env_name_the_template_reads() -> None:
     read = set(re.findall(r'\benv "([A-Z_][A-Z0-9_]*)"', _body("todo.secrets.ctmpl")))
-    assert read == {"ENV", "ENV_SUFFIX"}
+    assert read == {"ENVIRONMENT", "ENV_SUFFIX"}
     assert read <= set(_compiled_todo()["services"]["vault-agent"]["environment"])
 
 
@@ -776,14 +776,16 @@ def test_preview_mode_adds_the_db_and_overrides_after_the_secrets_are_sourced() 
         "finance_report-preview-db$${ENV_SUFFIX}:5432/preview"
     )
     assert script.index(f'export DATABASE_URL="{url}"') > source_at
-    assert script.index('export ENVIRONMENT="$$ENV"') > source_at
-    assert script.index('export ENVIRONMENT="$$ENV"') < script.index('exec "$$@"')
+    # Compose fills `${ENV}` from the deploy: the container needs no ENV (infra2#1823 N1).
+    assert script.index('export ENVIRONMENT="${ENV}"') > source_at
+    assert script.index('export ENVIRONMENT="${ENV}"') < script.index('exec "$$@"')
+    assert "$$ENV" not in script
     assert backend["depends_on"] == {
         "vault-agent": {"condition": "service_started"},
         "db": {"condition": "service_healthy"},
     }
     frontend_script = services["frontend"]["entrypoint"][2]
-    assert 'export ENVIRONMENT="$$ENV"' in frontend_script
+    assert 'export ENVIRONMENT="${ENV}"' in frontend_script
     assert "DATABASE_URL" not in frontend_script
 
 

@@ -345,7 +345,7 @@ def _issued_telemetry_env(environment: str) -> dict[str, str]:
         "service.version": sha,
     }
     return {
-        "ENV": environment,
+        "ENVIRONMENT": environment,
         "OTEL_EXPORTER_OTLP_ENDPOINT": COLLECTOR_OTLP_HTTP,
         "OTEL_SERVICE_NAME": "platform-todo",
         "OTEL_RESOURCE_ATTRIBUTES": ",".join(f"{k}={v}" for k, v in sorted(attributes.items())),
@@ -1070,7 +1070,7 @@ def test_startup_fails_fast_when_the_endpoint_comes_without_an_identity(
     """The endpoint turns export on. `init_service` would name the data `platform-todo` on
     its own, so it runs with `require_issued_identity=True` and refuses a deploy that issued
     no identity. The error names every missing key and no value."""
-    monkeypatch.setenv("ENV", "staging")
+    monkeypatch.setenv("ENVIRONMENT", "staging")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", COLLECTOR_OTLP_HTTP)
     with pytest.raises(ValueError, match="OTEL_SERVICE_NAME") as failure:
         _load_todo_app()

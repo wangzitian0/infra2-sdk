@@ -169,6 +169,9 @@ EXPECTED_REMOVED_ENV_NAMES = frozenset(
         "DATABASE_CONNECT_TIMEOUT_SECONDS",
         "DATABASE_STATEMENT_TIMEOUT_SECONDS",
         "SERVICE_NAME",
+        "ENV",
+        "APP_ENV",
+        "IMAGE_TAG",
     ]
 )
 
@@ -189,7 +192,7 @@ _LIVE_OWNER = [pair for pair in REMOVED_NAMES if pair[0] not in REMOVED_MODULES]
 def test_removed_name_lists_have_unique_entries() -> None:
     assert len(REMOVED_NAMES) == len(set(REMOVED_NAMES)) == 77
     assert len(REMOVED_ENV_MEMBERS) == len(set(REMOVED_ENV_MEMBERS)) == 21
-    assert len(REMOVED_ENV_NAMES) == len(set(REMOVED_ENV_NAMES)) == 29
+    assert len(REMOVED_ENV_NAMES) == len(set(REMOVED_ENV_NAMES)) == 32
 
 
 def test_removed_name_lists_equal_the_independent_literal_sets() -> None:
@@ -367,7 +370,7 @@ def test_removed_environment_name_is_not_in_the_contract(name: str) -> None:
         ("smoke_package_data", "REMOVED_MODULES", 11),
         ("smoke_removed_names", "REMOVED_NAMES", 77),
         ("smoke_removed_names", "REMOVED_ENV_MEMBERS", 21),
-        ("smoke_removed_names", "REMOVED_ENV_NAMES", 29),
+        ("smoke_removed_names", "REMOVED_ENV_NAMES", 32),
     ],
 )
 def test_the_wheel_smoke_names_the_list_that_changed_size(

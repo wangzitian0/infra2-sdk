@@ -6,6 +6,20 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+### Removed (Unreleased)
+
+- Retire the runtime aliases `ENV`, `APP_ENV` (use `ENVIRONMENT`) and `IMAGE_TAG` (use `SERVICE_VERSION`) (wangzitian0/infra2#1823 N1). `data/shared_env.yaml` moves them from `deprecated_aliases` to `retired`, so `check_shared_env_conformance` still flags them. `resolve_runtime_env`, `environment_from_env`, `OtelSettings.from_env` and `init_service` do not read them. A retired name cannot conflict with `ENVIRONMENT` or `SERVICE_VERSION`. `REMOVED_ENV_NAMES` holds 32 names.
+- `render_agent_template` writes `{{- $env := env "ENVIRONMENT" -}}`. Before, it read `ENV` when `ENVIRONMENT` was empty.
+
+### Changed (Unreleased)
+
+- `compile_compose` gives the `x-vault` sidecar `ENVIRONMENT: ${ENV}` in place of `ENV: ${ENV}`. Compose still fills the value from the deploy variable `ENV`.
+- In preview mode, the `x-preview` override writes `export ENVIRONMENT="${ENV}"` as Compose text. Before, it was `$$ENV` and needed an `ENV` variable in the container.
+- The strict `init_service` error says `set ENVIRONMENT to a known tier` when the contract has no alias of `ENVIRONMENT`.
+- `docs/app-integration-contract.md` says that no deprecated alias remains.
+
+**Upgrade order:** a container that has only `ENV` loses its tier with this version, and a Vault Agent renders `secret/data/<project>//<service>`. Deploy wangzitian0/infra2#1969 (each hand-written service gets `ENVIRONMENT` next to `ENV`) before a consumer locks this version.
+
 ## 4.6.0 - 2026-11-24
 
 Minor release cleaning legacy shims, tightening contract guards, and upgrading Canary Todo to an App-peer reference consumer.

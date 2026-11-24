@@ -165,8 +165,8 @@ fi
 set -a
 . /secrets/.env
 set +a
-{overrides}exec "$@"
 """
+_EXEC_LINE = 'exec "$@"\n'
 
 
 def _dollar(text: str) -> str:
@@ -199,7 +199,7 @@ def _vault_sidecar(name: str, template: str) -> dict[str, Any]:
             "VAULT_ADDR": "${VAULT_ADDR}",
             "VAULT_ROLE_ID": "${VAULT_ROLE_ID:-}",
             "VAULT_SECRET_ID": "${VAULT_SECRET_ID:-}",
-            "ENV": "${ENV}",
+            "ENVIRONMENT": "${ENV}",
             # A template reads it with `env "ENV_SUFFIX"`, for example to build DATABASE_URL.
             "ENV_SUFFIX": "${ENV_SUFFIX:-}",
             _SHA_KEY: _SHA_REF,
@@ -236,7 +236,8 @@ def _wrap_vault_service(
     spec["entrypoint"] = [
         "sh",
         "-c",
-        _dollar(_WAIT_SCRIPT.format(max_wait=wait, overrides=overrides)),
+        # `overrides` is Compose text already: it can hold a `${VAR}` for Compose.
+        _dollar(_WAIT_SCRIPT.format(max_wait=wait)) + overrides + _dollar(_EXEC_LINE),
         "--",
     ]
     depends = spec.get("depends_on", [])
@@ -463,14 +464,18 @@ def _preview_options(spec: dict[str, Any], where: str) -> dict[str, Any]:
 
 
 def _preview_overrides(options: dict[str, Any], db_container: str) -> str:
-    """Shell lines that run after /secrets/.env is sourced, so they win over Vault values."""
+    """Shell lines that run after /secrets/.env is sourced, so they win over Vault values.
+
+    The result is Compose text, not shell text: Compose fills each `${VAR}` in it.
+    """
     lines = []
     scheme = options.get("database_url")
     if scheme is not None:
         url = f"{scheme}://ephemeral:ephemeral@{db_container}:5432/preview"
-        lines.append(f'export DATABASE_URL="{url}"')
+        lines.append(_dollar(f'export DATABASE_URL="{url}"'))
     if scheme is not None or options.get("environment"):
-        lines.append('export ENVIRONMENT="$ENV"')
+        # Compose fills `${ENV}` from the deploy, so the container needs no ENV (infra2#1823).
+        lines.append('export ENVIRONMENT="${ENV}"')
     return "".join(f"{line}\n" for line in lines)
 
 

@@ -73,12 +73,15 @@ def test_deploy_v2_preview_alias_preserves_name_and_resolves_tier(name) -> None:
     assert runtime == RuntimeEnvironment(name=name, tier=EnvironmentTier.PREVIEW)
 
 
-def test_environment_from_env_is_transparent_and_conflict_safe() -> None:
-    assert environment_from_env({}) == RuntimeEnvironment("local_dev", EnvironmentTier.LOCAL_DEV)
-    assert environment_from_env({"ENV": "staging"}).tier is EnvironmentTier.STAGING
-    assert environment_from_env({"APP_ENV": "prod"}).tier is EnvironmentTier.PRODUCTION
-    with pytest.raises(ValueError, match="conflicting environment variables"):
-        environment_from_env({"ENVIRONMENT": "staging", "ENV": "production"})
+def test_environment_from_env_reads_only_environment() -> None:
+    local = RuntimeEnvironment("local_dev", EnvironmentTier.LOCAL_DEV)
+    assert environment_from_env({}) == local
+    # infra2#1823 N1 retired ENV and APP_ENV: the SDK does not read them.
+    assert environment_from_env({"ENV": "staging"}) == local
+    assert environment_from_env({"APP_ENV": "prod"}) == local
+    # A retired name cannot conflict with ENVIRONMENT.
+    mixed = environment_from_env({"ENVIRONMENT": "staging", "ENV": "production"})
+    assert mixed.tier is EnvironmentTier.STAGING
 
 
 def test_strict_environment_requires_explicit_configuration() -> None:
@@ -254,14 +257,16 @@ def test_every_runtime_env_key_has_exactly_one_spec() -> None:
         assert runtime_env_spec(key).key is key
 
 
-def test_the_contract_keeps_three_aliases_and_no_other() -> None:
+def test_the_contract_keeps_no_alias() -> None:
     aliases = {alias for spec in RUNTIME_ENV_SPECS for alias in spec.aliases}
-    assert aliases == {"ENV", "APP_ENV", "IMAGE_TAG"}
-    assert runtime_env_spec(RuntimeEnvKey.ENVIRONMENT).aliases == ("ENV", "APP_ENV")
-    assert runtime_env_spec(RuntimeEnvKey.SERVICE_VERSION).aliases == ("IMAGE_TAG",)
-    assert resolve_runtime_env({"IMAGE_TAG": "v1.2.3"}, RuntimeEnvKey.SERVICE_VERSION).source == (
-        "IMAGE_TAG"
-    )
+    assert aliases == set()
+    for name, key in (
+        ("ENV", RuntimeEnvKey.ENVIRONMENT),
+        ("APP_ENV", RuntimeEnvKey.ENVIRONMENT),
+        ("IMAGE_TAG", RuntimeEnvKey.SERVICE_VERSION),
+    ):
+        resolved = resolve_runtime_env({name: "v1.2.3"}, key)
+        assert (resolved.value, resolved.source) == (None, None), name
 
 
 def test_the_service_name_variable_has_no_alias() -> None:
