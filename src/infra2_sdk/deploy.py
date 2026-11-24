@@ -320,9 +320,6 @@ def validate_evidence_urls(
         )
 
 
-_validate_evidence_urls = validate_evidence_urls
-
-
 def _verify_run(
     run: Mapping[str, object],
     *,
@@ -439,7 +436,7 @@ def verify_production_evidence(
     fetch_json: Callable[[str], Any] | None = None,
 ) -> None:
     fetch = fetch_json or _default_github_json_fetcher()
-    _validate_evidence_urls(request)
+    validate_evidence_urls(request)
     repo = request.source_repository
     src_id = _github_evidence_number(
         request.evidence.source_run_url,

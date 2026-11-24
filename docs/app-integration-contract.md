@@ -23,7 +23,7 @@ when they are stale. Regenerate them with `python scripts/render_app_contract.py
 
 ## 3. Serve the standard endpoints and telemetry
 
-- Call `init_service(app, service_name, ...)` once. It serves `/livez`, `/readyz`, `/health`,
+- Call `init_service(app, name, ...)` once. It serves `/livez`, `/readyz`, `/health`,
   starts OpenTelemetry from the identity the deploy issues and adds `X-Request-ID`.
 - Do not create OpenTelemetry providers or `structlog` configuration in the app.
 
@@ -78,6 +78,12 @@ when they are stale. Regenerate them with `python scripts/render_app_contract.py
 | frontend_telemetry | `OPENPANEL_ENVIRONMENT` | no | infra2, finance_report, truealpha |
 | frontend_telemetry | `OPENPANEL_SCRIPT_URL` | no | infra2, finance_report |
 
+| Deprecated alias | Use |
+|---|---|
+| `ENV` | `ENVIRONMENT` |
+| `APP_ENV` | `ENVIRONMENT` |
+| `IMAGE_TAG` | `SERVICE_VERSION` |
+
 | Retired name | Use |
 |---|---|
 | `AI_PROVIDER` | `LLM_PROVIDER` |
@@ -94,6 +100,15 @@ when they are stale. Regenerate them with `python scripts/render_app_contract.py
 | `TODO_POSTGRES_PASSWORD` | `DATABASE_URL` |
 | `TODO_POSTGRES_DATABASE` | `DATABASE_URL` |
 | `TRUEALPHA_CAPTURE_APPROVED_BY` | `CAPTURE_APPROVED_BY` |
+| `DATA_ENGINE_IMAGE_DIGEST` | `IMAGE_DIGEST` |
+| `TRUEALPHA_DATA_ENGINE_IMAGE_DIGEST` | `IMAGE_DIGEST` |
+| `TRUEALPHA_CONFIGURATION_SHA256` | `CONFIGURATION_SHA256` |
+| `RELEASE_MANIFEST_ID` | `RELEASE_ID` |
+| `TRUEALPHA_RELEASE_MANIFEST_ID` | `RELEASE_ID` |
+| `CANARY_S3_ENDPOINT_URL` | `S3_ENDPOINT` |
+| `CANARY_S3_BUCKET` | `S3_BUCKET` |
+| `CANARY_S3_ACCESS_KEY` | `S3_ACCESS_KEY` |
+| `CANARY_S3_SECRET_KEY` | `S3_SECRET_KEY` |
 
 | Cell (app owned) | Trigger | Budget (s) | Check list |
 |---|---|---|---|

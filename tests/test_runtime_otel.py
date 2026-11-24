@@ -117,10 +117,16 @@ def test_disabled_flag_takes_precedence_over_invalid_endpoint() -> None:
     assert settings.endpoint is None
 
 
-def test_otel_reads_standard_instance_id() -> None:
-    settings = OtelSettings.from_env({"INSTANCE_ID": "worker-17"})
+def test_otel_reads_standard_instance_id_attribute_and_ignores_legacy_env() -> None:
+    settings = OtelSettings.from_env(
+        {
+            "INSTANCE_ID": "ignored-legacy",
+            "OTEL_RESOURCE_ATTRIBUTES": "service.instance.id=worker-17",
+        }
+    )
     assert settings.instance_id == "worker-17"
     assert resource_attributes(settings)["service.instance.id"] == "worker-17"
+    assert OtelSettings.from_env({"INSTANCE_ID": "worker-17"}).instance_id == ""
 
 
 def test_otel_uses_standard_resource_attributes_without_custom_sdk_variables() -> None:

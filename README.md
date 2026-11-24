@@ -36,17 +36,17 @@ python -m pip install \
 | `infra2_sdk.ci` | Delivery-stage vocabulary, CI gate inventory validation, workflow step inspection, cron schedule gap analysis, coverage ratchets, and GitHub Actions helpers |
 | `infra2_sdk.deploy` | Deploy lifecycle wire contracts, health poller, wheel version parser, deployed release identity reader, production evidence policies, and CLI at `python -m infra2_sdk.deploy` |
 | `infra2_sdk.fastapi` | `init_service`: /livez, /readyz and /health routes for a FastAPI app, multi-dependency checks, probe noise suppression, and OTLP telemetry bootstrap |
-| `infra2_sdk.manifests` | Settings and runtime verification hooks manifest CLI driver (`--write`, `--check`, `--validate-env`, `--check-hooks`), `ManifestSpec`, `RuntimeHooksManifest`, `CheckRow`, `CellPolicy`, `CellOverrides`, `OverrideReason`, `POLICY_VERSION`, `CELL_POLICIES`, `HookRunResult`, `StageHookPlan`, `STAGE_HOOK_PLANS`, `stage_hook_plan`, `load_hooks_manifest`, `resolve_check_cells`, `run_cell`, `format_check_grid`, `all_manifests`, `check`, and `load` |
+| `infra2_sdk.manifests` | Settings and runtime verification hooks manifest CLI driver (`--write`, `--check`, `--validate-env`, `--check-hooks`, `--run-cell`), `BOOTSTRAP_CAP_SECONDS`, `CURRENT_HOOKS_SCHEMA_VERSION`, `ManifestSpec`, `RuntimeHooksManifest`, `CheckRow`, `CellPolicy`, `CellOverrides`, `OverrideReason`, `POLICY_VERSION`, `CELL_POLICIES`, `HookRunResult`, `StageHookPlan`, `STAGE_HOOK_PLANS`, `stage_hook_plan`, `load_hooks_manifest`, `resolve_check_cells`, `run_cell`, `all_manifests`, `check`, and `load` |
 | `infra2_sdk.stage_record` | `StageRecord`: one phase record of a stage task (checks, units, uncovered, verdict) |
 | `infra2_sdk.observability` | Flap hysteresis trackers, parameterized self-healing GitHub issue trails, and OpenPanel export query & funnel summary primitives |
 | `infra2_sdk.refs` | Git ref resolution, PR heads, patch tag calculation (`next_patch_tag`), registry image digests, remote ref queries, commit ancestry checks, and credential redaction |
 | `infra2_sdk.routing` | Canonical domain and routing SSOT: `CANARY_SLOT`, hostname resolution, and service URL resolution |
-| `infra2_sdk.rules.compose` | Pure compose-file rules (memory ceilings, bare `:latest` image refs) and `compile_compose`, which expands `x-infra2` defaults and `x-vault` into plain Compose YAML |
+| `infra2_sdk.rules.compose` | Pure compose-file rules (memory ceilings, bare `:latest` image refs) and `compile_compose`, which expands `x-infra2` defaults, `x-vault`, `x-routes`, `x-capabilities`, and `x-preview` into plain Compose YAML |
 | `infra2_sdk.rules.imports` | Pure AST layered import-boundary, dependency-cycle, and `__all__` export validators |
 | `infra2_sdk.runtime.config_schema` | Environment field contracts, injection manifests, startup environment assertions (`assert_environment`), and configuration fingerprints |
 | `infra2_sdk.runtime.environment` | Canonical six-tier environment vocabulary, variable resolution, and contract definitions |
 | `infra2_sdk.runtime.health` | Framework-agnostic readiness checks (`check_health`), probe runners, and dependency declarations |
-| `infra2_sdk.runtime.http` | Retry-After HTTP request execution (`request_with_retry`, `arequest_with_retry`), `HttpClientSettings`, and the HTTP reachability probe |
+| `infra2_sdk.runtime.http` | Retry-After HTTP request execution (`request_with_retry`), `HttpClientSettings`, and the HTTP reachability probe |
 | `infra2_sdk.runtime.llm` | `LlmSettings`, `DecodingSpec`, `create_llm_agent`, `create_llm_model`, `GuardedLlmModel`, `llm_call_context`, SHA-256 helpers, redaction, and VCR replay config |
 | `infra2_sdk.runtime.otel` | Explicit OTLP provider bootstrap, probe span suppression, and env-configured samplers |
 | `infra2_sdk.runtime.postgres` | `PostgresSettings`, credential redaction, and psycopg reachability/write probe (`probe_postgres`) |
@@ -62,7 +62,7 @@ python -m pip install \
 | Service bootstrap | `init_service` | `infra2_sdk.fastapi` | Mounts `/livez`, `/readyz`, `/health` routes and configures JSON logs and OpenTelemetry |
 | Worker bootstrap | `init_worker` | `infra2_sdk.runtime.otel` | Configures JSON logs and OpenTelemetry providers for non-HTTP workers |
 | Health probes | `check_health`, `run_probes`, `probe_orchestrator` | `infra2_sdk.runtime.health` | Framework-agnostic readiness evaluation across declared dependency probes |
-| HTTP client | `request_with_retry`, `arequest_with_retry`, `probe_http` | `infra2_sdk.runtime.http` | Standard httpx retry helpers honoring `Retry-After` plus a reachability probe |
+| HTTP client | `request_with_retry`, `probe_http` | `infra2_sdk.runtime.http` | Standard httpx retry helper honoring `Retry-After` plus a reachability probe |
 | LLM runtime | `create_llm_agent`, `create_llm_model`, `GuardedLlmModel`, `DecodingSpec`, `LlmSettings`, `llm_call_context`, `prompt_sha256`, `schema_sha256`, `request_sha256`, `redact_llm_error`, `redact_uri`, `sanitize_headers`, `vcr_llm_config`, `allow_vcr_model_requests` | `infra2_sdk.runtime.llm` | Unified pydantic-ai Agent factory, single-layer retry, OTel instrumentation, error/URI redaction, and VCR helpers |
 | PostgreSQL | `probe_postgres`, `redact_postgres_error` | `infra2_sdk.runtime.postgres` | Psycopg reachability/write probe with credential redaction |
 | S3 storage | `create_s3_client`, `probe_s3`, `ensure_bucket`, `put_object_bytes` | `infra2_sdk.runtime.s3` | Boto3 client initialization, bucket reachability probe, bucket creation, and byte writes |
@@ -89,8 +89,8 @@ storage, database, HTTP, or telemetry abstractions:
   public access remain application policy.
 - PostgreSQL accepts a PostgreSQL URI and performs only a `SELECT 1` reachability probe. Failure
   evidence redacts the configured DSN and password before it enters logs or alerts.
-- HTTP returns an httpx client. Provider retry budgets and idempotency policy remain with the
-  caller.
+- HTTP provides `HttpClientSettings`, `request_with_retry` over a caller-provided httpx client,
+  and `probe_http`. Provider retry budgets and idempotency policy remain with the caller.
 - OpenTelemetry configures OTLP/HTTP providers only when explicitly requested. OTLP endpoints
   require a valid HTTP(S) host, reject embedded credentials and fragments, and preserve query
   parameters when deriving per-signal paths. Trace-context propagation stays with the
@@ -316,19 +316,19 @@ block is stale.
 
 Canonical and alias values may coexist only when equal. A conflict between a canonical name and
 an alias fails in `resolve_runtime_env` with `EnvironmentConflictError`. No variable of the
-contract is sensitive today. The `sensitive` field stays for the wire shape, and
-`resolve_env(..., sensitive=True)` keeps the values out of its error message. Missing OTLP
-configuration disables telemetry without affecting application startup.
+contract is sensitive today. The `sensitive` field stays for the wire shape, and internal
+resolution keeps sensitive values out of its error message. Missing OTLP configuration disables
+telemetry without affecting application startup.
 `OTEL_SDK_DISABLED=true` takes precedence over the endpoint and ignores it completely.
 
 The table lists the variables that the runtime environment resolver and `OtelSettings.from_env` resolve
 through `RuntimeEnvKey`. The settings of the S3, PostgreSQL and HTTP adapters take explicit values,
-so no row of the table belongs to them. Ten more fixed names exist outside the table.
-The runtime environment resolver reads `GITHUB_ACTIONS`. `OtelSettings.from_env` reads `INSTANCE_ID`,
+so no row of the table belongs to them. Nine more fixed names exist outside the table.
+The runtime environment resolver reads `GITHUB_ACTIONS`. `OtelSettings.from_env` reads
 `OTEL_SDK_DISABLED`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_TRACES_SAMPLER` and
 `OTEL_TRACES_SAMPLER_ARG`. `VaultKvBackend.from_environ` reads `VAULT_ADDR`, `VAULT_TOKEN`,
 `VAULT_ROLE_ID` and `VAULT_SECRET_ID` from the mapping you pass. Other names come from the caller:
-the manifest that you pass to `validate_env`, and the token variable that a CLI option names.
+the manifest that you pass to `validate_environment`, and the token variable that a CLI option names.
 
 `ENVIRONMENT` has two dimensions. The resolved tier controls behavior using the six
 portable tiers. The resolved name preserves the deployment display identity. Therefore
@@ -408,9 +408,8 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
 - In v3.0.0, these legacy symbols were removed:
   - The `infra2_sdk.images` module and `data/platform_images.yaml`;
   - `RuntimeIdentity.to_otel_resource_attributes()`.
-- In v3.1.1, these private aliases were removed. Use the public name:
-  `runtime.otel._signal_endpoint` is `signal_endpoint`, `refs._ls_remote_rows` is
-  `ls_remote_rows`, `refs._redact_repo` is `redact_repo`.
+- In v3.1.1, `runtime.otel._signal_endpoint` became public `signal_endpoint` (`refs._ls_remote_rows`
+  and `refs._redact_repo` remain private internal helpers; `redact_repo` left in v3.23.0).
 - In v2.4.0, the private module `infra2_sdk._transport` was removed; import `infra2_sdk.transport`.
 - In v3.3.0, the six compatibility shim modules were removed. Import the canonical module:
   - `infra2_sdk.dispatch` and `infra2_sdk.deploy_health`: use `infra2_sdk.deploy`;
@@ -541,8 +540,9 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   `delivery.acceleration_allowed`, and `delivery.detect_disagreement`).
 - In v3.8.2, the SDK retired `infra2_sdk.runtime.identity` (`RuntimeIdentity` and
   `canonical_sha256`), `delivery.validate_stage_result`, and `RuntimeEnvKey.INSTANCE_ID` after all
-  consumers converged on `OtelSettings(require_issued_identity=True)`. `INSTANCE_ID` remains a fixed
-  environment read for `OtelSettings.from_env`.
+  consumers converged on `OtelSettings(require_issued_identity=True)`. The remaining `INSTANCE_ID`
+  fixed fallback read was removed in v4.6.0; supply `service.instance.id` via
+  `OTEL_RESOURCE_ATTRIBUTES`.
 - In v3.14.0, the SDK removed 17 zero-caller top-level symbols across `transport`
   (`TransportErrorKind`, `TransportFailure`, `classify_transport_error`, `ThrottlePolicy`,
   `paced_transport`, `decode_decimal_json`), `delivery` (`SmokeCheckResult`, `SmokeCheck`,
@@ -562,15 +562,21 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   `observability.{ScheduleError,crons_in,largest_gap}`).
 - In v3.18.0 (`#158`), `LlmSettings` removed retired task-slot fields (`primary_model`,
   `ocr_model`, `vision_model`, `fallback_models`, `vision_fallback_models`, `layout_parsing_path`)
-  and `_RoleDefault` in favor of `large`, `small`, and `multimodal` role fields and `role_model` /
-  `role_reasoning_effort`.
+  and `_RoleDefault` in favor of `large_model`, `small_model`, and `multimodal_model` fields and
+  `role_model` / `role_reasoning_effort`.
 - In v3.21.0 (`#184`), the SDK retired `infra2_sdk.delivery` (including `assert_manifest_fresh`)
   and generalized `ci.largest_gap` across arbitrary cron schedules.
 - In v3.22.0 (`#186`), the SDK retired `deploy.dispatch_and_wait` so callers dispatch workflows
   and poll health explicitly.
-- `tests/surface.json` records the reason for each name in `__all__`: a consumer imports it, the
-  README documents it, or a recorded decision holds it.
-- `CommandRunner` protocol is exported from `infra2_sdk.refs` for subprocess runner injection.
+- In v4.0.0 (`#236` and `infra2#1644`), the SDK retired `LlmClient`, `LlmResponse`, legacy
+  `LlmSettings` extraction fields, and hook schema v2 symbols (`HOOK_SLOTS`, `HookSlotSpec`,
+  `CheckSpec`, `SLOT_MAX_TIMEOUT_SECONDS`, `run_hook_slot`).
+- In v4.6.0 (unreleased), the SDK removed zero-caller symbols `arequest_with_retry`,
+  `format_check_grid`, `_validate_evidence_urls`, `"deploy-v2-canary"` routing, `"open-only"`
+  mode, and the `INSTANCE_ID` fallback read, and moved 9 zero-caller aliases in `shared_env.yaml`
+  to `retired`. See [CHANGELOG.md](CHANGELOG.md).
+- `tests/surface.json` records the reason for each name in `__all__`: a consumer imports it or the
+  README documents it.
 
 ## Development
 

@@ -489,7 +489,7 @@ def render_agent_template(
     env_expr = f'"{source_env}"' if source_env else "$env"
     lines = [
         f"{{{{- /* Generated from {manifest.source} by infra2_sdk.secrets. Do not edit. */ -}}}}",
-        '{{- $env := env "ENV" -}}',
+        '{{- $env := or (env "ENVIRONMENT") (env "ENV") -}}',
     ]
     own: list[EnvironmentField] = []
     providers: dict[str, list[EnvironmentField]] = {}
@@ -601,7 +601,7 @@ def _normalize_policy_env(value: str | None) -> str:
     if val in mapped:
         return mapped[val]
     if any(ch in val for ch in ("/", "\\", " ", "\t", "\n")):
-        raise ValueError("ENV name must not include '/' or whitespace")
+        raise ValueError("environment name must not include '/' or whitespace")
     return val.replace("-", "_")
 
 

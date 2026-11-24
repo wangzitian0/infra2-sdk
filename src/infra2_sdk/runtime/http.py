@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
-from collections.abc import Awaitable, Callable, Collection
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -121,40 +120,6 @@ def request_with_retry(
     raise AssertionError("unreachable")  # pragma: no cover
 
 
-async def arequest_with_retry(
-    client: Any,
-    method: str,
-    url: str,
-    *,
-    max_attempts: int = 3,
-    retry_statuses: Collection[int] = _DEFAULT_RETRY_STATUSES,
-    backoff_base: float = 0.5,
-    max_backoff: float = 30.0,
-    asleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
-    **kwargs: Any,
-) -> Any:
-    """Execute an async httpx request with Retry-After and exponential backoff."""
-    if max_attempts < 1:
-        raise ValueError("max_attempts must be at least 1")
-    httpx = require("httpx", extra="http")
-    for attempt in range(max_attempts):
-        try:
-            resp = await client.request(method, url, **kwargs)
-        except (httpx.TransportError, OSError):
-            if attempt + 1 >= max_attempts:
-                raise
-            await asleep(
-                _retry_delay(None, attempt, backoff_base=backoff_base, max_backoff=max_backoff)
-            )
-            continue
-        if int(resp.status_code) not in retry_statuses or attempt + 1 >= max_attempts:
-            return resp
-        await asleep(
-            _retry_delay(resp.headers, attempt, backoff_base=backoff_base, max_backoff=max_backoff)
-        )
-    raise AssertionError("unreachable")  # pragma: no cover
-
-
 async def probe_http(
     url: str,
     *,
@@ -183,7 +148,6 @@ async def probe_http(
 
 __all__ = [
     "HttpClientSettings",
-    "arequest_with_retry",
     "probe_http",
     "request_with_retry",
 ]

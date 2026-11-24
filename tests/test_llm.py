@@ -868,3 +868,35 @@ def test_google_model_allows_one_vendor_attempt() -> None:
     )
     retry = model.client._api_client._http_options.retry_options
     assert retry is not None and retry.attempts == 1
+
+
+@pytest.mark.parametrize(
+    ("provider", "missing_mod", "expected_hint"),
+    [
+        ("anthropic", "anthropic", "pydantic-ai-slim[anthropic]"),
+        ("google", "google.genai.types", "pydantic-ai-slim[google]"),
+    ],
+)
+def test_optional_non_zai_provider_error_points_to_provider_extra(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+    missing_mod: str,
+    expected_hint: str,
+) -> None:
+    import importlib
+
+    real_import = importlib.import_module
+
+    def fake_import(name: str, package: str | None = None):
+        if name == missing_mod:
+            raise ImportError(name)
+        return real_import(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", fake_import)
+    with pytest.raises(RuntimeError) as exc_info:
+        create_llm_model(
+            LlmSettings(provider=provider, api_key="test-key"), instrument=False, guard=False
+        )
+    msg = str(exc_info.value)
+    assert expected_hint in msg
+    assert "infra2-sdk[pydantic-ai]" not in msg

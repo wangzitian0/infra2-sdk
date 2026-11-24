@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
+import re
 from pathlib import Path
+
+from infra2_sdk.fastapi import init_service
 
 ROOT = Path(__file__).resolve().parents[1]
 PAGE = ROOT / "docs" / "app-integration-contract.md"
@@ -36,6 +40,8 @@ def test_the_block_names_every_canonical_name_retired_name_and_app_cell() -> Non
     for entries in contract["groups"].values():
         for entry in entries:
             assert f"`{entry['name']}`" in block
+            for alias in entry.get("deprecated_aliases") or ():
+                assert f"| `{alias}` | `{entry['name']}` |" in block
     for entry in contract["retired"]:
         assert f"| `{entry['name']}` | `{entry['use']}` |" in block
     for cell_id, policy in CELL_POLICIES.items():
@@ -43,3 +49,15 @@ def test_the_block_names_every_canonical_name_retired_name_and_app_cell() -> Non
         manual = f"`{cell_id}` is a manual cell for a person. No rule tells an agent to run it."
         assert (manual in block) is (policy.owner == "app" and policy.trigger == "manual"), cell_id
     assert "`local.post` is a manual cell for a person." in block
+
+
+def test_prose_init_service_parameters_match_signature() -> None:
+    text = PAGE.read_text(encoding="utf-8")
+    match = re.search(r"init_service\(([^)]+)\)", text)
+    assert match is not None, "app-integration-contract.md must show an init_service(...) call"
+    sig_params = set(inspect.signature(init_service).parameters)
+    tokens = [part.strip().split("=")[0].strip() for part in match.group(1).split(",")]
+    for token in tokens:
+        if token == "...":
+            continue
+        assert token in sig_params, f"init_service parameter {token!r} not in {sorted(sig_params)}"

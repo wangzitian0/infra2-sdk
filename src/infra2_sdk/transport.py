@@ -117,4 +117,4 @@ def urllib_transport(*, timeout: float = 30.0) -> HttpTransport:
     return send
 
 
-__all__ = ["urllib_transport"]
+__all__ = ["HttpTransport", "urllib_transport"]

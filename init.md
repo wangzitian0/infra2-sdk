@@ -23,8 +23,8 @@ Across the issues and releases since `v0.1.0`, consumer requirements and defect 
 
 - `import infra2_sdk` and `import infra2_sdk.runtime` perform zero network I/O, zero filesystem mutation, and zero global provider registration (`tests/test_exports.py`).
 - Core runtime contracts declare zero third-party adapter dependencies in `pyproject.toml` (only `pyyaml` for offline manifest and workflow parsing, lazy-loaded where required). Consumers install only the optional extras they need (`s3`, `postgres`, `http`, `otel`, `fastapi`, `pydantic-ai`, `all`).
-- Protocol adapters return standard upstream objects (`boto3` S3 client, `psycopg` connection probe, `httpx.Client` and `httpx.AsyncClient`, OpenTelemetry providers) rather than custom wrapper abstractions. Application policy (object keys, SQL schemas, retry budgets, trace propagation) stays in the application.
-- Pure cross-repository validators (`validate_manifest_offline`, `validate_inventory`, `validate_workflow_step_contracts`) execute offline without importing consumer repositories (`#19`, `#33`).
+- Protocol adapters return standard upstream objects (`boto3` S3 client, `psycopg` connection probe, `httpx` retry/probe helpers (`request_with_retry`, `probe_http`), OpenTelemetry providers) rather than custom wrapper abstractions. Application policy (object keys, SQL schemas, retry budgets, trace propagation) stays in the application.
+- Pure cross-repository validators (`validate_manifest_offline`, `validate_inventory`, `check_import_boundaries`) execute offline without importing consumer repositories (`#19`, `#33`).
 
 ### P2 — One Source per Fact and the Manifest v2 Supply Chain (`#16`, `#38`, `#115`, `#137`)
 
@@ -40,7 +40,7 @@ Across the issues and releases since `v0.1.0`, consumer requirements and defect 
 
 ### P4 — Mechanism over Prose: AST Locks and Bidirectional Documentation Guards (`#18`, `#70`, `#102`)
 
-- `tests/test_source_environment_reads.py` parses the AST of every file under `src/infra2_sdk/` without importing the modules. It restricts constant-key environment variable reads to `RuntimeEnvKey` (9 keys) plus `FIXED_READS` (10 keys), and locks parameterized or runtime-built environment variable reads in `DYNAMIC_READS` (6 keys across `ci.py`, `deploy.py`, and `observability.py`). Direct reads of legacy aliases (`ENV`, `APP_ENV`, `IMAGE_TAG`, `SERVICE_NAME`) are forbidden outside `resolve_runtime_env` (`#102`, `#169`).
+- `tests/test_source_environment_reads.py` parses the AST of every file under `src/infra2_sdk/` without importing the modules. It restricts constant-key environment variable reads to `RuntimeEnvKey` (9 keys) plus `FIXED_READS` (9 keys), and locks parameterized or runtime-built environment variable reads in `DYNAMIC_READS` (6 keys across `ci.py`, `deploy.py`, and `observability.py`). Direct reads of legacy aliases (`ENV`, `APP_ENV`, `IMAGE_TAG`, `SERVICE_NAME`) are forbidden outside `resolve_runtime_env` (`#102`, `#169`).
 - `tests/test_release_hygiene.py` verifies release identity: the newest `CHANGELOG.md` entry and the `README.md` install pins equal the version in `pyproject.toml` (`#18`, `#70`). `release.yml` publishes only a tag on `main` that equals that version. A change under `src/infra2_sdk/` does not need a release.
 - `tests/test_readme_claims.py`, `tests/test_contract_documentation.py`, and `tests/test_release_hygiene.py` execute code blocks in `README.md` and verify that the `README.md` and `init.md` module tables match the public modules and exported symbols on disk 1:1.
 
@@ -62,8 +62,8 @@ Application processes import these modules directly at runtime:
 | `infra2_sdk.runtime.environment` | Six-tier environment vocabulary (`EnvironmentTier`), `RuntimeEnvKey` resolution, and `runtime_env_contract()` |
 | `infra2_sdk.runtime.config_schema` | `EnvironmentField`, `EnvironmentManifest`, `assert_environment`, and manifest config fingerprints |
 | `infra2_sdk.runtime.health` | Framework-agnostic readiness probes (`check_health`, `run_probes`, `probe_orchestrator`) and dependency status contracts |
-| `infra2_sdk.runtime.http` | `HttpClientSettings`, Retry-After retry helpers (`request_with_retry`, `arequest_with_retry`), and `probe_http` |
-| `infra2_sdk.runtime.llm` | `LlmSettings`, `DecodingSpec`, `create_llm_agent`, `create_llm_model`, `GuardedLlmModel`, `llm_call_context`, `prompt_sha256`, `schema_sha256`, `request_sha256`, `redact_llm_error`, `redact_uri`, `sanitize_headers`, `vcr_llm_config`, `allow_vcr_model_requests`, and `large`/`small`/`multimodal` role defaults |
+| `infra2_sdk.runtime.http` | `HttpClientSettings`, Retry-After retry helper (`request_with_retry`), and `probe_http` |
+| `infra2_sdk.runtime.llm` | `LlmSettings`, `DecodingSpec`, `create_llm_agent`, `create_llm_model`, `GuardedLlmModel`, `llm_call_context`, `prompt_sha256`, `schema_sha256`, `request_sha256`, `redact_llm_error`, `redact_uri`, `sanitize_headers`, `vcr_llm_config`, `allow_vcr_model_requests`, and large/small/multimodal role defaults |
 | `infra2_sdk.runtime.otel` | Explicit OTLP/HTTP trace, metric, and log provider bootstrap (`OtelSettings`, `PROBE_PATHS`, `configure_telemetry`) |
 | `infra2_sdk.runtime.postgres` | `PostgresSettings`, `redact_postgres_error`, and `probe_postgres` |
 | `infra2_sdk.runtime.s3` | `S3Settings`, `boto3` S3 client initialization, bucket reachability probe (`probe_s3`), `ensure_bucket`, and `put_object_bytes` |
@@ -80,12 +80,12 @@ Application processes import these modules directly at runtime:
 | `infra2_sdk.capacity` | Capacity limits, `CapacityReading`, `RateLimitWindow`, `evaluate` thresholds, and Cloudflare analytics collection |
 | `infra2_sdk.ci` | Delivery-stage vocabulary, CI gate inventory validation, workflow step inspection, cron schedule gap analysis (`ScheduleError`, `largest_gap`), and coverage ratchets |
 | `infra2_sdk.deploy` | `DeployRequest` wire contracts, health poller (`poll_until_healthy`), `parse_wheel_version`, deployed release reader, and production evidence verification |
-| `infra2_sdk.manifests` | Settings and runtime hooks manifest CLI driver (`--write`, `--check`, `--validate-env`, `--check-hooks`), `ManifestSpec`, `RuntimeHooksManifest`, `CheckRow`, `CellPolicy`, `CellOverrides`, `OverrideReason`, `POLICY_VERSION`, `CELL_POLICIES`, `HookRunResult`, `StageHookPlan`, `STAGE_HOOK_PLANS`, `stage_hook_plan`, `load_hooks_manifest`, `resolve_check_cells`, `run_cell`, `format_check_grid`, `all_manifests`, `check`, and `load` |
+| `infra2_sdk.manifests` | Settings and runtime hooks manifest CLI driver (`--write`, `--check`, `--validate-env`, `--check-hooks`, `--run-cell`), `BOOTSTRAP_CAP_SECONDS`, `ManifestSpec`, `RuntimeHooksManifest`, `CheckRow`, `CellPolicy`, `CellOverrides`, `OverrideReason`, `POLICY_VERSION`, `CELL_POLICIES`, `HookRunResult`, `StageHookPlan`, `STAGE_HOOK_PLANS`, `stage_hook_plan`, `load_hooks_manifest`, `resolve_check_cells`, `run_cell`, `all_manifests`, `check`, and `load` |
 | `infra2_sdk.stage_record` | `StageRecord`: one phase record of a stage task (checks, units, uncovered, verdict) |
 | `infra2_sdk.observability` | Flap hysteresis trackers (`ConsecutiveObservationState`), parameterized self-healing GitHub issue trails (`reconcile_issue_trail`), and OpenPanel query primitives |
-| `infra2_sdk.refs` | Git ref resolution (`resolve_to_sha`, `resolve_pr`, `identifier_kind`, `next_patch_tag`), OCI image digest resolution, and repo URL redaction |
+| `infra2_sdk.refs` | Git ref resolution (`resolve_to_sha`, `resolve_pr`, `identifier_kind`, `next_patch_tag`) and OCI image digest resolution |
 | `infra2_sdk.routing` | Canonical domain and routing SSOT (`CANARY_SLOT`, `PreviewStackCoordinates`, hostname and service URL resolution) |
-| `infra2_sdk.rules.compose` | Pure Docker Compose file rules (`inspect_compose`) enforcing memory ceilings and rejecting bare `:latest` image references, and `compile_compose` (`ComposeCompileError`), which expands `x-infra2` baseline defaults and the `x-vault` sidecar with no I/O |
+| `infra2_sdk.rules.compose` | Pure Docker Compose file rules (`inspect_compose`) enforcing memory ceilings and rejecting bare `:latest` image references, and `compile_compose` (`ComposeCompileError`), which expands `x-infra2` defaults, `x-vault`, `x-routes`, `x-capabilities`, and `x-preview` with no I/O |
 | `infra2_sdk.rules.imports` | Pure AST import-boundary and dependency-cycle validators (`LayerRule`, `ImportViolation`, `check_import_boundaries`, `find_dependency_cycle`) |
 | `infra2_sdk.secrets` | Vault KV v2 and 1Password CLI adapters, manifest-driven `SecretsResolver`, and Vault Agent template/policy renderers |
 

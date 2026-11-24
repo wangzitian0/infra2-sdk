@@ -59,7 +59,12 @@ def test_otel_settings_version_and_instance_id_precedence() -> None:
     source = OtelSettings.from_env(environ)
     assert (source.service_version, source.instance_id) == ("1.2.3", "pod-1")
 
-    overridden = {**environ, "SERVICE_VERSION": "9.9.9", "INSTANCE_ID": "pod-9"}
+    overridden = {
+        **environ,
+        "SERVICE_VERSION": "9.9.9",
+        "INSTANCE_ID": "ignored-env",
+        "OTEL_RESOURCE_ATTRIBUTES": "service.version=1.2.3,service.instance.id=pod-9",
+    }
     source = OtelSettings.from_env(overridden)
     assert (source.service_version, source.instance_id) == ("9.9.9", "pod-9")
 

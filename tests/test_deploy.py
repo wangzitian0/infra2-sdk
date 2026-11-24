@@ -905,6 +905,3 @@ def test_validate_evidence_urls_rejects_a_foreign_repository_and_a_wrong_resourc
     )
     with pytest.raises(ValueError, match="source_run_url"):
         validate_evidence_urls(wrong_resource)
-
-
-SENDER_DEADLINE = "2026-10-23T12:01:31Z"

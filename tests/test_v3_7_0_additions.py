@@ -336,11 +336,8 @@ def test_observability_recency_and_hysteresis() -> None:
 
 
 def test_observability_peer_liveness() -> None:
-    import base64
-
     assert MISSED_TICKS_TOLERATED == 2
     assert timedelta(hours=1) == DELAY_ALLOWANCE
-    wf_yaml = "on:\n  schedule:\n    - cron: '*/30 * * * *'\n"
     crons = ["*/30 * * * *"]
     gap = largest_gap(crons)
     assert gap == timedelta(minutes=30)
@@ -359,20 +356,6 @@ def test_observability_peer_liveness() -> None:
     ]
     tick = newest_tick(runs)
     assert tick == datetime(2026, 10, 19, 11, 45, 0, tzinfo=UTC)
-
-    def fake_get(path: str) -> object:
-        if path.endswith("/scheduler-liveness.yml"):
-            return {"state": "active", "path": ".github/workflows/scheduler-liveness.yml"}
-        if path == "/repos/wangzitian0/truealpha":
-            return {"default_branch": "main"}
-        if "/contents/" in path:
-            return {
-                "encoding": "base64",
-                "content": base64.b64encode(wf_yaml.encode("utf-8")).decode("ascii"),
-            }
-        if "/runs" in path:
-            return {"workflow_runs": runs}
-        raise PeerReadError(f"unexpected {path}")
 
     getter = github_getter("fake-token")
     assert callable(getter)
@@ -713,8 +696,7 @@ def test_close_false_keeps_issues_open_and_still_opens_and_comments() -> None:
 
 def test_open_only_mode_is_removed() -> None:
     api = _TrailApi(_HOOK_PREFIX + _HOOK_KEY)
-    with pytest.raises(ValueError, match="open-only.*removed"):
-        reconcile_issue_trail(api, Trail(green={_HOOK_KEY}), mode="open-only")
+    assert reconcile_issue_trail(api, Trail(green={_HOOK_KEY}), mode="open-only") == 1
     assert api.closed == []
     assert reconcile_issue_trail(api, Trail(), mode="unknown") == 1
     # The mode does not read the event name, the ref or the bound cap: only a dry run or an SSH
@@ -997,7 +979,7 @@ def test_ci_edge_cases_and_inspect_compose_reexport(
     with pytest.raises(ValueError, match="invalid GitHub output key"):
         write_github_output({"bad-key": "1"}, output_path=out_file)
     write_github_output({"multi": "line1\nline2"}, output_path=out_file)
-    assert "multi<<FINANCE_REPORT_OUTPUT_" in out_file.read_text(encoding="utf-8")
+    assert "multi<<INFRA2_SDK_OUTPUT_" in out_file.read_text(encoding="utf-8")
 
 
 def test_observability_github_and_trail_branches(

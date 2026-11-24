@@ -40,6 +40,7 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml
 
 # The frozen list lives in wheel_smoke.py. Do not derive it from the source tree.
 from wheel_smoke import REMOVED_ENV_NAMES
@@ -62,7 +63,6 @@ ALLOWED_LITERALS = {
 # Fixed variable names that the source reads and that are not in the runtime env contract.
 FIXED_READS = {
     "GITHUB_ACTIONS": "environment_from_env: the mapping that the caller passes",
-    "INSTANCE_ID": "_resolve_service_identity: OpenTelemetry service.instance.id fallback",
     "OTEL_METRIC_EXPORT_INTERVAL": "OtelSettings.from_env: OpenTelemetry metric export interval",
     "OTEL_SDK_DISABLED": "OtelSettings.from_env: OpenTelemetry SDK disable switch",
     "OTEL_TRACES_SAMPLER": "OtelSettings.from_env: OpenTelemetry trace sampler name",
@@ -487,3 +487,16 @@ def test_dynamic_read_site_scan_catches_both_directions() -> None:
     )
     assert isinstance(sample, ast.Module)
     assert _dynamic_read_sites(sample) == {"reader": frozenset({"MY_SECRET_KEY", "MY_TOKEN"})}
+
+
+def test_no_string_constant_equals_a_retired_shared_env_name() -> None:
+    shared_env = yaml.safe_load((SRC / "data" / "shared_env.yaml").read_text(encoding="utf-8"))
+    retired = {item["name"] for item in shared_env.get("retired", ())}
+    assert len(retired) >= 20, "shared_env.yaml retired list unexpectedly shrank"
+    offenders: list[str] = []
+    for path in _source_files():
+        relative = path.relative_to(SRC).as_posix()
+        for line, value, place in _string_constants(_parse(path)):
+            if value in retired:
+                offenders.append(f"{relative}:{line}: {value} in {place}")
+    assert not offenders, f"the source contains a retired shared_env name: {offenders}"

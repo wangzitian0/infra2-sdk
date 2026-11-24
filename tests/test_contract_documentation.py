@@ -269,8 +269,47 @@ def _check_init_md_module_tables(content: str, public_modules: list[str]) -> lis
             checked_symbols += 1
             if not hasattr(mod, clean):
                 errors.append(f"Module {mod_name!r} in init.md does not export symbol {clean!r}")
+            elif clean not in getattr(mod, "__all__", ()):
+                errors.append(
+                    f"Module {mod_name!r} symbol {clean!r} in init.md is missing from __all__"
+                )
     if checked_symbols < 20:
         errors.append(f"init.md symbol check inspected only {checked_symbols} symbols")
+    return errors
+
+
+_README_NON_SYMBOL_TOKENS = frozenset({"pg_enum"})
+
+
+def _check_readme_module_table(content: str, public_modules: list[str]) -> list[str]:
+    """Return errors if README.md Modules table symbols drift from modules or __all__."""
+    errors: list[str] = []
+    rows = re.findall(r"^\| `(infra2_sdk[\w.]*)` \| (.+) \|$", content, re.M)
+    if not rows:
+        return ["README.md has no Modules table rows"]
+    checked_symbols = 0
+    for mod_name, ownership in rows:
+        if mod_name not in public_modules:
+            continue
+        mod = importlib.import_module(mod_name)
+        mod_all = getattr(mod, "__all__", None)
+        for token in re.findall(r"`([^`]+)`", ownership):
+            clean = token.removesuffix("()")
+            if (
+                clean.startswith(("--", "/", ":", "python ", "__"))
+                or clean in _README_NON_SYMBOL_TOKENS
+                or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", clean)
+            ):
+                continue
+            checked_symbols += 1
+            if not hasattr(mod, clean):
+                errors.append(f"Module {mod_name!r} in README.md does not have symbol {clean!r}")
+            elif isinstance(mod_all, tuple | list) and clean not in mod_all:
+                errors.append(
+                    f"Module {mod_name!r} symbol {clean!r} in README.md is missing from __all__"
+                )
+    if checked_symbols < 20:
+        errors.append(f"README.md Modules check inspected only {checked_symbols} symbols")
     return errors
 
 
@@ -278,6 +317,20 @@ def test_init_md_module_tables_match_public_modules_and_symbols() -> None:
     content = INIT_MD.read_text(encoding="utf-8")
     public_modules = _public_modules()
     assert _check_init_md_module_tables(content, public_modules) == []
+
+
+def test_readme_modules_table_symbols_exist_in_modules() -> None:
+    content = README.read_text(encoding="utf-8")
+    public_modules = _public_modules()
+    assert _check_readme_module_table(content, public_modules) == []
+
+
+def test_readme_modules_table_guard_rejects_stale_symbol() -> None:
+    content = README.read_text(encoding="utf-8")
+    public_modules = _public_modules()
+    stale = content.replace("`ManifestSpec`", "`arequest_with_retry`")
+    errs = _check_readme_module_table(stale, public_modules)
+    assert any("arequest_with_retry" in err for err in errs)
 
 
 def test_init_md_module_table_guard_rejects_missing_module_and_stale_symbol() -> None:

@@ -29,6 +29,11 @@ def render() -> str:
             owners = ", ".join(entry.get("owners") or ()) or "none"
             sensitive = "yes" if entry.get("sensitive") else "no"
             lines.append(f"| {group} | `{entry['name']}` | {sensitive} | {owners} |")
+    lines += ["", "| Deprecated alias | Use |", "|---|---|"]
+    for entries in contract["groups"].values():
+        for entry in entries:
+            for alias in entry.get("deprecated_aliases") or ():
+                lines.append(f"| `{alias}` | `{entry['name']}` |")
     lines += ["", "| Retired name | Use |", "|---|---|"]
     for entry in contract.get("retired") or ():
         lines.append(f"| `{entry['name']}` | `{entry['use']}` |")

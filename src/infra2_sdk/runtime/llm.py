@@ -33,7 +33,6 @@ _ThinkingLevel = bool | Literal["minimal", "low", "medium", "high", "xhigh"]
 _ROLES = ("large", "small", "multimodal")
 _DEFAULT_ZAI_BASE_URL = "https://api.z.ai/api/coding/paas/v4"
 _DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-_JSON_FENCE_RE = re.compile(r"\A```(?:json)?\s*(.*?)\s*```\Z", re.S | re.I)
 _CALL_SITE_RE = re.compile(r"^[a-z][a-z0-9_.-]{1,63}$")
 _SAFE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 _SENSITIVE_QUERY_RE = re.compile(
@@ -122,12 +121,6 @@ def _is_internal_agent_reentry(agent_id: int, prev: Mapping[str, Any]) -> bool:
         del frame
 
 
-def _coerce_tuple(value: Any) -> tuple[str, ...]:
-    is_seq = isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray))
-    items = value.split(",") if isinstance(value, str) else (value if is_seq else ())
-    return tuple(s for item in items if (s := str(item).strip()))
-
-
 @dataclass(frozen=True)
 class LlmSettings:
     provider: str = "zai"
@@ -166,12 +159,12 @@ class LlmSettings:
         """Build LlmSettings from a plain string mapping using shared_env.yaml names."""
         from infra2_sdk.runtime.environment import _resolve_env, shared_env_contract
 
-        llm_specs = {str(entry["name"]): entry for entry in shared_env_contract()["groups"]["llm"]}
+        llm_names = {str(entry["name"]) for entry in shared_env_contract()["groups"]["llm"]}
 
         def _pick(canonical: str, *, sensitive: bool = False) -> str | None:
-            entry = llm_specs[canonical]
-            aliases = tuple(str(a) for a in (entry.get("deprecated_aliases") or ()))
-            return _resolve_env(mapping, canonical, aliases=aliases, sensitive=sensitive).value
+            if canonical not in llm_names:  # pragma: no cover - defensive guard
+                raise KeyError(canonical)
+            return _resolve_env(mapping, canonical, sensitive=sensitive).value
 
         values: dict[str, Any] = {}
         for attr, key, sensitive in (
@@ -739,6 +732,15 @@ def _no_stream_usage_model(
     return _NoUsageModel(*args, **kwargs)
 
 
+def _require_provider_package(module: str, package_hint: str) -> Any:
+    import importlib
+
+    try:
+        return importlib.import_module(module)
+    except ImportError:
+        raise RuntimeError(f"{module} is required; install {package_hint}") from None
+
+
 def _build_provider_model(
     settings: LlmSettings,
     model_name: str,
@@ -805,18 +807,26 @@ def _build_provider_model(
         )
 
     if prov == "anthropic":
-        anth_mod = _require("anthropic", extra="pydantic-ai")
-        pa_anth = _require("pydantic_ai.models.anthropic", extra="pydantic-ai")
-        pa_anth_prov = _require("pydantic_ai.providers.anthropic", extra="pydantic-ai")
+        anth_mod = _require_provider_package("anthropic", "pydantic-ai-slim[anthropic]")
+        pa_anth = _require_provider_package(
+            "pydantic_ai.models.anthropic", "pydantic-ai-slim[anthropic]"
+        )
+        pa_anth_prov = _require_provider_package(
+            "pydantic_ai.providers.anthropic", "pydantic-ai-slim[anthropic]"
+        )
         eff_base = settings.base_url if settings.base_url != _DEFAULT_ZAI_BASE_URL else None
         client = anth_mod.AsyncAnthropic(api_key=api_key, base_url=eff_base, max_retries=0)
         provider = pa_anth_prov.AnthropicProvider(anthropic_client=client)
         return pa_anth.AnthropicModel(model_name, provider=provider, settings=raw_ms)
 
     if prov in {"google", "gemini"}:
-        genai_types = _require("google.genai.types", extra="pydantic-ai")
-        pa_google = _require("pydantic_ai.models.google", extra="pydantic-ai")
-        pa_google_prov = _require("pydantic_ai.providers.google", extra="pydantic-ai")
+        genai_types = _require_provider_package("google.genai.types", "pydantic-ai-slim[google]")
+        pa_google = _require_provider_package(
+            "pydantic_ai.models.google", "pydantic-ai-slim[google]"
+        )
+        pa_google_prov = _require_provider_package(
+            "pydantic_ai.providers.google", "pydantic-ai-slim[google]"
+        )
         eff_base = settings.base_url if settings.base_url != _DEFAULT_ZAI_BASE_URL else None
         provider = pa_google_prov.GoogleProvider(
             api_key=api_key,
