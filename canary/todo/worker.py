@@ -131,9 +131,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Telemetry service name passed to init_worker().",
     )
     parser.add_argument(
-        "--require-issued-identity",
+        "--no-require-issued-identity",
         action="store_true",
-        help="Require deployment-issued OTEL_RESOURCE_ATTRIBUTES when OTLP export is enabled.",
+        help="Allow unissued OTEL_* attributes when OTLP export is enabled locally.",
     )
     parser.add_argument(
         "--validate-env",
@@ -148,7 +148,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     providers = init_worker(
         args.service_name,
         strict=True,
-        require_issued_identity=args.require_issued_identity,
+        require_issued_identity=not args.no_require_issued_identity,
     )
     health_url = args.health_url.strip() or (
         f"http://127.0.0.1:{CanarySettings.from_environ(os.environ).port}/api/health"

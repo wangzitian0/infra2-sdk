@@ -166,9 +166,27 @@ def test_worker_main_once_calls_init_worker(monkeypatch, capsys) -> None:
     assert seen == {
         "name": "platform-todo-worker",
         "strict": True,
-        "require_issued_identity": False,
+        "require_issued_identity": True,
     }
     assert providers.shut_down is True
+    assert json.loads(capsys.readouterr().out)["ok"] is True
+
+
+def test_worker_main_once_runs_standalone_without_environment_var(monkeypatch, capsys) -> None:
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    monkeypatch.setattr(
+        worker,
+        "run_once",
+        lambda *, health_url: {
+            "ok": True,
+            "status_code": 200,
+            "service": "platform/todo",
+            "health_url": health_url,
+            "detail": "ok",
+        },
+    )
+    assert worker.main(["--once", "--health-url", "http://127.0.0.1:8000/api/health"]) == 0
     assert json.loads(capsys.readouterr().out)["ok"] is True
 
 
