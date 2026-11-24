@@ -63,8 +63,9 @@ def test_sdk_source_byte_budget() -> None:
     # and #238/#239 added the compose compiler, schema_check and the settings reference.
     # 4.5.0 measured 412,686 B after the bootstrap cap and `bootstrap_seconds` were added.
     # 4.6.0 measured 410,284 B after Wave 1 removed dead shims and `arequest_with_retry`.
+    # Unreleased measured 412,950 B after `x-infra2.vault.env` and the template env check.
     # A new feature raises this cap with a comment; a removal lowers it.
-    assert 150_000 <= total <= 411_000, f"src/infra2_sdk byte budget drifted: {total} B"
+    assert 150_000 <= total <= 413_000, f"src/infra2_sdk byte budget drifted: {total} B"
 
 
 def test_init_service_multi_checks_and_manifest(monkeypatch: pytest.MonkeyPatch) -> None:
