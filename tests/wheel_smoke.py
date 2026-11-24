@@ -101,6 +101,25 @@ REMOVED_NAMES = (
     ("infra2_sdk.manifests", "StageHookPlan.deploy_slot"),
     ("infra2_sdk.fastapi", "_LOG_FORMAT"),
     ("infra2_sdk.manifests", "LEGACY_V1_HOOK_SLOTS"),
+    # Removed in 4.0.0 (#236 Release B and infra2#1644 K6).
+    ("infra2_sdk.manifests", "HOOK_SLOTS"),
+    ("infra2_sdk.manifests", "SLOT_MAX_TIMEOUT_SECONDS"),
+    ("infra2_sdk.manifests", "HookSlotSpec"),
+    ("infra2_sdk.manifests", "CheckSpec"),
+    ("infra2_sdk.manifests", "run_hook_slot"),
+    ("infra2_sdk.runtime.llm", "LlmClient"),
+    ("infra2_sdk.runtime.llm", "LlmResponse"),
+    ("infra2_sdk.runtime.llm", "LlmSettings.chat_completions_path"),
+    ("infra2_sdk.runtime.llm", "LlmSettings.json_timeout_seconds"),
+    ("infra2_sdk.runtime.llm", "LlmSettings.json_max_tokens"),
+    ("infra2_sdk.runtime.llm", "LlmSettings.json_disable_thinking"),
+    ("infra2_sdk.runtime.llm", "LlmSettings.json_seed"),
+    ("infra2_sdk.runtime.llm", "LlmSettings.extract_max_attempts"),
+    ("infra2_sdk.runtime.llm", "LlmSettings.encryption_keys"),
+    # Removed in 4.6.0 (Wave 1 dead code cleanup).
+    ("infra2_sdk.manifests", "format_check_grid"),
+    ("infra2_sdk.runtime.http", "arequest_with_retry"),
+    ("infra2_sdk.deploy", "_validate_evidence_urls"),
 )
 
 # RuntimeEnvKey members removed in 3.4.0 (issue #102, decision 2) and 3.8.2 (#126).
@@ -182,6 +201,13 @@ def smoke_core() -> None:
     import infra2_sdk.runtime.otel  # noqa: F401
     import infra2_sdk.runtime.postgres  # noqa: F401
     import infra2_sdk.runtime.s3  # noqa: F401
+    from infra2_sdk.rules import compile_compose
+
+    compiled = compile_compose(
+        {"x-infra2": {}, "services": {"app": {"image": "ghcr.io/example/app:1.0.0"}}},
+        mode="deploy",
+    )
+    assert "app:" in compiled
 
     smoke_package_data()
     smoke_removed_names()
@@ -196,6 +222,7 @@ def smoke_package_data() -> None:
     package = files("infra2_sdk")
     assert package.joinpath("py.typed").is_file(), "py.typed must ship in the wheel"
     assert package.joinpath("data/stages.yaml").is_file()
+    assert package.joinpath("data/shared_env.yaml").is_file()
     assert not package.joinpath("data/platform_images.yaml").is_file()
     try:
         importlib.import_module("infra2_sdk.images")
@@ -222,9 +249,9 @@ def smoke_removed_names() -> None:
     import infra2_sdk.runtime
     from infra2_sdk.runtime.environment import RuntimeEnvKey, runtime_env_contract
 
-    assert len(REMOVED_NAMES) == 60 and len(set(REMOVED_NAMES)) == 60, (
+    assert len(REMOVED_NAMES) == 77 and len(set(REMOVED_NAMES)) == 77, (
         f"REMOVED_NAMES has {len(REMOVED_NAMES)} entries ({len(set(REMOVED_NAMES))} unique), "
-        "expected 60"
+        "expected 77"
     )
     for module, dotted in REMOVED_NAMES:
         *parents, leaf = dotted.split(".")
@@ -232,7 +259,8 @@ def smoke_removed_names() -> None:
             owner = importlib.import_module(module)
             for part in parents:
                 owner = getattr(owner, part)  # AttributeError: the owner vanished, not the name
-            assert not hasattr(owner, leaf), f"{module}.{dotted} was removed"
+            fields = getattr(owner, "__dataclass_fields__", {})
+            assert not hasattr(owner, leaf) and leaf not in fields, f"{module}.{dotted} was removed"
         if not parents:
             for package in (infra2_sdk, infra2_sdk.runtime):
                 assert not hasattr(package, leaf), f"{package.__name__}.{leaf} was removed"

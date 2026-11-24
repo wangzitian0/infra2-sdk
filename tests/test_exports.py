@@ -36,6 +36,7 @@ def test_infra2_sdk_submodules_accessible_from_root() -> None:
         "rules",
         "runtime",
         "secrets",
+        "stage_record",
         "transport",
     ]
     for sub in expected_submodules:
@@ -105,6 +106,7 @@ def test_infra2_sdk_runtime_submodules_accessible() -> None:
         "otel",
         "postgres",
         "s3",
+        "schema_check",
     ]
     for sub in expected_submodules:
         assert hasattr(infra2_sdk.runtime, sub), f"infra2_sdk.runtime should expose {sub!r}"
@@ -193,23 +195,7 @@ REASON_PREFIXES = ("consumer:", "documented:", "held:")
 CONSUMER_REPOSITORIES = frozenset({"canary_todo", "infra2", "finance_report", "truealpha"})
 # A hold is a recorded decision: name -> exact reason. A new hold needs a new line here and a
 # review of that decision. surface.json and this table must agree on the names and the reasons.
-_ADOPTION_HELD = (
-    "held: pending adoption by truealpha#1652 Wave 2 "
-    "(sources/{llm,gateway}.py retry plumbing -> infra2_sdk.runtime.http) "
-    "and finance_report#2936 llm transport delegation"
-)
-
-HELD = {
-    "runtime_env_contract": "held: issue #102 decision 7 (adopt, do not delete)",
-    "arequest_with_retry": _ADOPTION_HELD,
-    "request_with_retry": _ADOPTION_HELD,
-    "probe_orchestrator": (
-        "held: production callers finance_report "
-        "apps/backend/src/runtime/extension/adapters.py:168 and truealpha "
-        "common/runtime/src/truealpha_runtime/checks.py:136; "
-        "census reach scan omits these paths (scope mismatch with missing_imports)"
-    ),
-}
+HELD: dict[str, str] = {}
 
 
 def _readme_sections() -> dict[str, str]:
@@ -298,7 +284,6 @@ def test_documented_reasons_point_to_a_readme_section_that_names_the_export() ->
 
 def test_held_names_and_reasons_equal_the_recorded_table() -> None:
     held = [(name, reason) for _, name, reason in _surface_entries() if reason.startswith("held:")]
-    assert held, "no held reason: this test would check nothing"
     by_name = dict(held)
     assert len(by_name) == len(held), "one name is held in both packages"
     assert set(by_name) == set(HELD), (
@@ -307,3 +292,40 @@ def test_held_names_and_reasons_equal_the_recorded_table() -> None:
     )
     for name, reason in by_name.items():
         assert reason == HELD[name], f"{name}: the reason {reason!r} is not {HELD[name]!r}"
+
+
+def test_every_public_submodule_has_valid_all() -> None:
+    import pkgutil
+
+    missing: list[str] = []
+    mismatched: list[str] = []
+    for info in pkgutil.walk_packages(infra2_sdk.__path__, prefix="infra2_sdk."):
+        leaf = info.name.rsplit(".", 1)[-1]
+        if leaf.startswith("_") or leaf == "__main__":
+            continue
+        mod = importlib.import_module(info.name)
+        all_names = getattr(mod, "__all__", None)
+        if not isinstance(all_names, tuple | list):
+            missing.append(info.name)
+            continue
+        absent = [name for name in all_names if not hasattr(mod, name)]
+        if absent:
+            mismatched.append(f"{info.name}: {absent}")
+    assert not missing, f"public modules missing __all__: {missing}"
+    assert not mismatched, f"__all__ names missing from modules: {mismatched}"
+
+
+def test_every_package_reexport_is_in_its_defining_module_all() -> None:
+    failures: list[str] = []
+    for package_name in PACKAGES:
+        package = importlib.import_module(package_name)
+        for name in package.__all__:
+            obj = getattr(package, name)
+            if isinstance(obj, ModuleType):
+                continue
+            defining_name = getattr(obj, "__module__", None)
+            if defining_name and defining_name.startswith("infra2_sdk."):
+                defining = importlib.import_module(defining_name)
+                if name not in getattr(defining, "__all__", ()):
+                    failures.append(f"{package_name}.{name} missing from {defining_name}.__all__")
+    assert not failures, f"package reexports missing from defining __all__: {failures}"

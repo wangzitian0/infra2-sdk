@@ -94,6 +94,23 @@ EXPECTED_REMOVED_NAMES = frozenset(
         "infra2_sdk.fastapi:_LOG_FORMAT",
         "infra2_sdk.manifests:StageHookPlan.deploy_slot",
         "infra2_sdk.manifests:LEGACY_V1_HOOK_SLOTS",
+        "infra2_sdk.manifests:HOOK_SLOTS",
+        "infra2_sdk.manifests:SLOT_MAX_TIMEOUT_SECONDS",
+        "infra2_sdk.manifests:HookSlotSpec",
+        "infra2_sdk.manifests:CheckSpec",
+        "infra2_sdk.manifests:run_hook_slot",
+        "infra2_sdk.runtime.llm:LlmClient",
+        "infra2_sdk.runtime.llm:LlmResponse",
+        "infra2_sdk.runtime.llm:LlmSettings.chat_completions_path",
+        "infra2_sdk.runtime.llm:LlmSettings.json_timeout_seconds",
+        "infra2_sdk.runtime.llm:LlmSettings.json_max_tokens",
+        "infra2_sdk.runtime.llm:LlmSettings.json_disable_thinking",
+        "infra2_sdk.runtime.llm:LlmSettings.json_seed",
+        "infra2_sdk.runtime.llm:LlmSettings.extract_max_attempts",
+        "infra2_sdk.runtime.llm:LlmSettings.encryption_keys",
+        "infra2_sdk.manifests:format_check_grid",
+        "infra2_sdk.runtime.http:arequest_with_retry",
+        "infra2_sdk.deploy:_validate_evidence_urls",
     ]
 )
 EXPECTED_REMOVED_ENV_MEMBERS = frozenset(
@@ -170,7 +187,7 @@ _LIVE_OWNER = [pair for pair in REMOVED_NAMES if pair[0] not in REMOVED_MODULES]
 
 
 def test_removed_name_lists_have_unique_entries() -> None:
-    assert len(REMOVED_NAMES) == len(set(REMOVED_NAMES)) == 60
+    assert len(REMOVED_NAMES) == len(set(REMOVED_NAMES)) == 77
     assert len(REMOVED_ENV_MEMBERS) == len(set(REMOVED_ENV_MEMBERS)) == 21
     assert len(REMOVED_ENV_NAMES) == len(set(REMOVED_ENV_NAMES)) == 29
 
@@ -189,7 +206,8 @@ def test_removed_name_is_absent_while_its_owner_still_exists(module: str, dotted
     *parents, leaf = dotted.split(".")
     for part in parents:
         owner = getattr(owner, part)  # the class of a removed method must still exist
-    assert not hasattr(owner, leaf), f"{module}.{dotted} was removed"
+    fields = getattr(owner, "__dataclass_fields__", {})
+    assert not hasattr(owner, leaf) and leaf not in fields, f"{module}.{dotted} was removed"
 
 
 @pytest.mark.parametrize(("module", "name"), _UNDOTTED, ids=[f"{m}.{n}" for m, n in _UNDOTTED])
@@ -309,7 +327,7 @@ def test_the_stale_reuse_check_reports_each_kind_of_problem() -> None:
 def test_the_removed_simple_names_are_the_undotted_entries() -> None:
     assert _REMOVED_SIMPLE_NAMES, "no removed simple name: the module check would check nothing"
     assert all("." not in name for name in _REMOVED_SIMPLE_NAMES)
-    assert len(_REMOVED_SIMPLE_NAMES) == 56
+    assert len(_REMOVED_SIMPLE_NAMES) == 66
 
 
 def _strings(value: object):
@@ -347,7 +365,7 @@ def test_removed_environment_name_is_not_in_the_contract(name: str) -> None:
     ("smoke", "attribute", "expected"),
     [
         ("smoke_package_data", "REMOVED_MODULES", 11),
-        ("smoke_removed_names", "REMOVED_NAMES", 60),
+        ("smoke_removed_names", "REMOVED_NAMES", 77),
         ("smoke_removed_names", "REMOVED_ENV_MEMBERS", 21),
         ("smoke_removed_names", "REMOVED_ENV_NAMES", 29),
     ],
@@ -391,14 +409,6 @@ REMOVED_IN_3_14_0: tuple[tuple[str, str], ...] = (
     ("infra2_sdk.runtime.llm", "LlmSettings.chat_completions_url"),
     ("infra2_sdk.runtime.llm", "LlmSettings.layout_parsing_url"),
     ("infra2_sdk.runtime.llm", "LlmSettings.model_chain"),
-    ("infra2_sdk.runtime.llm", "LlmSettings.primary_model"),
-    ("infra2_sdk.runtime.llm", "LlmSettings.ocr_model"),
-    ("infra2_sdk.runtime.llm", "LlmSettings.vision_model"),
-    ("infra2_sdk.runtime.llm", "LlmSettings.fallback_models"),
-    ("infra2_sdk.runtime.llm", "LlmSettings.vision_fallback_models"),
-    ("infra2_sdk.runtime.llm", "LlmSettings.layout_parsing_path"),
-    ("infra2_sdk.runtime.llm", "_RoleDefault"),
-    ("infra2_sdk.runtime.llm", "_ROLE_DEFAULT"),
     ("infra2_sdk.runtime.config_schema", "EnvironmentManifest.to_json_schema"),
     ("infra2_sdk.runtime.health", "DependencyManifest.json_schema"),
     ("infra2_sdk.runtime.health", "ProbeResult.json_schema"),
@@ -423,6 +433,38 @@ def test_symbols_removed_in_3_14_0_are_absent_from_modules_and_packages(
     for part in parents:
         owner = getattr(owner, part)
     assert not hasattr(owner, leaf), f"{module}.{dotted} was removed in 3.14.0"
+    if not parents:
+        for package in (infra2_sdk, infra2_sdk.runtime):
+            assert leaf not in package.__all__, f"{package.__name__}.__all__ lists {leaf}"
+            assert not hasattr(package, leaf), f"{package.__name__} still exposes {leaf}"
+
+
+REMOVED_IN_3_18_0: tuple[tuple[str, str], ...] = (
+    ("infra2_sdk.runtime.llm", "LlmSettings.primary_model"),
+    ("infra2_sdk.runtime.llm", "LlmSettings.ocr_model"),
+    ("infra2_sdk.runtime.llm", "LlmSettings.vision_model"),
+    ("infra2_sdk.runtime.llm", "LlmSettings.fallback_models"),
+    ("infra2_sdk.runtime.llm", "LlmSettings.vision_fallback_models"),
+    ("infra2_sdk.runtime.llm", "LlmSettings.layout_parsing_path"),
+    ("infra2_sdk.runtime.llm", "_RoleDefault"),
+    ("infra2_sdk.runtime.llm", "_ROLE_DEFAULT"),
+)
+
+
+@pytest.mark.parametrize(
+    ("module", "dotted"),
+    REMOVED_IN_3_18_0,
+    ids=[f"{m}.{n}" for m, n in REMOVED_IN_3_18_0],
+)
+def test_symbols_removed_in_3_18_0_are_absent(module: str, dotted: str) -> None:
+    owner: object = importlib.import_module(module)
+    *parents, leaf = dotted.split(".")
+    for part in parents:
+        owner = getattr(owner, part)
+    fields = getattr(owner, "__dataclass_fields__", {})
+    assert not hasattr(owner, leaf) and leaf not in fields, (
+        f"{module}.{dotted} was removed in 3.18.0"
+    )
     if not parents:
         for package in (infra2_sdk, infra2_sdk.runtime):
             assert leaf not in package.__all__, f"{package.__name__}.__all__ lists {leaf}"
@@ -462,81 +504,3 @@ def test_symbols_removed_in_3_20_0_are_absent_from_modules_and_packages(
         for package in (infra2_sdk, infra2_sdk.runtime):
             assert leaf not in package.__all__, f"{package.__name__}.__all__ lists {leaf}"
             assert not hasattr(package, leaf), f"{package.__name__} still exposes {leaf}"
-
-
-REMOVED_IN_3_22_0: tuple[tuple[str, str], ...] = (("infra2_sdk.deploy", "dispatch_and_wait"),)
-
-
-@pytest.mark.parametrize(
-    ("module", "dotted"),
-    REMOVED_IN_3_22_0,
-    ids=[f"{m}.{n}" for m, n in REMOVED_IN_3_22_0],
-)
-def test_symbols_removed_in_3_22_0_are_absent_from_modules_and_packages(
-    module: str, dotted: str
-) -> None:
-    owner = importlib.import_module(module)
-    *parents, leaf = dotted.split(".")
-    for part in parents:
-        owner = getattr(owner, part)
-    assert not hasattr(owner, leaf), f"{module}.{dotted} was removed in 3.22.0"
-    if not parents:
-        for package in (infra2_sdk, infra2_sdk.runtime):
-            assert leaf not in package.__all__, f"{package.__name__}.__all__ lists {leaf}"
-            assert not hasattr(package, leaf), f"{package.__name__} still exposes {leaf}"
-
-
-# Removed in 4.0.0 with runtime hooks manifest schema_version 2 (infra2#1644 K6).
-REMOVED_IN_4_0_0_K6: tuple[tuple[str, str], ...] = (
-    ("infra2_sdk.manifests", "HOOK_SLOTS"),
-    ("infra2_sdk.manifests", "SLOT_MAX_TIMEOUT_SECONDS"),
-    ("infra2_sdk.manifests", "HookSlotSpec"),
-    ("infra2_sdk.manifests", "CheckSpec"),
-    ("infra2_sdk.manifests", "run_hook_slot"),
-)
-
-
-@pytest.mark.parametrize(
-    ("module", "dotted"),
-    REMOVED_IN_4_0_0_K6,
-    ids=[f"{m}.{n}" for m, n in REMOVED_IN_4_0_0_K6],
-)
-def test_symbols_removed_in_4_0_0_k6_are_absent_from_modules_and_packages(
-    module: str, dotted: str
-) -> None:
-    owner = importlib.import_module(module)
-    *parents, leaf = dotted.split(".")
-    for part in parents:
-        owner = getattr(owner, part)
-    assert not hasattr(owner, leaf), f"{module}.{dotted} was removed in 4.0.0"
-    if not parents:
-        for package in (infra2_sdk, infra2_sdk.runtime):
-            assert leaf not in package.__all__, f"{package.__name__}.__all__ lists {leaf}"
-            assert not hasattr(package, leaf), f"{package.__name__} still exposes {leaf}"
-
-
-# #236 Release B (4.0.0): the LlmClient path left with LlmClient.
-REMOVED_IN_4_0_0 = (
-    ("infra2_sdk.runtime.llm", "LlmClient"),
-    ("infra2_sdk.runtime.llm", "LlmResponse"),
-    ("infra2_sdk.runtime", "LlmClient"),
-    ("infra2_sdk.runtime.llm", "LlmSettings.chat_completions_path"),
-    ("infra2_sdk.runtime.llm", "LlmSettings.json_timeout_seconds"),
-    ("infra2_sdk.runtime.llm", "LlmSettings.json_max_tokens"),
-    ("infra2_sdk.runtime.llm", "LlmSettings.json_disable_thinking"),
-    ("infra2_sdk.runtime.llm", "LlmSettings.json_seed"),
-    ("infra2_sdk.runtime.llm", "LlmSettings.extract_max_attempts"),
-    ("infra2_sdk.runtime.llm", "LlmSettings.encryption_keys"),
-)
-
-
-@pytest.mark.parametrize(
-    ("module", "dotted"), REMOVED_IN_4_0_0, ids=[f"{m}.{n}" for m, n in REMOVED_IN_4_0_0]
-)
-def test_symbols_removed_in_4_0_0_are_absent(module: str, dotted: str) -> None:
-    owner: object = importlib.import_module(module)
-    *parents, leaf = dotted.split(".")
-    for part in parents:
-        owner = getattr(owner, part)
-    fields = getattr(owner, "__dataclass_fields__", {})
-    assert not hasattr(owner, leaf) and leaf not in fields, f"{module}.{dotted} is back"

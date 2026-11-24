@@ -33,7 +33,7 @@ def resolve_app_hostname(
         raise ValueError(f"invalid slug {slug!r}")
 
     raw_tier = str(tier).strip().lower() if not isinstance(tier, EnvironmentTier) else tier.value
-    if is_canary or raw_tier in ("canary", "deploy-v2-canary"):
+    if is_canary or raw_tier == "canary":
         return f"{slug}-{CANARY_SLOT}.{base_domain}"
     if slot_id is not None and str(slot_id).strip().lower() == CANARY_SLOT:
         return f"{slug}-{CANARY_SLOT}.{base_domain}"
@@ -108,7 +108,7 @@ def derive_preview_coordinates(
     raw_tier = str(tier).strip().lower() if not isinstance(tier, EnvironmentTier) else tier.value
     slot_str = str(slot_id).strip().lower() if slot_id is not None else None
 
-    if is_canary or raw_tier in ("canary", "deploy-v2-canary") or slot_str == CANARY_SLOT:
+    if is_canary or raw_tier == "canary" or slot_str == CANARY_SLOT:
         canonical_tier, deployment_environment, suffix, cpu_shares = (
             EnvironmentTier.PREVIEW,
             CANARY_SLOT,
@@ -150,6 +150,7 @@ def derive_preview_coordinates(
 
 
 __all__ = [
+    "CANARY_SLOT",
     "PreviewStackCoordinates",
     "derive_preview_coordinates",
     "resolve_app_hostname",

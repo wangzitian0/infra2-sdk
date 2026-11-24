@@ -19,7 +19,6 @@ from infra2_sdk import (
     HookRunResult,
     OverrideReason,
     RuntimeHooksManifest,
-    format_check_grid,
     load_hooks_manifest,
     next_patch_tag,
     resolve_check_cells,
@@ -967,17 +966,6 @@ _TA_NIGHTLY_CMD = (
     'uv run python -m truealpha_tools.nightly_verdicts "$APP_URL/api/health" '
     '--environment "$ENVIRONMENT" --repo .'
 )
-_TA_CHECKS = [
-    {"id": "health", "argv": ["sh", "-c", _TA_HEALTH_CMD]},
-    {
-        "id": "warm_surface",
-        "argv": ["sh", "-c", 'bash tools/warm_surface.sh "$APP_URL" / /research/rankings'],
-    },
-    {
-        "id": "walk_tree",
-        "argv": ["sh", "-c", 'cd apps/app-web && TA_BASE_URL="$APP_URL" node e2e/walk-tree.mjs'],
-    },
-]
 
 _TRUEALPHA_V3: dict[str, object] = {
     "schema_version": 3,
@@ -1445,13 +1433,6 @@ def test_g1_policy_table_completeness_derived_views_and_grid_printer(tmp_path: P
     assert pv == 1
     assert policies["preview.post"].budget_seconds == 444
     assert _derive_stage_plans(policies)["preview"].stage_id == "preview.runtime"
-
-    # format_check_grid prints checks x cells for a schema 3 manifest.
-    m3 = RuntimeHooksManifest.from_dict(_TRUEALPHA_V3)
-    grid3 = format_check_grid(m3)
-    assert "Service: truealpha/app (schema v3, policy v1)" in grid3
-    assert "`health`" in grid3 and "`nightly_verdicts`" in grid3
-    assert "preview.post" in grid3 and "local.pre" in grid3
 
 
 def test_check_timeout_detail_reports_check_timeout_vs_cell_budget(tmp_path: Path) -> None:

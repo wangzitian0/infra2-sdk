@@ -71,9 +71,6 @@ _PREVIEW_DB_VOLUME = "preview_db"
 _PREVIEW_DB_URL_RE = re.compile(r"^postgresql(\+[a-z0-9]+)?$")
 _XINFRA2_VAULT_KEYS = frozenset({"name"})
 _SERVICE_XVAULT_KEYS = frozenset({"max_wait_seconds"})
-# Later slices of infra2-sdk#238 own these service keys. A silent pass-through would
-# make Compose ignore them, so the compiler rejects them until that slice ships.
-_RESERVED_SERVICE_KEYS: frozenset[str] = frozenset()
 _ROUTES_KEYS = frozenset({"service", "port", "routes"})
 _ROUTE_KEYS = frozenset({"name", "rule", "priority", "tls", "strip_prefix", "sso"})
 # Compose interpolates these in the labels on purpose, so the SDK does not escape them.
@@ -547,9 +544,6 @@ def _compile_mapping(
     for svc_name, spec in services.items():
         where = f"services.{svc_name}"
         spec = _require_mapping(spec, where)
-        reserved = sorted(set(spec) & _RESERVED_SERVICE_KEYS)
-        if reserved:
-            raise ComposeCompileError(f"{where}: {reserved} is not supported yet (infra2-sdk#238)")
         preview = _preview_options(spec, where)
         if preview.get("database_url") is not None:
             if not db_container:

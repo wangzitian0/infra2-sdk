@@ -318,7 +318,6 @@ def _resolve_service_identity(
             else:
                 del attributes[key]
     version = resolve_runtime_env(environ, RuntimeEnvKey.SERVICE_VERSION).value
-    instance = _resolve_env(environ, "INSTANCE_ID").value
     return _ServiceIdentity(
         environment=runtime,
         environment_is_set=environment_is_set,
@@ -326,7 +325,7 @@ def _resolve_service_identity(
         deployment_environment=deployment_environment,
         service_name=named or attributes.get("service.name") or default_service_name or None,
         service_version=version or attributes.get("service.version", "unknown"),
-        instance_id=instance or attributes.get("service.instance.id", ""),
+        instance_id=attributes.get("service.instance.id", ""),
     )
 
 
@@ -417,6 +416,7 @@ __all__ = [
     "check_shared_env_conformance",
     "is_preview_alias",
     "resolve_environment_tier",
+    "resolve_runtime_env",
     "runtime_env_contract",
     "shared_env_contract",
 ]

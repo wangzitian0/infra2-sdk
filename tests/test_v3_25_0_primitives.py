@@ -45,7 +45,7 @@ from infra2_sdk.runtime.health import (
     DependencyStatus,
     ProbeResult,
 )
-from infra2_sdk.runtime.http import arequest_with_retry, request_with_retry
+from infra2_sdk.runtime.http import request_with_retry
 from infra2_sdk.runtime.otel import OtelSettings, _build_sampler
 from infra2_sdk.runtime.postgres import PostgresSettings, probe_postgres
 from infra2_sdk.runtime.s3 import put_object_bytes
@@ -62,8 +62,9 @@ def test_sdk_source_byte_budget() -> None:
     # 4.0.0 measured 409,805 B after #236 Release B and K6 removed LlmClient and schema 2
     # and #238/#239 added the compose compiler, schema_check and the settings reference.
     # 4.5.0 measured 412,686 B after the bootstrap cap and `bootstrap_seconds` were added.
+    # 4.6.0 measured 410,284 B after Wave 1 removed dead shims and `arequest_with_retry`.
     # A new feature raises this cap with a comment; a removal lowers it.
-    assert 150_000 <= total <= 413_000, f"src/infra2_sdk byte budget drifted: {total} B"
+    assert 150_000 <= total <= 411_000, f"src/infra2_sdk byte budget drifted: {total} B"
 
 
 def test_init_service_multi_checks_and_manifest(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -223,25 +224,7 @@ class _SequenceSyncClient:
         self.closed = True
 
 
-class _SequenceAsyncClient:
-    def __init__(self, steps: list[Any]) -> None:
-        self.steps = list(steps)
-        self.calls: list[tuple[str, str, dict[str, Any]]] = []
-        self.closed = False
-
-    async def request(self, method: str, url: str, **kwargs: Any) -> _FakeHttpResponse:
-        self.calls.append((method, url, kwargs))
-        item = self.steps.pop(0)
-        if isinstance(item, BaseException):
-            raise item
-        return item
-
-    async def aclose(self) -> None:
-        self.closed = True
-
-
-@pytest.mark.asyncio
-async def test_request_with_retry_sync_and_async() -> None:
+def test_request_with_retry() -> None:
     sleeps: list[float] = []
     future_dt = email.utils.format_datetime(datetime.now(UTC) + timedelta(seconds=2))
     sync_client = _SequenceSyncClient(
@@ -266,33 +249,6 @@ async def test_request_with_retry_sync_and_async() -> None:
     with pytest.raises(OSError, match="boom2"):
         request_with_retry(
             err_client, "GET", "https://example.test", max_attempts=2, sleep=lambda _: None
-        )
-
-    async_sleeps: list[float] = []
-
-    async def fake_asleep(delay: float) -> None:
-        async_sleeps.append(delay)
-
-    async_client = _SequenceAsyncClient(
-        [
-            OSError("net"),
-            _FakeHttpResponse(429, headers={"retry-after": "bad-header"}),
-            _FakeHttpResponse(201, {"created": True}),
-        ]
-    )
-    aresp = await arequest_with_retry(
-        async_client, "POST", "https://example.test/v1", max_attempts=3, asleep=fake_asleep
-    )
-    assert aresp.status_code == 201
-    assert len(async_sleeps) == 2
-
-    with pytest.raises(ValueError, match="at least 1"):
-        await arequest_with_retry(async_client, "GET", "https://example.test", max_attempts=0)
-
-    aerr_client = _SequenceAsyncClient([OSError("async-boom")])
-    with pytest.raises(OSError, match="async-boom"):
-        await arequest_with_retry(
-            aerr_client, "GET", "https://example.test", max_attempts=1, asleep=fake_asleep
         )
 
 

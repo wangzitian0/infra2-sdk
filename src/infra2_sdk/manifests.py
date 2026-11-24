@@ -941,30 +941,6 @@ def run_cell(
     )
 
 
-def format_check_grid(manifest: RuntimeHooksManifest) -> str:
-    """Render a markdown table of checks by hook-grid cells for ``manifest``."""
-    cols = [cid for cid, p in CELL_POLICIES.items() if p.owner == "app" or p.check_list == "smoke"]
-    header = (
-        f"Service: {manifest.service} (schema v{manifest.schema_version}, policy v{POLICY_VERSION})"
-    )
-    lines = [
-        header,
-        "",
-        "| Check | " + " | ".join(cols) + " |",
-        "|---|" + "|".join("---" for _ in cols) + "|",
-    ]
-    for row in manifest.checks:
-        resolved = set(resolve_check_cells(row))
-        cells = [
-            ("off" if row.off is not None else f"{row.timeout_seconds}s")
-            if cid in resolved
-            else "-"
-            for cid in cols
-        ]
-        lines.append(f"| `{row.id}` | " + " | ".join(cells) + " |")
-    return "\n".join(lines)
-
-
 @dataclass(frozen=True)
 class ManifestSpec:
     path: str
@@ -1061,7 +1037,7 @@ def main(
         m.add_argument(flag)
     p.add_argument("--no-require-injected", action="store_true")
     p.add_argument("--hooks-manifest", default="runtime-hooks.manifest.json")
-    p.add_argument("--app-url", "--base-url", dest="app_url", default="")
+    p.add_argument("--app-url", dest="app_url", default="")
     p.add_argument("--env", dest="environment", default="local_dev")
     p.add_argument("--version-ref", default="local")
     p.add_argument("--result-file", default="")
@@ -1118,6 +1094,7 @@ def main(
 
 
 __all__ = [
+    "BOOTSTRAP_CAP_SECONDS",
     "CELL_POLICIES",
     "CURRENT_HOOKS_SCHEMA_VERSION",
     "FORBIDDEN_HOOK_ENV_NAMES",
@@ -1137,7 +1114,6 @@ __all__ = [
     "all_manifests",
     "build_hook_env",
     "check",
-    "format_check_grid",
     "load",
     "load_hooks_manifest",
     "main",

@@ -16,15 +16,15 @@ groups:
       sensitive: false
       owners: [infra2, finance_report, truealpha]
     - name: IMAGE_DIGEST
-      deprecated_aliases: [DATA_ENGINE_IMAGE_DIGEST, TRUEALPHA_DATA_ENGINE_IMAGE_DIGEST]
+      deprecated_aliases: []
       sensitive: false
       owners: [infra2, truealpha]
     - name: CONFIGURATION_SHA256
-      deprecated_aliases: [TRUEALPHA_CONFIGURATION_SHA256]
+      deprecated_aliases: []
       sensitive: false
       owners: [infra2, truealpha]
     - name: RELEASE_ID
-      deprecated_aliases: [RELEASE_MANIFEST_ID, TRUEALPHA_RELEASE_MANIFEST_ID]
+      deprecated_aliases: []
       sensitive: false
       owners: [infra2, truealpha]
     - name: OTEL_SERVICE_NAME
@@ -50,19 +50,19 @@ groups:
       owners: [infra2, finance_report]
   s3:
     - name: S3_ENDPOINT
-      deprecated_aliases: [CANARY_S3_ENDPOINT_URL]
+      deprecated_aliases: []
       sensitive: false
       owners: [infra2, finance_report, truealpha]
     - name: S3_BUCKET
-      deprecated_aliases: [CANARY_S3_BUCKET]
+      deprecated_aliases: []
       sensitive: false
       owners: [infra2, finance_report, truealpha]
     - name: S3_ACCESS_KEY
-      deprecated_aliases: [CANARY_S3_ACCESS_KEY]
+      deprecated_aliases: []
       sensitive: true
       owners: [infra2, finance_report, truealpha]
     - name: S3_SECRET_KEY
-      deprecated_aliases: [CANARY_S3_SECRET_KEY]
+      deprecated_aliases: []
       sensitive: true
       owners: [infra2, finance_report, truealpha]
     - name: S3_REGION
@@ -153,3 +153,21 @@ retired:
     use: DATABASE_URL
   - name: TRUEALPHA_CAPTURE_APPROVED_BY
     use: CAPTURE_APPROVED_BY
+  - name: DATA_ENGINE_IMAGE_DIGEST
+    use: IMAGE_DIGEST
+  - name: TRUEALPHA_DATA_ENGINE_IMAGE_DIGEST
+    use: IMAGE_DIGEST
+  - name: TRUEALPHA_CONFIGURATION_SHA256
+    use: CONFIGURATION_SHA256
+  - name: RELEASE_MANIFEST_ID
+    use: RELEASE_ID
+  - name: TRUEALPHA_RELEASE_MANIFEST_ID
+    use: RELEASE_ID
+  - name: CANARY_S3_ENDPOINT_URL
+    use: S3_ENDPOINT
+  - name: CANARY_S3_BUCKET
+    use: S3_BUCKET
+  - name: CANARY_S3_ACCESS_KEY
+    use: S3_ACCESS_KEY
+  - name: CANARY_S3_SECRET_KEY
+    use: S3_SECRET_KEY

@@ -47,6 +47,8 @@ def test_check_shared_env_conformance_flags_deprecated_names_and_accepts_canonic
             "SMALL_MODEL",
             "CANARY_S3_BUCKET",
             "CANARY_POSTGRES_USER",
+            "DATA_ENGINE_IMAGE_DIGEST",
+            "TRUEALPHA_CONFIGURATION_SHA256",
             "TRUEALPHA_RELEASE_MANIFEST_ID",
         ]
     )
@@ -55,10 +57,17 @@ def test_check_shared_env_conformance_flags_deprecated_names_and_accepts_canonic
         "APP_ENV is deprecated: use ENVIRONMENT",
         "CANARY_POSTGRES_USER is deprecated: use DATABASE_URL",
         "CANARY_S3_BUCKET is deprecated: use S3_BUCKET",
+        "DATA_ENGINE_IMAGE_DIGEST is deprecated: use IMAGE_DIGEST",
         "SMALL_MODEL is deprecated: use LLM_SMALL_MODEL",
+        "TRUEALPHA_CONFIGURATION_SHA256 is deprecated: use CONFIGURATION_SHA256",
         "TRUEALPHA_RELEASE_MANIFEST_ID is deprecated: use RELEASE_ID",
         "ZAI_API_KEY is deprecated: use LLM_API_KEY",
     ]
+    retired = {entry["name"]: entry["use"] for entry in shared_env_contract()["retired"]}
+    assert retired["CANARY_S3_BUCKET"] == "S3_BUCKET"
+    assert retired["TRUEALPHA_RELEASE_MANIFEST_ID"] == "RELEASE_ID"
+    assert retired["TRUEALPHA_CONFIGURATION_SHA256"] == "CONFIGURATION_SHA256"
+    assert retired["DATA_ENGINE_IMAGE_DIGEST"] == "IMAGE_DIGEST"
 
 
 def test_assert_distinct_release_identity_rejects_frozen_staging_prod_collision() -> None:

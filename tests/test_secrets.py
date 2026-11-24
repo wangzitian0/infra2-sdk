@@ -423,7 +423,7 @@ def test_agent_template_renders_only_store_backed_and_provided_fields() -> None:
     text = render_agent_template(MANIFEST, project="truealpha", service="data_engine")
     assert text == (
         "{{- /* Generated from example.Settings by infra2_sdk.secrets. Do not edit. */ -}}\n"
-        '{{- $env := env "ENV" -}}\n'
+        '{{- $env := or (env "ENVIRONMENT") (env "ENV") -}}\n'
         '{{- with secret (printf "secret/data/truealpha/%s/postgres" $env) }}\n'
         'DATABASE_URL={{ printf "%q" (printf "postgresql://postgres:%s@db/app" '
         ".Data.data.POSTGRES_PASSWORD) }}\n"

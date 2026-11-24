@@ -20,6 +20,7 @@ from infra2_sdk import (
     rules,
     runtime,
     secrets,
+    stage_record,
     transport,
 )
 from infra2_sdk.capacity import CapacityReading, cloudflare_readings
@@ -45,7 +46,6 @@ from infra2_sdk.manifests import (
     OverrideReason,
     RuntimeHooksManifest,
     StageHookPlan,
-    format_check_grid,
     load_hooks_manifest,
     resolve_check_cells,
     run_cell,
@@ -87,6 +87,7 @@ __all__ = [
     "rules",
     "runtime",
     "secrets",
+    "stage_record",
     "transport",
     "CapacityReading",
     "cloudflare_readings",
@@ -112,7 +113,6 @@ __all__ = [
     "RuntimeHooksManifest",
     "StageHookPlan",
     "StageRecord",
-    "format_check_grid",
     "load_hooks_manifest",
     "resolve_check_cells",
     "run_cell",

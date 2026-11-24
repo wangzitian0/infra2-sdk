@@ -86,6 +86,12 @@ def test_canary_hostname_resolution_and_slot_999_is_not_special():
         host = resolve_app_hostname("report", EnvironmentTier.PREVIEW, slot_id=CANARY_SLOT)
         assert host == f"report-{CANARY_SLOT}.{_DEFAULT_BASE_DOMAIN}"
 
+    # Retired "deploy-v2-canary" alias no longer maps to the canary host.
+    with pytest.raises(ValueError, match="unknown environment"):
+        resolve_app_hostname("report", "deploy-v2-canary")
+    with pytest.raises(ValueError, match="unknown environment"):
+        derive_preview_coordinates("report", "deploy-v2-canary")
+
 
 def test_resolve_service_url():
     url_prod = resolve_service_url("report", EnvironmentTier.PRODUCTION, path="/api/health")

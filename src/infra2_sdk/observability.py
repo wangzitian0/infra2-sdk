@@ -472,8 +472,6 @@ def reconcile_issue_trail(
     if not title_prefix or not title_prefix.strip():
         raise ValueError("title_prefix must not be empty or whitespace")
     if mode not in (_FULL, _OFF):
-        if mode == "open-only":
-            raise ValueError("issue-trail mode 'open-only' was removed; pass 'full' or 'off'")
         print(f"::error::unknown issue-trail mode {mode!r}")
         return 1
     if mode == _OFF:

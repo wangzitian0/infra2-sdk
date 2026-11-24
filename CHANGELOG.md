@@ -6,6 +6,16 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+### Changed (Unreleased)
+
+- Move 9 zero-caller environment aliases (`DATA_ENGINE_IMAGE_DIGEST`, `TRUEALPHA_DATA_ENGINE_IMAGE_DIGEST`, `TRUEALPHA_CONFIGURATION_SHA256`, `RELEASE_MANIFEST_ID`, `TRUEALPHA_RELEASE_MANIFEST_ID`, `CANARY_S3_*`) from `deprecated_aliases` to `retired` in `data/shared_env.yaml`.
+- Update `render_agent_template` to read `ENVIRONMENT` before `ENV` fallback; add `Deprecated alias` table to `scripts/render_app_contract.py`; export `stage_record`, `HttpTransport`, `CANARY_SLOT`, `check_health`, `run_probes`, `resolve_runtime_env`, and `BOOTSTRAP_CAP_SECONDS`; update `init_service` docs and `pydantic-ai-slim[extra]` error hints.
+- Expand removal, AST retired-env, export `__all__`, and README/init.md table guards; clear `HELD` in `tests/surface.json` and align consumer/documented metadata.
+
+### Removed (Unreleased)
+
+- Remove dead shims and zero-caller helpers: `arequest_with_retry`, `format_check_grid`, `_validate_evidence_urls`, `deploy-v2-canary` routing alias, `open-only` issue-trail mode, `INSTANCE_ID` fallback read, dead `_coerce_tuple`/`_JSON_FENCE_RE`/provider alias loops in `runtime.llm`, `--base-url` alias in `manifests`, and `_RESERVED_SERVICE_KEYS` in `rules.compose`.
+
 ## 4.5.0 - 2026-11-24
 
 Minor release (wangzitian0/truealpha#1843). A slow bootstrap no longer takes time from the checks of a hook cell. No public name changes.

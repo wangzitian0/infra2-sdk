@@ -361,5 +361,7 @@ __all__ = [
     "DependencyManifest",
     "DependencyStatus",
     "ProbeResult",
+    "check_health",
     "probe_orchestrator",
+    "run_probes",
 ]

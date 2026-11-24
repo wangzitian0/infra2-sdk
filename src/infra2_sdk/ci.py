@@ -336,9 +336,9 @@ def write_github_output(
             if "\n" not in value and "\r" not in value:
                 print(f"{key}={value}", file=handle)
                 continue
-            delim = f"FINANCE_REPORT_OUTPUT_{os.urandom(16).hex()}"
+            delim = f"INFRA2_SDK_OUTPUT_{os.urandom(16).hex()}"
             while delim in value.splitlines():
-                delim = f"FINANCE_REPORT_OUTPUT_{os.urandom(16).hex()}"
+                delim = f"INFRA2_SDK_OUTPUT_{os.urandom(16).hex()}"
             print(f"{key}<<{delim}\n{value}\n{delim}", file=handle)
 
 
