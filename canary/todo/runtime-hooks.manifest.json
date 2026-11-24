@@ -1,0 +1,27 @@
+{
+  "schema_version": 3,
+  "service": "canary/todo",
+  "required_env": [
+    "APP_URL"
+  ],
+  "optional_env": [
+    "TARGET_URL"
+  ],
+  "checks": [
+    {
+      "id": "smoke",
+      "argv": [
+        "sh",
+        "-c",
+        "python3 canary/todo/worker.py --once --health-url \"${TARGET_URL:-$APP_URL}/api/health\""
+      ],
+      "needs": [
+        "code",
+        "running_service"
+      ],
+      "writes": false,
+      "accepts_scale": false,
+      "timeout_seconds": 60
+    }
+  ]
+}

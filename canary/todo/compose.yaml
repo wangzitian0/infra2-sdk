@@ -72,6 +72,27 @@ services:
         )
         s3.create_bucket(Bucket=os.environ["S3_BUCKET"])
 
+  db-init:
+    # One shot: create the canary enum type checked by schema_check, then exit.
+    image: infra2-canary-todo:local
+    pull_policy: never
+    depends_on:
+      postgres:
+        condition: service_healthy
+      s3-init:
+        condition: service_completed_successfully
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://todo:local-test-postgres@postgres:5432/todo
+    command:
+      - python
+      - -c
+      - |
+        import os, psycopg
+        from canary_schema import ENSURE_ENUM_SQL
+        with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as conn:
+            conn.execute(ENSURE_ENUM_SQL)
+
   todo:
     # The image that s3-init builds.
     image: infra2-canary-todo:local
@@ -82,6 +103,8 @@ services:
       redis:
         condition: service_healthy
       s3-init:
+        condition: service_completed_successfully
+      db-init:
         condition: service_completed_successfully
     environment:
       <<: *s3

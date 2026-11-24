@@ -58,8 +58,49 @@ class CanarySettings(BaseModel):
         "", "Health URL of the SigNoz collector.", empty_ok=True, group="liveness"
     )
     openpanel_api_url: str = _field("", "Health URL of OpenPanel.", empty_ok=True, group="liveness")
+    openpanel_health_url: str = _field(
+        "", "Internal OpenPanel health URL for liveness checks.", empty_ok=True, group="liveness"
+    )
     authentik_endpoint: str = _field(
         "", "Liveness URL of Authentik.", empty_ok=True, group="liveness"
+    )
+
+    # Capabilities injected by x-capabilities (openpanel, browser_otel) in App-peer stacks.
+    openpanel_client_id: str = _field(
+        "",
+        "OpenPanel client ID from x-capabilities openpanel.",
+        empty_ok=True,
+        group="frontend_telemetry",
+    )
+    openpanel_environment: str = _field(
+        "",
+        "OpenPanel environment from x-capabilities openpanel.",
+        empty_ok=True,
+        group="frontend_telemetry",
+    )
+    openpanel_script_url: str = _field(
+        "",
+        "OpenPanel script URL from x-capabilities openpanel.",
+        empty_ok=True,
+        group="frontend_telemetry",
+    )
+    next_public_otel_exporter_otlp_endpoint: str = _field(
+        "",
+        "Browser OTLP endpoint from x-capabilities browser_otel.",
+        empty_ok=True,
+        group="frontend_telemetry",
+    )
+    next_public_deployment_environment: str = _field(
+        "",
+        "Browser deployment environment from x-capabilities browser_otel.",
+        empty_ok=True,
+        group="frontend_telemetry",
+    )
+    next_public_git_sha: str = _field(
+        "",
+        "Browser Git SHA from x-capabilities browser_otel.",
+        empty_ok=True,
+        group="frontend_telemetry",
     )
 
     # Read by the SDK, not by app.py: runtime identity, telemetry and the LLM client.

@@ -10,6 +10,7 @@ backfill from the merged pull requests.
 
 - Move 9 zero-caller environment aliases (`DATA_ENGINE_IMAGE_DIGEST`, `TRUEALPHA_DATA_ENGINE_IMAGE_DIGEST`, `TRUEALPHA_CONFIGURATION_SHA256`, `RELEASE_MANIFEST_ID`, `TRUEALPHA_RELEASE_MANIFEST_ID`, `CANARY_S3_*`) from `deprecated_aliases` to `retired` in `data/shared_env.yaml`.
 - Update `render_agent_template` to read `ENVIRONMENT` before `ENV` fallback; add `Deprecated alias` table to `scripts/render_app_contract.py`; export `stage_record`, `HttpTransport`, `CANARY_SLOT`, `check_health`, `run_probes`, `resolve_runtime_env`, and `BOOTSTRAP_CAP_SECONDS`; update `init_service` docs and `pydantic-ai-slim[extra]` error hints.
+- Upgrade `canary/todo` into an App-peer reference consumer: add `worker.py` (`init_worker`, `request_with_retry`), `canary_schema.py` (`schema_check` enum contract + standalone compose `db-init`), Schema-3 `runtime-hooks.manifest.json`, `env-reference.generated.md`, `OPENPANEL_HEALTH_URL`, and `x-capabilities` (`s3`, `otel`, `openpanel`, `browser_otel`) settings/status reporting; expand `scripts/check_canary_standalone.sh` to verify `worker.py` and `schema_check`.
 - Expand removal, AST retired-env, export `__all__`, and README/init.md table guards; clear `HELD` in `tests/surface.json` and align consumer/documented metadata.
 
 ### Removed (Unreleased)

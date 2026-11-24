@@ -679,7 +679,7 @@ def test_no_setting_default_names_a_host() -> None:
         for name, info in CanarySettings.model_fields.items()
         if info.annotation is str
     }
-    assert len(text) == 20
+    assert len(text) == 27
     assert text == dict.fromkeys(text, ""), "a text default would name a host or a value"
     assert (settings.port, settings.redis_port) == (8000, 6379)
 

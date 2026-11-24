@@ -13,7 +13,9 @@ RUN pip install --no-cache-dir \
     && rm -rf /tmp/sdk
 
 COPY canary/todo/app.py canary/todo/ui.py canary/todo/canary_settings.py \
-     canary/todo/env.manifest.json /app/
+     canary/todo/canary_schema.py canary/todo/worker.py \
+     canary/todo/env.manifest.json canary/todo/env-reference.generated.md \
+     canary/todo/runtime-hooks.manifest.json /app/
 
 ENV PYTHONPATH=/app
 EXPOSE 8000

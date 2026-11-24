@@ -49,5 +49,16 @@ expected = {
 }
 if report.get("ok") is not True or checks != expected:
     sys.exit(f"standalone verdict is not green: ok={report.get('ok')} checks={checks}")
+enum_name = (report.get("capabilities") or {}).get("schema_enum")
+if enum_name != "canary_todo_capability":
+    sys.exit(f"standalone verdict missing expected schema_enum capability: {report.get('capabilities')!r}")
 print(f"standalone Canary: ok, {checks}")
 PY
+
+worker_out="$("${compose[@]}" exec -T todo python /app/worker.py --once --health-url http://127.0.0.1:8000/api/health)"
+python3 -c 'import json, sys; data = json.loads(sys.argv[1]); assert data.get("ok") is True and data.get("status_code") == 200, data' "$worker_out"
+echo "standalone Canary worker: $worker_out"
+
+schema_out="$("${compose[@]}" exec -T todo python -m infra2_sdk.runtime.schema_check --metadata canary_schema:METADATA --db-url postgresql://todo:local-test-postgres@postgres:5432/todo --label canary/todo)"
+echo "$schema_out" | grep -q "ROLLBACK_CLASS: A"
+echo "standalone Canary schema_check: verified"
