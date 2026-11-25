@@ -6,12 +6,16 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
-### Removed (Unreleased)
+## 4.8.0 - 2026-11-25
+
+Minor release: retire the runtime aliases ENV, APP_ENV and IMAGE_TAG.
+
+### Removed (4.8.0)
 
 - Retire the runtime aliases `ENV`, `APP_ENV` (use `ENVIRONMENT`) and `IMAGE_TAG` (use `SERVICE_VERSION`) (wangzitian0/infra2#1823 N1). `data/shared_env.yaml` moves them from `deprecated_aliases` to `retired`, so `check_shared_env_conformance` still flags them. `resolve_runtime_env`, `environment_from_env`, `OtelSettings.from_env` and `init_service` do not read them. A retired name cannot conflict with `ENVIRONMENT` or `SERVICE_VERSION`. `REMOVED_ENV_NAMES` holds 32 names.
 - `render_agent_template` writes `{{- $env := env "ENVIRONMENT" -}}`. Before, it read `ENV` when `ENVIRONMENT` was empty.
 
-### Changed (Unreleased)
+### Changed (4.8.0)
 
 - `compile_compose` gives the `x-vault` sidecar `ENVIRONMENT: ${ENV}` in place of `ENV: ${ENV}`. Compose still fills the value from the deploy variable `ENV`.
 - In preview mode, the `x-preview` override writes `export ENVIRONMENT="${ENV}"` as Compose text. Before, it was `$$ENV` and needed an `ENV` variable in the container.
