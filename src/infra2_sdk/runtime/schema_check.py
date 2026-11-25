@@ -10,7 +10,8 @@ the ``pg_enum`` labels of the target database before a deploy replaces container
   - Expand step (infra2 #1658): a whole enum type that the database lacks, used only by
     tables that the database lacks, does not block. See ``cover_with_new_tables``.
   - Contract step (finance_report #3227): a whole enum type that the code does not declare,
-    used only by database tables that the code does not declare, does not block. A pending
+    used (directly or through a derived type) only by database tables that the code does not
+    declare, does not block. A pending
     migration drops those tables and the type. See ``cover_with_dropped_tables``. The run
     still prints ``ROLLBACK_CLASS: C``, because a drop is not automatically reversible.
 - Fail closed: a query failure or a parse error blocks.
@@ -306,6 +307,7 @@ def cover_with_dropped_tables(
     discrepancies: Sequence[EnumDiscrepancy],
     *,
     enum_db_tables: Mapping[str, frozenset[str]],
+    code_enums: Collection[str],
     code_tables: Collection[str],
     migrations_pending: bool,
 ) -> tuple[list[EnumDiscrepancy], list[tuple[str, tuple[str, ...]]]]:
@@ -314,21 +316,22 @@ def cover_with_dropped_tables(
     This is the contract-step mirror of ``cover_with_new_tables``. The image runs
     ``alembic upgrade head`` after this gate. A pending migration that drops tables and
     their enum types leaves the database ahead of the code until it runs. Nothing here
-    reads migration code. Covered: an entry of the reverse check (``code_values == ()``,
-    the code declares no such type), when ``enum_db_tables`` names at least one database
+    reads migration code. Covered: a type whose name is not in ``code_enums`` (the code
+    declares no type of that name), when ``enum_db_tables`` names at least one database
     table that uses the type and no such table is in ``code_tables``. Always blocking: no
-    pending migration, a type that the code declares (a label difference or a casing
-    drift), a type that no database table uses, and a type that a table of the code still
-    uses. Returns ``(blocking, covered)`` with ``covered`` as ``(enum name, its tables)``.
+    pending migration, a type that the code declares (a label difference, a casing drift,
+    or zero labels), a type that no database table uses, and a type that a table of the
+    code still uses. Returns ``(blocking, covered)``; ``covered`` holds ``(enum name, tables)``.
     """
     if not migrations_pending:
         return list(discrepancies), []
     declared = set(code_tables)
+    declared_enums = set(code_enums)
     blocking: list[EnumDiscrepancy] = []
     covered: list[tuple[str, tuple[str, ...]]] = []
     for discrepancy in discrepancies:
         tables = enum_db_tables.get(discrepancy.enum_name, frozenset())
-        if discrepancy.code_values == () and tables and not tables & declared:
+        if discrepancy.enum_name not in declared_enums and tables and not tables & declared:
             covered.append((discrepancy.enum_name, tuple(sorted(tables))))
         else:
             blocking.append(discrepancy)
@@ -623,22 +626,41 @@ def fetch_db_tables(db_url: str) -> frozenset[str]:
     return _with_libpq_cursor(db_url, read)
 
 
-# Each enum type with the tables whose columns use it: the type itself, an array of the
-# type, or a domain over the type. Only ordinary and partitioned tables count. Schema names
-# are dropped, matching ``query_db_enums`` and the ORM's table names.
+# Each enum type with the tables whose columns use it (#3227). ``derived`` closes over every
+# type that is built on the enum type: a domain (``typbasetype``), an array (``typarray``), a
+# composite type or table row type with a field of the type (``reltype``), a range
+# (``rngsubtype``) and a multirange (``rngmultitypid``, PostgreSQL 14 and later). A column of
+# any derived type in an ordinary or partitioned table counts, and so does a table whose own
+# row type is derived. Views, materialized views and foreign tables do not count. Schema names
+# are dropped, matching ``query_db_enums`` and the ORM's table names. On a server that cannot
+# run this query, the query fails and the coverage blocks.
 DB_ENUM_TABLES_SQL = (
-    "SELECT DISTINCT t.typname, c.relname "
-    "FROM pg_catalog.pg_type t "
+    "WITH RECURSIVE edges(base, derived) AS ("
+    "SELECT typbasetype, oid FROM pg_catalog.pg_type WHERE typtype = 'd' "
+    "UNION ALL SELECT oid, typarray FROM pg_catalog.pg_type WHERE typarray <> 0 "
+    "UNION ALL SELECT a.atttypid, c.reltype FROM pg_catalog.pg_attribute a "
+    "JOIN pg_catalog.pg_class c ON c.oid = a.attrelid "
+    "WHERE a.attnum > 0 AND NOT a.attisdropped AND c.reltype <> 0 "
+    "UNION ALL SELECT rngsubtype, rngtypid FROM pg_catalog.pg_range "
+    "UNION ALL SELECT rngtypid, rngmultitypid FROM pg_catalog.pg_range"
+    "), derived(enum_oid, type_oid) AS ("
+    "SELECT t.oid, t.oid FROM pg_catalog.pg_type t "
     "JOIN pg_catalog.pg_namespace tn ON tn.oid = t.typnamespace "
-    "JOIN pg_catalog.pg_type u "
-    "ON u.oid = t.oid OR u.oid = t.typarray OR u.typbasetype = t.oid "
-    "JOIN pg_catalog.pg_attribute a "
-    "ON a.atttypid = u.oid AND a.attnum > 0 AND NOT a.attisdropped "
-    "JOIN pg_catalog.pg_class c ON c.oid = a.attrelid AND c.relkind IN ('r', 'p') "
+    "WHERE t.typtype = 'e' AND tn.nspname NOT IN ('pg_catalog', 'information_schema') "
+    "UNION SELECT d.enum_oid, e.derived FROM derived d "
+    "JOIN edges e ON e.base = d.type_oid"
+    "), users(enum_oid, rel_oid) AS ("
+    "SELECT d.enum_oid, a.attrelid FROM derived d "
+    "JOIN pg_catalog.pg_attribute a ON a.atttypid = d.type_oid "
+    "WHERE a.attnum > 0 AND NOT a.attisdropped "
+    "UNION SELECT d.enum_oid, c.oid FROM derived d "
+    "JOIN pg_catalog.pg_class c ON c.reltype = d.type_oid"
+    ") "
+    "SELECT DISTINCT t.typname, c.relname FROM users u "
+    "JOIN pg_catalog.pg_type t ON t.oid = u.enum_oid "
+    "JOIN pg_catalog.pg_class c ON c.oid = u.rel_oid AND c.relkind IN ('r', 'p') "
     "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
-    "WHERE t.typtype = 'e' "
-    "AND tn.nspname NOT IN ('pg_catalog', 'information_schema') "
-    "AND n.nspname NOT IN ('pg_catalog', 'information_schema');"
+    "WHERE n.nspname NOT IN ('pg_catalog', 'information_schema');"
 )
 
 
@@ -797,6 +819,7 @@ def main(argv: list[str] | None = None) -> int:
             discrepancies, dropped = cover_with_dropped_tables(
                 discrepancies,
                 enum_db_tables=fetch_db_enum_tables(db_url),
+                code_enums=code_enums,
                 code_tables=table_names_from_metadata(_resolve(spec.metadata)),
                 migrations_pending=pending,
             )

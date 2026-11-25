@@ -6,7 +6,9 @@ Migration 0081 drops the tables `llm_providers` and `llm_scene_bindings` and the
 before `alembic upgrade head`, so the database still has the three types and the code does
 not. This is the contract-step mirror of the #1658 expand-step rule.
 
-The rule reads only facts: the code's table names and the live database's type-to-table map.
+The rule reads only facts: the code's enum and table names and the live database's
+type-to-table map. `tests/test_schema_check_enum_tables_postgres.py` runs that map's query on
+a real server.
 
 ### Mutation evidence
 
@@ -15,8 +17,10 @@ and the mutation was then removed.
 
 - M1: remove `if not migrations_pending: return ...` from `cover_with_dropped_tables`.
   `test_no_pending_migration_covers_nothing` fails.
-- M2: remove `discrepancy.code_values == ()`.
+- M2: remove `discrepancy.enum_name not in declared_enums`.
   `test_a_type_that_the_code_declares_with_labels_blocks` fails.
+- N3: replace `discrepancy.enum_name not in declared_enums` with `discrepancy.code_values == ()`.
+  `test_a_type_that_the_code_declares_with_zero_labels_blocks` fails.
 - M3: remove `tables and` (the non-empty using-table set).
   `test_a_type_that_no_database_table_uses_blocks` fails.
 - M4: remove `not tables & declared`.
@@ -24,7 +28,7 @@ and the mutation was then removed.
   `test_a_type_with_one_of_two_using_tables_still_in_code_blocks` fail.
 - M5: compute `rollback_class` from the blocking list after the coverage.
   `test_main_passes_the_0081_shape_and_prints_class_c` fails (it prints class A).
-- M6: remove the `try`/`except` around the dropped-table coverage in `main`.
+- M6: catch only `ZeroDivisionError` around the dropped-table coverage in `main`.
   `test_main_blocks_when_the_enum_table_map_cannot_be_read` fails (the error escapes).
 - M7: in `fetch_db_enum_tables`, keep only the last table of each type.
   `test_fetch_db_enum_tables_groups_the_tables_of_each_type` fails.
@@ -67,10 +71,11 @@ def _db_only(name: str, *labels: str) -> EnumDiscrepancy:
     return EnumDiscrepancy(name, (), labels, (), labels, ())
 
 
-def _cover(discrepancies, enum_db_tables, code_tables, *, pending=True):
+def _cover(discrepancies, enum_db_tables, code_tables, *, code_enums=(KEPT,), pending=True):
     return cover_with_dropped_tables(
         discrepancies,
         enum_db_tables=enum_db_tables,
+        code_enums=code_enums,
         code_tables=code_tables,
         migrations_pending=pending,
     )
@@ -127,7 +132,22 @@ def test_a_type_that_the_code_declares_with_labels_blocks() -> None:
     """A partial label difference: the code still declares the type, so nothing drops it."""
     discrepancy = EnumDiscrepancy(PROTOCOL, ("openai",), ("openai", "gone"), (), ("gone",), ())
     tables = {PROTOCOL: frozenset({"llm_providers"})}
-    assert _cover([discrepancy], tables, CODE_TABLES_0081) == ([discrepancy], [])
+    assert _cover([discrepancy], tables, CODE_TABLES_0081, code_enums={KEPT, PROTOCOL}) == (
+        [discrepancy],
+        [],
+    )
+
+
+def test_a_type_that_the_code_declares_with_zero_labels_blocks() -> None:
+    """The code declares the type with no labels: the entry has `code_values == ()`."""
+    code_enums = {KEPT: ("extract",), PROTOCOL: ()}
+    discrepancies = check_enums(code_enums, {PROTOCOL: ["openai"], KEPT: ["extract"]})
+    assert [(d.enum_name, d.code_values) for d in discrepancies] == [(PROTOCOL, ())]
+    tables = {PROTOCOL: frozenset({"llm_providers"})}
+    assert _cover(discrepancies, tables, CODE_TABLES_0081, code_enums=code_enums) == (
+        discrepancies,
+        [],
+    )
 
 
 def test_a_casing_drift_blocks() -> None:
@@ -135,7 +155,10 @@ def test_a_casing_drift_blocks() -> None:
         PROTOCOL, ("OPENAI",), ("openai",), ("OPENAI",), ("openai",), (("OPENAI", "openai"),)
     )
     tables = {PROTOCOL: frozenset({"llm_providers"})}
-    assert _cover([discrepancy], tables, CODE_TABLES_0081) == ([discrepancy], [])
+    assert _cover([discrepancy], tables, CODE_TABLES_0081, code_enums={KEPT, PROTOCOL}) == (
+        [discrepancy],
+        [],
+    )
 
 
 def test_a_type_that_no_database_table_uses_blocks() -> None:
@@ -163,9 +186,9 @@ def test_table_names_reject_an_object_that_is_not_metadata() -> None:
         table_names_from_metadata(SimpleNamespace())
 
 
-def test_the_enum_table_query_is_one_read_only_select() -> None:
+def test_the_enum_table_query_is_one_read_only_statement() -> None:
     sql = gate.DB_ENUM_TABLES_SQL
-    assert gate._READ_ONLY_SQL_RE.match(sql)
+    assert sql.startswith("WITH RECURSIVE ")
     assert gate._FORBIDDEN_SQL_RE.search(sql) is None
     assert sql.count(";") == 1 and sql.endswith(";")
 
