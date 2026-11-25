@@ -269,3 +269,18 @@ def test_resolve_image_digest_answers_a_bearer_challenge_from_any_registry() -> 
     ]
     assert "scope=repository%3Aowner%2Fapp%3Apull" in calls[1][1]
     assert calls[2][2]["Authorization"] == "Bearer granted"
+
+
+def test_resolve_pr_number_int_and_image_ref() -> None:
+    seen: list[list[str]] = []
+
+    def rec(command, **kwargs):
+        seen.append(command)
+        return SimpleNamespace(stdout=f"{SHA}\trefs/pull/42/head\n")
+
+    sha = resolve_to_sha(repo=REPO, ref=42, runner=rec)
+    assert sha == SHA
+    assert seen[0][-1] == "refs/pull/42/head"
+
+    resolved = resolve_image_ref(repo=REPO, ref=42, runner=rec)
+    assert resolved.sha == SHA and resolved.form == "pr"

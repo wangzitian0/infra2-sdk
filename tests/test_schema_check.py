@@ -624,3 +624,70 @@ def test_a_malformed_precondition_is_not_evaluated(fake_app, capsys) -> None:
     rc = gate.main([*fake_app, "--db-url", "postgresql://db/app", "--precondition", "no-sql"])
     assert rc == gate.EXIT_NOT_EVALUATED
     assert "--precondition must be NAME=SELECT" in capsys.readouterr().err
+
+
+def test_psycopg2_cursor_used_closed_and_errors_redacted(
+    fake_app, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    class _Psycopg2Cursor:
+        def __init__(self) -> None:
+            self.queries: list[str] = []
+
+        def execute(self, sql: str) -> None:
+            self.queries.append(sql)
+
+        def fetchall(self):
+            return []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    class _Psycopg2Conn:
+        def __init__(self) -> None:
+            self.last_cursor: _Psycopg2Cursor | None = None
+
+        def cursor(self):
+            self.last_cursor = _Psycopg2Cursor()
+            return self.last_cursor
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def close(self) -> None:
+            closed["conn"] += 1
+
+    closed = {"conn": 0}
+    conn = _Psycopg2Conn()
+    enums = query_db_enums(conn)
+    assert enums == {}
+    assert conn.last_cursor is not None and len(conn.last_cursor.queries) == 1
+    assert closed["conn"] == 0
+
+    monkeypatch.setitem(sys.modules, "psycopg", None)
+    monkeypatch.setitem(
+        sys.modules, "psycopg2", SimpleNamespace(connect=lambda _u: _Psycopg2Conn())
+    )
+    rc = gate.main([*fake_app, "--db-url", "postgresql://u:topsecret@db/app"])
+    assert rc == gate.EXIT_BLOCKED
+    assert closed["conn"] == 1
+
+    monkeypatch.setitem(
+        sys.modules,
+        "psycopg",
+        SimpleNamespace(
+            connect=lambda _u: (_ for _ in ()).throw(
+                RuntimeError("bad postgresql://u:topsecret@db/app")
+            )
+        ),
+    )
+    rc_err = gate.main([*fake_app, "--db-url", "postgresql://u:topsecret@db/app"])
+    assert rc_err == gate.EXIT_BLOCKED
+    err = capsys.readouterr().err
+    assert "topsecret" not in err
+    assert "<redacted-postgres-dsn>" in err

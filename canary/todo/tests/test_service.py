@@ -33,7 +33,7 @@ def test_todo_app_endpoints_contract(monkeypatch) -> None:
     monkeypatch.setattr(
         todo_mod,
         "_probe_redis",
-        lambda host, port, **kw: {
+        lambda *args, **kw: {
             "status": "pass",
             "latency_ms": 0.5,
             "detail": "mock redis pong & set/get ok",
@@ -79,8 +79,10 @@ def test_todo_app_endpoints_contract(monkeypatch) -> None:
     spec.loader.exec_module(reloaded)
     reloaded_client = TestClient(reloaded.fastapi_app, raise_server_exceptions=False)
     resp_ver = reloaded_client.get("/api/health")
-    assert resp_ver.status_code == 200
+    assert resp_ver.status_code == 503
     data_ver = resp_ver.json()
+    assert data_ver["ok"] is False
+    assert data_ver["status"] == "unhealthy"
     assert data_ver["environment"] == "staging"
     assert data_ver["configuration_sha256"] == "deadbeef01234567"
     assert data_ver["version"] == "abcdef1234567890"
@@ -224,7 +226,7 @@ def test_todo_app_concurrency_nonblocking(monkeypatch) -> None:
 
             async def health():
                 await asyncio.sleep(0.05)  # the canary request is in flight by now
-                response = await client.get("/api/health")
+                response = await client.get("/livez")
                 finished.append("health")
                 return response
 
@@ -296,7 +298,7 @@ def test_todo_app_authentik_identity_and_me_endpoint() -> None:
 
     # HTTP HEAD requests supported without 501 error and return no body
     resp_head = client.head("/api/health")
-    assert resp_head.status_code == 200
+    assert resp_head.status_code == 503
     assert resp_head.headers.get("Content-Type") == "application/json"
     assert "HEAD" in (resp_head.headers.get("Access-Control-Allow-Methods") or "")
     assert resp_head.text == ""
@@ -317,12 +319,11 @@ def test_todo_app_authentik_identity_and_me_endpoint() -> None:
 
 
 def test_todo_readyz_and_health_follow_the_canary_status(monkeypatch) -> None:
-    """/readyz and /health answer from the canary status: 200 when every write path
-    passes, 503 with the failed checks as the reason when one fails (#1209)."""
+    """/readyz and /health answer from the canary status: 200 when every gating check
+    passes, 503 with the failed checks as reasons when one fails."""
     todo_mod = load_todo_module("todo_app_readiness")
     client = TestClient(todo_mod.fastapi_app)
 
-    # `_canary_readiness_checker` looks `cached_canary_status` up at call time
     monkeypatch.setattr(todo_mod, "cached_canary_status", lambda: {"ok": True})
     ready = client.get("/readyz")
     assert ready.status_code == 200
@@ -332,7 +333,8 @@ def test_todo_readyz_and_health_follow_the_canary_status(monkeypatch) -> None:
     assert healthy.json()["status"] == "healthy"
     assert healthy.json()["service"] == "platform-todo"
     assert healthy.json()["reasons"] == []
-    assert healthy.json()["checks"]["database"]["detail"] == ("canary write paths passed")
+    assert set(healthy.json()["checks"]) == {"postgres", "redis", "s3"}
+    assert healthy.json()["checks"]["redis"]["status"] == "present"
 
     monkeypatch.setattr(
         todo_mod,
@@ -344,14 +346,15 @@ def test_todo_readyz_and_health_follow_the_canary_status(monkeypatch) -> None:
     assert not_ready.json() == {
         "status": "not_ready",
         "service": "platform-todo",
-        "reasons": ["database: failed=redis"],
+        "reasons": ["redis: failed=redis"],
     }
     unhealthy = client.get("/health")
     assert unhealthy.status_code == 503
     assert unhealthy.json()["status"] == "unhealthy"
     assert unhealthy.json()["service"] == "platform-todo"
-    assert unhealthy.json()["reasons"] == ["database: failed=redis"]
-    assert unhealthy.json()["checks"]["database"]["status"] == "absent"
+    assert unhealthy.json()["reasons"] == ["redis: failed=redis"]
+    assert unhealthy.json()["checks"]["redis"]["status"] == "absent"
+    assert unhealthy.json()["checks"]["postgres"]["status"] == "present"
 
 
 def _raise_boom() -> dict:
@@ -359,17 +362,38 @@ def _raise_boom() -> dict:
 
 
 @pytest.mark.parametrize(
-    ("status", "reason"),
+    ("status", "reasons"),
     [
-        ({"ok": False, "unconfigured": ["s3"]}, "database: unconfigured=s3"),
-        ({"ok": False, "failed": ["redis"]}, "database: failed=redis"),
+        ({"ok": False, "unconfigured": ["s3"]}, ["s3: unconfigured=s3"]),
+        ({"ok": False, "failed": ["redis"]}, ["redis: failed=redis"]),
         (
             {"ok": False, "failed": ["redis"], "unconfigured": ["s3"]},
-            "database: failed=redis; unconfigured=s3",
+            ["redis: failed=redis", "s3: unconfigured=s3"],
         ),
-        ({"ok": False}, "database: canary checks not ok"),
-        ({}, "database: canary checks not ok"),
-        (_raise_boom, "database: canary status check failed: boom"),
+        (
+            {"ok": False},
+            [
+                "postgres: canary checks not ok",
+                "redis: canary checks not ok",
+                "s3: canary checks not ok",
+            ],
+        ),
+        (
+            {},
+            [
+                "postgres: canary checks not ok",
+                "redis: canary checks not ok",
+                "s3: canary checks not ok",
+            ],
+        ),
+        (
+            _raise_boom,
+            [
+                "postgres: canary status check failed: boom",
+                "redis: canary status check failed: boom",
+                "s3: canary status check failed: boom",
+            ],
+        ),
     ],
     ids=[
         "unconfigured",
@@ -382,11 +406,9 @@ def _raise_boom() -> dict:
 )
 @pytest.mark.parametrize("path", ["/readyz", "/health"])
 def test_todo_readiness_fails_closed_and_names_the_reason(
-    monkeypatch, path: str, status, reason: str
+    monkeypatch, path: str, status, reasons: list[str]
 ) -> None:
-    """A red, unconfigured or unreadable canary status is never ready. `ok` is the verdict:
-    an empty `failed` list does not clear a document that says `ok: false`, and a status
-    call that raises is not ready (#1209)."""
+    """A red, unconfigured or unreadable canary status is never ready."""
     todo_mod = load_todo_module("todo_app_fail_closed")
     client = TestClient(todo_mod.fastapi_app)
     monkeypatch.setattr(
@@ -398,7 +420,7 @@ def test_todo_readiness_fails_closed_and_names_the_reason(
     response = client.get(path)
 
     assert response.status_code == 503
-    assert response.json()["reasons"] == [reason]
+    assert response.json()["reasons"] == reasons
     assert response.json()["status"] in ("not_ready", "unhealthy")
 
 
@@ -430,9 +452,10 @@ def test_todo_fastapi_endpoints_contract(monkeypatch) -> None:
 
     # 2. /readyz and 3. /health follow the canary status; the next test pins both answers
 
-    # 4. Backwards-compatible /api/health
+    # 4. Backwards-compatible /api/health fails closed when gating checks have not passed
     resp_api_health = client.get("/api/health")
-    assert resp_api_health.status_code == 200
+    assert resp_api_health.status_code == 503
+    assert resp_api_health.json()["ok"] is False
     assert resp_api_health.json()["service"] == "platform/todo"
 
     # 5. OpenAPI schemas on all JSON routes, typed request bodies, and unique operationIds
@@ -634,17 +657,16 @@ def test_an_unset_address_makes_its_check_unconfigured_without_a_connection(monk
     from conftest import DEPLOYMENT_ADDRESSES
 
     todo_mod = load_todo_module("todo_app_no_addresses")
-    for name in (*DEPLOYMENT_ADDRESSES, "S3_ENDPOINT", "DATABASE_URL", "REDIS_PASSWORD"):
+    for name in (*DEPLOYMENT_ADDRESSES, "S3_ENDPOINT", "DATABASE_URL", "REDIS_URL"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("REDIS_PASSWORD", "r" * 24)
-    monkeypatch.setattr(todo_mod.socket, "create_connection", lambda *a, **k: pytest.fail("redis"))
+    monkeypatch.setattr(todo_mod, "probe_redis", lambda *a, **k: pytest.fail("redis"))
     monkeypatch.setattr(todo_mod, "_probe_http", lambda *a, **k: pytest.fail("http"))
     monkeypatch.setattr(todo_mod, "_probe_http_async", lambda *a, **k: pytest.fail("http"))
 
     report = todo_mod.run_all_checks()
 
     details = {name: (c["status"], c["detail"]) for name, c in report["checks"].items()}
-    assert details["redis"] == ("unconfigured", "REDIS_HOST is not configured")
+    assert details["redis"] == ("unconfigured", "REDIS_URL is not configured")
     assert details["postgres"] == ("unconfigured", "DATABASE_URL is not configured")
     assert details["s3"][0] == "unconfigured" and "S3_ENDPOINT" in details["s3"][1]
     assert details["signoz"] == ("unconfigured", "SIGNOZ_OTEL_COLLECTOR is not configured")
@@ -679,25 +701,29 @@ def test_no_setting_default_names_a_host() -> None:
         for name, info in CanarySettings.model_fields.items()
         if info.annotation is str
     }
-    assert len(text) == 27
+    assert len(text) == 29
     assert text == dict.fromkeys(text, ""), "a text default would name a host or a value"
-    assert (settings.port, settings.redis_port) == (8000, 6379)
+    assert settings.port == 8000
 
 
 def test_a_sensitive_value_keeps_its_edge_whitespace_and_a_blank_value_is_unset() -> None:
     from canary_settings import CanarySettings
 
     settings = CanarySettings.from_environ(
-        {"REDIS_PASSWORD": " p w ", "REDIS_HOST": "  redis  ", "S3_SECRET_KEY": "   "}
+        {
+            "REDIS_URL": " redis://:pw@redis:6379/0 ",
+            "S3_ENDPOINT": "  http://s3:9000  ",
+            "S3_SECRET_KEY": "   ",
+        }
     )
-    assert settings.redis_password == " p w "
-    assert settings.redis_host == "redis"
+    assert settings.redis_url == " redis://:pw@redis:6379/0 "
+    assert settings.s3_endpoint == "http://s3:9000"
     assert settings.s3_secret_key == ""
 
 
-def test_a_malformed_port_is_not_reported_as_a_database_fault(monkeypatch) -> None:
-    todo_mod = load_todo_module("todo_app_bad_port")
-    monkeypatch.setenv("REDIS_PORT", "not-a-port")
+def test_a_malformed_redis_url_is_not_reported_as_a_database_fault(monkeypatch) -> None:
+    todo_mod = load_todo_module("todo_app_bad_redis_url")
+    monkeypatch.setenv("REDIS_URL", "not-a-redis-url")
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:pppppppppppppppp@h:6543/d")
     assert todo_mod._database_target() == ("h", 6543, "u", "pppppppppppppppp", "d")
 

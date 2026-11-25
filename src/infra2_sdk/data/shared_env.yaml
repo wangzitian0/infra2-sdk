@@ -69,6 +69,10 @@ groups:
       deprecated_aliases: []
       sensitive: false
       owners: [finance_report, truealpha]
+    - name: S3_PUBLIC_ENDPOINT
+      deprecated_aliases: []
+      sensitive: false
+      owners: [infra2, finance_report, truealpha]
   llm:
     - name: LLM_PROVIDER
       deprecated_aliases: []
@@ -104,6 +108,14 @@ groups:
       sensitive: false
       owners: [infra2, finance_report]
     - name: NEXT_PUBLIC_OTEL_EXPORTER_OTLP_ENDPOINT
+      deprecated_aliases: []
+      sensitive: false
+      owners: [infra2, finance_report, truealpha]
+    - name: NEXT_PUBLIC_DEPLOYMENT_ENVIRONMENT
+      deprecated_aliases: []
+      sensitive: false
+      owners: [infra2, finance_report, truealpha]
+    - name: NEXT_PUBLIC_GIT_SHA
       deprecated_aliases: []
       sensitive: false
       owners: [infra2, finance_report, truealpha]

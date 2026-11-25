@@ -995,3 +995,18 @@ def test_the_retired_env_alias_is_not_a_fixed_sidecar_key() -> None:
     with pytest.raises(ComposeCompileError, match=r"reads env \['ENV'\]"):
         compile_compose(_vault_source(), vault_template='{{- $env := env "ENV" -}}\n')
     compile_compose(_vault_source(), vault_template='{{- $env := env "ENVIRONMENT" -}}\n')
+
+
+def test_bare_null_x_vault_compiles_with_defaults() -> None:
+    source = copy.deepcopy(_vault_source())
+    source["x-vault"] = None
+    compiled = yaml.safe_load(compile_compose(source, vault_template='{{ env "ENVIRONMENT" }}\n'))
+    assert "vault-agent" in compiled["services"]
+
+
+def test_preview_trailing_newline_option_rejected_by_fullmatch() -> None:
+    source = copy.deepcopy(_vault_source())
+    first_svc = next(iter(source["services"]))
+    source["services"][first_svc]["x-preview"] = {"database_url": "postgresql\n"}
+    with pytest.raises(ComposeCompileError, match="database_url"):
+        compile_compose(source, vault_template='{{ env "ENVIRONMENT" }}\n', mode="preview")

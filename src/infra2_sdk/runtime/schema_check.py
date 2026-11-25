@@ -35,6 +35,7 @@ connection; ``alembic`` is needed only for the new-table and dropped-table cover
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib
 import re
 import sys
@@ -44,7 +45,11 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from infra2_sdk.runtime.postgres import _normalize_dsn
+from infra2_sdk.runtime.postgres import (
+    PostgresSettings,
+    _normalize_dsn,
+    redact_postgres_error,
+)
 
 EXIT_OK = 0
 EXIT_BLOCKED = 1
@@ -192,14 +197,13 @@ def query_db_enums(connection_or_cursor: Any) -> dict[str, list[str]]:
     WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
     ORDER BY t.typname, e.enumsortorder;
     """
-    if hasattr(connection_or_cursor, "execute"):
-        cursor = (
-            connection_or_cursor.cursor()
-            if hasattr(connection_or_cursor, "cursor")
-            else connection_or_cursor
-        )
+    if hasattr(connection_or_cursor, "cursor"):
+        cursor = connection_or_cursor.cursor()
         cursor.execute(query)
         rows = cursor.fetchall()
+    elif hasattr(connection_or_cursor, "execute"):
+        connection_or_cursor.execute(query)
+        rows = connection_or_cursor.fetchall()
     elif hasattr(connection_or_cursor, "fetchall"):
         rows = connection_or_cursor.fetchall()
     else:
@@ -578,7 +582,7 @@ def _with_libpq_cursor(db_url: str, fn: Any) -> Any:
     except ImportError:
         import psycopg2  # type: ignore[import-not-found]
 
-        with psycopg2.connect(url) as conn, conn.cursor() as cur:
+        with contextlib.closing(psycopg2.connect(url)) as conn, conn, conn.cursor() as cur:
             return fn(cur)
     with psycopg.connect(url) as conn, conn.cursor() as cur:
         return fn(cur)
@@ -782,7 +786,13 @@ def main(argv: list[str] | None = None) -> int:
         db_enums = fetch_db_enums(db_url)
         applied_migrations, precondition_failures = evaluate_db_preconditions(db_url, spec)
     except Exception as exc:
-        print(f"ERROR: Failed to connect to DB for pre-deploy schema check: {exc}", file=sys.stderr)
+        detail = str(exc)
+        with contextlib.suppress(ValueError):
+            detail = redact_postgres_error(detail, PostgresSettings(dsn=db_url))
+        print(
+            f"ERROR: Failed to connect to DB for pre-deploy schema check: {detail}",
+            file=sys.stderr,
+        )
         return EXIT_BLOCKED
 
     if applied_migrations:

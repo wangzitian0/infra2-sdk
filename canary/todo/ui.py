@@ -181,7 +181,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const res = await fetch('/api/todos', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title, capability: 'postgres+redis' })
+          body: JSON.stringify({ title, capability: 'postgres' })
         });
         if (res.ok) {
           input.value = '';

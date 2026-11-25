@@ -87,8 +87,8 @@ def identifier_kind(value: str) -> str:
     return "release tag" if _TAG_RE.match(value) else "unrecognised"
 
 
-def resolve_to_sha(ref: str, *, repo: str, runner: _CommandRunner = subprocess.run) -> str:
-    form, c = classify_ref(ref), ref.strip()
+def resolve_to_sha(ref: str | int, *, repo: str, runner: _CommandRunner = subprocess.run) -> str:
+    form, c = classify_ref(ref), str(ref).strip()
     if form == "sha":
         return c.lower()
     if sha := _resolve_remote_sha(repo, form, c, runner=runner):
@@ -99,9 +99,9 @@ def resolve_to_sha(ref: str, *, repo: str, runner: _CommandRunner = subprocess.r
 
 
 def resolve_image_ref(
-    ref: str, *, repo: str, runner: _CommandRunner = subprocess.run
+    ref: str | int, *, repo: str, runner: _CommandRunner = subprocess.run
 ) -> ResolvedRef:
-    form, c = classify_ref(ref), ref.strip()
+    form, c = classify_ref(ref), str(ref).strip()
     if form == "tag":
         if not (sha := _resolve_remote_sha(repo, form, c, runner=runner)):
             raise ValueError(f"tag {c!r} not found in {_redact_repo(repo)}")
@@ -124,7 +124,11 @@ def resolve_pr(
 
 
 def _remote_ref_for(form: str, cleaned: str) -> str:
-    return "refs/heads/main" if form == "branch" else f"refs/tags/{cleaned}"
+    if form == "branch":
+        return "refs/heads/main"
+    if form == "pr":
+        return f"refs/pull/{cleaned.removeprefix('pr-')}/head"
+    return f"refs/tags/{cleaned}"
 
 
 def _resolve_remote_sha(

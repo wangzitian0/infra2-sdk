@@ -66,6 +66,7 @@ Application processes import these modules directly at runtime:
 | `infra2_sdk.runtime.llm` | `LlmSettings`, `DecodingSpec`, `create_llm_agent`, `create_llm_model`, `GuardedLlmModel`, `llm_call_context`, `prompt_sha256`, `schema_sha256`, `request_sha256`, `redact_llm_error`, `redact_uri`, `sanitize_headers`, `vcr_llm_config`, `allow_vcr_model_requests`, and large/small/multimodal role defaults |
 | `infra2_sdk.runtime.otel` | Explicit OTLP/HTTP trace, metric, and log provider bootstrap (`OtelSettings`, `PROBE_PATHS`, `configure_telemetry`) |
 | `infra2_sdk.runtime.postgres` | `PostgresSettings`, `redact_postgres_error`, and `probe_postgres` |
+| `infra2_sdk.runtime.redis` | `RedisSettings`, `redact_redis_error`, and `probe_redis` |
 | `infra2_sdk.runtime.s3` | `S3Settings`, `boto3` S3 client initialization, bucket reachability probe (`probe_s3`), `ensure_bucket`, and `put_object_bytes` |
 | `infra2_sdk.runtime.schema_check` | `EnumSchemaSpec`, `check_enums`, `cover_with_new_tables`, `cover_with_dropped_tables`, and the pre-deploy CLI (`python -m infra2_sdk.runtime.schema_check`) |
 | `infra2_sdk.fastapi` | `init_service` turnkey bootstrap mounting `/livez`, `/readyz`, and `/health` routes with OTLP lifecycle management |

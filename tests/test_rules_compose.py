@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from infra2_sdk.rules.compose import (
     _ComposeReport,
     _inspect_service_resource_limits,
@@ -124,7 +122,7 @@ def test_inspect_compose_missing_file(tmp_path: Path) -> None:
     assert "cannot read file" in report.errors[0]
 
 
-def test_inspect_service_resource_limits_propagates_error() -> None:
+def test_inspect_compose_rejects_malformed_yaml() -> None:
     bad_yaml = "services: [invalid yaml"
-    with pytest.raises(ValueError, match="Failed to inspect compose"):
-        _inspect_service_resource_limits(bad_yaml)
+    report = inspect_compose(bad_yaml)
+    assert not report.is_valid

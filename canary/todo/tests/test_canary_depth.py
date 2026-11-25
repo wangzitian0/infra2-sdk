@@ -210,6 +210,8 @@ class FakeS3:
                 )
                 if self.command in deny:
                     self._reply(403, b"<Error><Code>AccessDenied</Code></Error>")
+                elif self.command == "HEAD":
+                    self._reply(200)
                 elif self.command == "PUT":
                     outer.objects[self.path] = body
                     self._reply(200)
@@ -280,7 +282,7 @@ def _s3_args(server: FakeS3) -> dict[str, object]:
 
 def _env(monkeypatch, **values: str) -> None:
     for key in (
-        "REDIS_PASSWORD",
+        "REDIS_URL",
         "DATABASE_URL",
         "S3_ENDPOINT",
         "S3_BUCKET",
@@ -412,16 +414,18 @@ class _FakeTracer:
 
 
 def test_redis_probe_reports_unconfigured_without_a_password(app) -> None:
-    """The production canary ran with an empty REDIS_PASSWORD and passed. No password
-    still keeps the check red, but as `unconfigured`: a configuration gap is not a
-    write-path failure, and an operator must be able to tell the two apart."""
+    """No password or empty REDIS_URL keeps the check red as `unconfigured`: a configuration
+    gap is not a write-path failure."""
     redis = FakeRedis(password=REDIS_PW)
     try:
-        result = app._probe_redis("127.0.0.1", redis.port, password=None, timeout=1.0)
+        empty_res = app._probe_redis("", timeout=1.0)
+        no_pw_res = app._probe_redis(f"redis://127.0.0.1:{redis.port}/0", timeout=1.0)
     finally:
         redis.close()
-    assert result["status"] == "unconfigured"
-    assert "REDIS_PASSWORD" in result["detail"]
+    assert empty_res["status"] == "unconfigured"
+    assert "REDIS_URL" in empty_res["detail"]
+    assert no_pw_res["status"] == "unconfigured"
+    assert "REDIS_URL" in no_pw_res["detail"]
     assert redis.store == {}
     assert redis.commands == [], "an unconfigured check sends nothing"
 
@@ -437,7 +441,7 @@ def test_redis_probe_fails_on_unexpected_reply(app, redis_kwargs, expected_detai
     """A server returning -NOAUTH after AUTH or stale GET data must fail."""
     redis = FakeRedis(password=REDIS_PW, **redis_kwargs)
     try:
-        result = app._probe_redis("127.0.0.1", redis.port, password=REDIS_PW, timeout=1.0)
+        result = app._probe_redis(f"redis://:{REDIS_PW}@127.0.0.1:{redis.port}/0", timeout=1.0)
     finally:
         redis.close()
     assert result["status"] == "fail"
@@ -447,7 +451,7 @@ def test_redis_probe_fails_on_unexpected_reply(app, redis_kwargs, expected_detai
 def test_redis_probe_fails_on_rejected_credentials_without_leaking_them(app) -> None:
     redis = FakeRedis(password=REDIS_PW)
     try:
-        result = app._probe_redis("127.0.0.1", redis.port, password=WRONG_PW, timeout=1.0)
+        result = app._probe_redis(f"redis://:{WRONG_PW}@127.0.0.1:{redis.port}/0", timeout=1.0)
     finally:
         redis.close()
     assert result["status"] == "fail"
@@ -458,7 +462,7 @@ def test_redis_probe_fails_on_rejected_credentials_without_leaking_them(app) -> 
 def test_redis_probe_writes_reads_and_deletes_a_random_value(app) -> None:
     redis = FakeRedis(password=REDIS_PW)
     try:
-        result = app._probe_redis("127.0.0.1", redis.port, password=REDIS_PW, timeout=1.0)
+        result = app._probe_redis(f"redis://:{REDIS_PW}@127.0.0.1:{redis.port}/0", timeout=1.0)
     finally:
         redis.close()
     assert result["status"] == "pass", result
@@ -476,7 +480,7 @@ def test_redis_probe_values_differ_between_runs(app) -> None:
     redis = FakeRedis(password=REDIS_PW)
     try:
         for _ in range(2):
-            app._probe_redis("127.0.0.1", redis.port, password=REDIS_PW, timeout=1.0)
+            app._probe_redis(f"redis://:{REDIS_PW}@127.0.0.1:{redis.port}/0", timeout=1.0)
     finally:
         redis.close()
     values = [c[3] for c in redis.commands if c[0].upper() == "SETEX"]
@@ -564,13 +568,13 @@ def test_s3_probe_puts_gets_and_deletes_one_object_under_the_canary_prefix(app) 
     try:
         result = app._probe_s3(**_s3_args(server))
         methods = [method for method, _path, _key in server.requests]
-        paths = {path for _method, path, _key in server.requests}
+        paths = {path for method, path, _key in server.requests if method != "HEAD"}
         keys = {key for _method, _path, key in server.requests}
         leftover = dict(server.objects)
     finally:
         server.close()
     assert result["status"] == "pass", result
-    assert methods == ["PUT", "GET", "DELETE"]
+    assert methods == ["HEAD", "PUT", "GET", "DELETE"]
     assert len(paths) == 1
     assert next(iter(paths)).startswith("/platform-canary/canary/")
     assert keys == {S3_ACCESS_KEY}, "the request must be signed with the canary key"
@@ -659,11 +663,10 @@ def test_s3_probe_runs_in_parallel_do_not_share_a_key(app) -> None:
 
 
 def test_run_all_checks_hands_each_probe_its_credentials(app, monkeypatch) -> None:
+    redis_url = f"redis://:{REDIS_PW}@platform-redis-staging:6380/0"
     _env(
         monkeypatch,
-        REDIS_HOST="platform-redis-staging",
-        REDIS_PORT="6380",
-        REDIS_PASSWORD=REDIS_PW,
+        REDIS_URL=redis_url,
         DATABASE_URL=f"postgresql://canary_ro:{PG_PASSWORD}@platform-postgres-staging:6543/canary_db",
         S3_ENDPOINT="http://platform-s3-staging:9000",
         S3_BUCKET="platform-canary",
@@ -696,8 +699,7 @@ def test_run_all_checks_hands_each_probe_its_credentials(app, monkeypatch) -> No
         "authentik",
     }
     assert "minio" not in report["checks"]
-    assert calls["redis"]["args"] == ("platform-redis-staging", 6380)
-    assert calls["redis"]["kwargs"]["password"] == REDIS_PW
+    assert calls["redis"]["args"] == (redis_url,)
     assert calls["postgres"]["args"][0] == "platform-postgres-staging"
     assert calls["postgres"]["args"][1] == 6543
     assert calls["postgres"]["kwargs"]["dbname"] == "canary_db"
@@ -1094,12 +1096,17 @@ def test_a_cold_readiness_call_ends_with_the_check_deadline(app, monkeypatch) ->
     monkeypatch.setattr(app, "CHECK_DEADLINE_SECONDS", 0.3)
     monkeypatch.setattr(app, "_STATUS_CACHE", None)
 
+    from starlette.testclient import TestClient
+
+    client = TestClient(app.fastapi_app)
     started = time.perf_counter()
-    ok, detail = app._canary_readiness_checker()
+    resp = client.get("/readyz")
     elapsed = time.perf_counter() - started
     hang.set()
 
-    assert ok is False and detail == "failed=postgres,redis,s3"
+    assert resp.status_code == 503
+    reasons = resp.json()["reasons"]
+    assert {r.split(":", 1)[0] for r in reasons} == {"postgres", "redis", "s3"}, reasons
     assert 0.3 <= elapsed < 0.3 + 1.0, elapsed
 
 
@@ -1351,7 +1358,7 @@ def test_postgres_probe_crud_executes_write_read_delete_roundtrip(app) -> None:
 
 
 def test_health_body_carries_the_cached_canary_verdict(app, monkeypatch) -> None:
-    """#1635: public /api/health stays 200 and holds `canary` and `git_sha`, no host or error."""
+    """/api/health fails closed with HTTP 503 on failing gating checks and reveals no secrets."""
     from starlette.testclient import TestClient
 
     _env(monkeypatch)
@@ -1361,15 +1368,24 @@ def test_health_body_carries_the_cached_canary_verdict(app, monkeypatch) -> None
         s3={"status": "fail", "latency_ms": 2.0, "detail": "AccessDenied"},
     )
     client = TestClient(app.fastapi_app)
-    assert client.get("/api/health").json()["canary"]["ok"] is False  # no run yet
-    app.cached_canary_status()
     response = client.get("/api/health")
     body = response.json()
-    assert response.status_code == 200
+    assert response.status_code == 503
+    assert body["ok"] is False
+    assert body["status"] == "unhealthy"
     assert body["canary"]["ok"] is False
     assert body["canary"]["checked_at"]
     assert "git_sha" in body
     assert "AccessDenied" not in response.text
+
+    _patch_probes(app, monkeypatch)
+    with app._STATUS_LOCK:
+        app._STATUS_CACHE = None
+    ok_resp = client.get("/api/health")
+    assert ok_resp.status_code == 200
+    assert ok_resp.json()["ok"] is True
+    assert ok_resp.json()["status"] == "healthy"
+    assert ok_resp.json()["canary"]["ok"] is True
 
 
 # The probe runner contract that infra2 declares for this service (platform/30.todo deploy

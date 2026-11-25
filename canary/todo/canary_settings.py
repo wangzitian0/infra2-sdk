@@ -32,11 +32,9 @@ class CanarySettings(BaseModel):
     )
 
     # Redis check.
-    redis_host: str = _field("", "Redis host of the Redis check.", empty_ok=True, group="redis")
-    redis_port: int = _field(6379, "Redis port of the Redis check.", group="redis")
-    redis_password: str = _field(
+    redis_url: str = _field(
         "",
-        "Redis password. The Redis check is unconfigured without it.",
+        "Redis connection URL with credentials. The Redis check is unconfigured without it.",
         source="runtime",
         sensitive=True,
         empty_ok=True,
@@ -105,6 +103,15 @@ class CanarySettings(BaseModel):
 
     # Read by the SDK, not by app.py: runtime identity, telemetry and the LLM client.
     environment: str = _field("", "Environment tier. The SDK reads it.", empty_ok=True, group="sdk")
+    service_version: str = _field(
+        "", "Deployed service version. The SDK reads it.", empty_ok=True, group="sdk"
+    )
+    image_digest: str = _field(
+        "", "Deployed immutable image digest. The SDK reads it.", empty_ok=True, group="sdk"
+    )
+    release_id: str = _field(
+        "", "Release identifier. The SDK reads it.", empty_ok=True, group="sdk"
+    )
     configuration_sha256: str = _field(
         "", "Configuration hash of the deployment. The SDK reads it.", empty_ok=True, group="sdk"
     )

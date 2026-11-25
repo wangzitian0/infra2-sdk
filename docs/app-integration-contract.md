@@ -70,6 +70,7 @@ when they are stale. Regenerate them with `python scripts/render_app_contract.py
 | s3 | `S3_ACCESS_KEY` | yes | infra2, finance_report, truealpha |
 | s3 | `S3_SECRET_KEY` | yes | infra2, finance_report, truealpha |
 | s3 | `S3_REGION` | no | finance_report, truealpha |
+| s3 | `S3_PUBLIC_ENDPOINT` | no | infra2, finance_report, truealpha |
 | llm | `LLM_PROVIDER` | no | infra2, finance_report, truealpha |
 | llm | `LLM_BASE_URL` | no | infra2, finance_report, truealpha |
 | llm | `LLM_API_KEY` | yes | infra2, finance_report, truealpha |
@@ -79,6 +80,8 @@ when they are stale. Regenerate them with `python scripts/render_app_contract.py
 | frontend_telemetry | `NEXT_PUBLIC_APP_URL` | no | infra2, finance_report, truealpha |
 | frontend_telemetry | `NEXT_PUBLIC_API_URL` | no | infra2, finance_report |
 | frontend_telemetry | `NEXT_PUBLIC_OTEL_EXPORTER_OTLP_ENDPOINT` | no | infra2, finance_report, truealpha |
+| frontend_telemetry | `NEXT_PUBLIC_DEPLOYMENT_ENVIRONMENT` | no | infra2, finance_report, truealpha |
+| frontend_telemetry | `NEXT_PUBLIC_GIT_SHA` | no | infra2, finance_report, truealpha |
 | frontend_telemetry | `OPENPANEL_API_URL` | no | infra2, finance_report |
 | frontend_telemetry | `OPENPANEL_CLIENT_ID` | no | infra2, finance_report, truealpha |
 | frontend_telemetry | `OPENPANEL_ENVIRONMENT` | no | infra2, finance_report, truealpha |

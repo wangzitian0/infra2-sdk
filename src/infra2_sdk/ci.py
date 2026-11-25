@@ -8,6 +8,7 @@ import os
 import re
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime, timedelta
+from functools import lru_cache
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
@@ -342,9 +343,21 @@ def write_github_output(
             print(f"{key}<<{delim}\n{value}\n{delim}", file=handle)
 
 
-def load_delivery_stages(path: str | Path | None = None) -> dict[str, dict]:
-    source = Path(path) if path is not None else files("infra2_sdk").joinpath("data/stages.yaml")
+@lru_cache(maxsize=1)
+def _default_delivery_stages() -> dict[str, dict]:
+    source = files("infra2_sdk").joinpath("data/stages.yaml")
     with source.open(encoding="utf-8") as handle:
+        data = _yaml().safe_load(handle) or {}
+    mapping = data.get("stages")
+    if not isinstance(mapping, dict):
+        raise ValueError("stages.yaml: 'stages' must be a mapping")
+    return mapping
+
+
+def load_delivery_stages(path: str | Path | None = None) -> dict[str, dict]:
+    if path is None:
+        return dict(_default_delivery_stages())
+    with Path(path).open(encoding="utf-8") as handle:
         data = _yaml().safe_load(handle) or {}
     mapping = data.get("stages")
     if not isinstance(mapping, dict):

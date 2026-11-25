@@ -40,6 +40,7 @@ class _EnumType:
 @dataclass(frozen=True)
 class _Column:
     type: _EnumType
+    name: str = "capability"
 
 
 @dataclass(frozen=True)

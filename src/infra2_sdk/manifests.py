@@ -187,11 +187,9 @@ STAGE_HOOK_PLANS = _derive_stage_plans(CELL_POLICIES)
 
 _SLOT_TO_CELL: Mapping[str, str] = MappingProxyType(
     {
-        "smoke": "preview.operation",
         "preview_gate": "preview.post",
         "staging_gate": "staging.post",
         "prod_gate": "prod.post",
-        "scheduled_audit": "scheduled_audit",
     }
 )
 
@@ -488,9 +486,9 @@ def resolve_check_cells(
 
 
 def _check_schema_version(sv: Any) -> int:
-    if not isinstance(sv, bool) and sv in SUPPORTED_HOOKS_SCHEMA_VERSIONS:
+    if type(sv) is int and sv in SUPPORTED_HOOKS_SCHEMA_VERSIONS:
         return sv
-    if sv == 2 and not isinstance(sv, bool):
+    if type(sv) is int and sv == 2:
         raise ValueError(
             "runtime hooks manifest schema_version 2 was removed in 4.0.0; "
             "migrate it to schema_version 3 and run it with run_cell"
@@ -1062,13 +1060,17 @@ def main(
         echo(f"runtime hooks manifest: ok ({detail})")
         return 0
     if a.run_cell:
-        if not a.app_url.strip():
-            echo("--run-cell requires --app-url")
-            return 2
         try:
             hm = load_hooks_manifest(a.hooks_manifest, root=r)
         except (OSError, ValueError) as err:
             echo(f"{a.hooks_manifest}: {err}")
+            return 2
+        if (
+            a.run_cell in CELL_POLICIES
+            and "running_service" in CELL_POLICIES[a.run_cell].capabilities
+            and not a.app_url.strip()
+        ):
+            echo("--run-cell requires --app-url")
             return 2
         rp = (c if (c := Path(a.result_file)).is_absolute() else r / c) if a.result_file else None
         try:

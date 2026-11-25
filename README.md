@@ -25,7 +25,7 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v4.9.0"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v4.9.1"
 ```
 
 ## Modules
@@ -50,6 +50,7 @@ python -m pip install \
 | `infra2_sdk.runtime.llm` | `LlmSettings`, `DecodingSpec`, `create_llm_agent`, `create_llm_model`, `GuardedLlmModel`, `llm_call_context`, SHA-256 helpers, redaction, and VCR replay config |
 | `infra2_sdk.runtime.otel` | Explicit OTLP provider bootstrap, probe span suppression, and env-configured samplers |
 | `infra2_sdk.runtime.postgres` | `PostgresSettings`, credential redaction, and psycopg reachability/write probe (`probe_postgres`) |
+| `infra2_sdk.runtime.redis` | `RedisSettings`, RESP reachability/write probe (`probe_redis`), and credential redaction (`redact_redis_error`) |
 | `infra2_sdk.runtime.s3` | Standard boto3 S3 client, probe, and safe bucket/object primitives (`put_object_bytes`, `read_object_bytes`) |
 | `infra2_sdk.runtime.schema_check` | Pre-deploy check of SQLAlchemy native enums against `pg_enum`, migration floor and read-only data preconditions; CLI exit 0 verified, 1 blocked, 3 not evaluated |
 | `infra2_sdk.secrets` | adapters (Vault KV, 1Password), manifest-driven `SecretsResolver`, Vault template renderers, and AppRole policy naming |
@@ -76,10 +77,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v4.9.0'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v4.9.1'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v4.9.0'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v4.9.1'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -200,7 +201,7 @@ Install the published wheel in a fresh Python 3.11+ environment:
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install \
-  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v4.9.0/infra2_sdk-4.9.0-py3-none-any.whl'
+  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v4.9.1/infra2_sdk-4.9.1-py3-none-any.whl'
 ```
 
 For a local connectivity exercise, start this server in another terminal:

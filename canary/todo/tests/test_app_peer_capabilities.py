@@ -84,19 +84,19 @@ def test_worker_run_once_retries_and_records_otel_span() -> None:
 
     client = _SequenceClient(
         [
-            _fake_response(503, {"ok": False}),
-            _fake_response(200, {"ok": True, "service": "platform/todo"}),
+            _fake_response(503, {"status": "not_ready"}),
+            _fake_response(200, {"status": "ready", "service": "platform-todo"}),
         ]
     )
     result = worker.run_once(
-        health_url="http://127.0.0.1:8000/api/health",
+        health_url="http://127.0.0.1:8000/readyz",
         client=client,
         tracer=tracer,
         sleep=lambda _: None,
     )
     assert result["ok"] is True
     assert result["status_code"] == 200
-    assert result["service"] == "platform/todo"
+    assert result["service"] == "platform-todo"
     assert len(client.calls) == 2
 
     spans = exporter.get_finished_spans()
@@ -195,6 +195,7 @@ def test_canary_hooks_manifest_is_valid_schema_v3() -> None:
     assert manifest.schema_version == 3
     assert manifest.service == "canary/todo"
     assert [c.id for c in manifest.checks] == ["smoke"]
+    assert "/readyz" in manifest.checks[0].argv[-1]
     cells = resolve_check_cells(manifest.checks[0])
     assert {"preview.operation", "staging.operation", "prod.operation"} <= set(cells)
 
@@ -206,7 +207,7 @@ def test_canary_env_manifest_conforms_to_shared_env_and_markdown() -> None:
     violations = check_shared_env_conformance(f.env for f in manifest.fields)
     assert violations == []
     markdown = (Path(TODO_DIR) / "env-reference.generated.md").read_text(encoding="utf-8")
-    assert markdown == render_env_markdown(manifest) + "\n"
+    assert markdown == render_env_markdown(manifest)
 
 
 def test_openpanel_health_url_fallback_and_capability_summary(monkeypatch) -> None:

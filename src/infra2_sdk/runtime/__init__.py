@@ -8,6 +8,7 @@ from infra2_sdk.runtime import (
     llm,
     otel,
     postgres,
+    redis,
     s3,
     schema_check,
 )
@@ -71,6 +72,11 @@ from infra2_sdk.runtime.postgres import (
     probe_postgres,
     redact_postgres_error,
 )
+from infra2_sdk.runtime.redis import (
+    RedisSettings,
+    probe_redis,
+    redact_redis_error,
+)
 from infra2_sdk.runtime.s3 import (
     S3Settings,
     create_s3_client,
@@ -90,6 +96,7 @@ __all__ = [
     "llm",
     "otel",
     "postgres",
+    "redis",
     "s3",
     "schema_check",
     "EnvironmentTier",
@@ -124,6 +131,9 @@ __all__ = [
     "PostgresSettings",
     "probe_postgres",
     "redact_postgres_error",
+    "RedisSettings",
+    "probe_redis",
+    "redact_redis_error",
     "HttpClientSettings",
     "probe_http",
     "request_with_retry",

@@ -471,7 +471,7 @@ def _main(argv: list[str] | None = None) -> int:
         text = json.dumps(manifest.to_dict(), indent=2, sort_keys=True) + "\n"
         outputs.append((args.json, text))
     if args.markdown is not None:
-        outputs.append((args.markdown, render_env_markdown(manifest, title=args.title) + "\n"))
+        outputs.append((args.markdown, render_env_markdown(manifest, title=args.title)))
     drift = 0
     for path, text in outputs:
         current = path.read_text(encoding="utf-8") if path.exists() else ""
