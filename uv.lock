@@ -442,6 +442,7 @@ dev = [
 ]
 fastapi = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-instrumentation-logging" },
@@ -451,6 +452,11 @@ http = [
     { name = "httpx" },
 ]
 llm = [
+    { name = "httpx" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp-proto-http" },
+    { name = "opentelemetry-instrumentation-logging" },
+    { name = "opentelemetry-sdk" },
     { name = "pydantic-ai-slim", extra = ["zai"] },
 ]
 postgres = [
@@ -477,22 +483,28 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'fastapi'", specifier = ">=0.162,<1" },
     { name = "httpx", marker = "extra == 'all'", specifier = ">=0.27,<1" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27,<1" },
+    { name = "httpx", marker = "extra == 'fastapi'", specifier = ">=0.27,<1" },
     { name = "httpx", marker = "extra == 'http'", specifier = ">=0.27,<1" },
+    { name = "httpx", marker = "extra == 'llm'", specifier = ">=0.27,<1" },
     { name = "opentelemetry-api", marker = "extra == 'all'", specifier = ">=1.24,<2" },
     { name = "opentelemetry-api", marker = "extra == 'dev'", specifier = ">=1.24,<2" },
     { name = "opentelemetry-api", marker = "extra == 'fastapi'", specifier = ">=1.24,<2" },
+    { name = "opentelemetry-api", marker = "extra == 'llm'", specifier = ">=1.24,<2" },
     { name = "opentelemetry-api", marker = "extra == 'telemetry'", specifier = ">=1.24,<2" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'all'", specifier = ">=1.24,<2" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'dev'", specifier = ">=1.24,<2" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'fastapi'", specifier = ">=1.24,<2" },
+    { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'llm'", specifier = ">=1.24,<2" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'telemetry'", specifier = ">=1.24,<2" },
     { name = "opentelemetry-instrumentation-logging", marker = "extra == 'all'", specifier = ">=0.45b0,<1" },
     { name = "opentelemetry-instrumentation-logging", marker = "extra == 'dev'", specifier = ">=0.45b0,<1" },
     { name = "opentelemetry-instrumentation-logging", marker = "extra == 'fastapi'", specifier = ">=0.45b0,<1" },
+    { name = "opentelemetry-instrumentation-logging", marker = "extra == 'llm'", specifier = ">=0.45b0,<1" },
     { name = "opentelemetry-instrumentation-logging", marker = "extra == 'telemetry'", specifier = ">=0.45b0,<1" },
     { name = "opentelemetry-sdk", marker = "extra == 'all'", specifier = ">=1.24,<2" },
     { name = "opentelemetry-sdk", marker = "extra == 'dev'", specifier = ">=1.24,<2" },
     { name = "opentelemetry-sdk", marker = "extra == 'fastapi'", specifier = ">=1.24,<2" },
+    { name = "opentelemetry-sdk", marker = "extra == 'llm'", specifier = ">=1.24,<2" },
     { name = "opentelemetry-sdk", marker = "extra == 'telemetry'", specifier = ">=1.24,<2" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'all'", specifier = ">=3.2,<4" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'dev'", specifier = ">=3.2,<4" },

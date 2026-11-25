@@ -15,7 +15,7 @@ Standalone cross-repository runtime contracts and explicit open-protocol adapter
 | `infra2-sdk==4.10.0` | `pydantic`, `pyyaml` | All 6 modules (core contracts, RESP Redis probe, stdlib health poll, hooks CLI) |
 | `infra2-sdk[telemetry]==4.10.0` | `opentelemetry-api/sdk/exporter-otlp-proto-http/instrumentation-logging` | `telemetry.configure_telemetry`, `telemetry.init_worker` |
 | `infra2-sdk[http]==4.10.0` | `httpx` | `service.create_http_client`, `service.create_async_http_client`, `service.request_with_retry`, `service.probe_http` |
-| `infra2-sdk[fastapi]==4.10.0` | `fastapi`, `telemetry` extra, `http` extra, `opentelemetry-instrumentation-fastapi` | `service.init_service` (`/livez`, `/readyz`, `/health`, OTel lifespan, `X-Request-ID`) |
+| `infra2-sdk[fastapi]==4.10.0` | `fastapi`, `telemetry` extra, `http` extra | `service.init_service` (`/livez`, `/readyz`, `/health`, OTel lifespan, `X-Request-ID`) |
 | `infra2-sdk[postgres]==4.10.0` | `psycopg` | `storage.probe_postgres`, `storage.check_schema`, `python -m infra2_sdk.storage check-schema` |
 | `infra2-sdk[s3]==4.10.0` | `boto3` | `storage.create_s3_client`, `storage.ensure_bucket`, `storage.probe_s3`, `storage.put_object_bytes`, `storage.read_object_bytes` |
 | `infra2-sdk[llm]==4.10.0` | `pydantic-ai-slim[openai]`, `openai`, `http` extra, `telemetry` extra | `llm.create_llm_model`, `llm.create_llm_agent`, `llm.GuardedLlmModel` |
