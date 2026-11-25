@@ -6,7 +6,11 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
-### Added (Unreleased)
+## 4.7.0 - 2026-11-25
+
+Minor release: an x-infra2 stack can forward named host values into its Vault Agent sidecar.
+
+### Added (4.7.0)
 
 - `compile_compose` accepts `x-infra2.vault.env`, a list of host variable names. Each name compiles to `NAME: ${NAME}` in the `vault-agent` sidecar environment, after the fixed keys (wangzitian0/infra2#1822).
 - `compile_compose` raises when the Vault template reads `env "X"` and the sidecar does not get `X`. An `or (env "A") (env "B")` read needs one branch. A stack without `env` compiles to the same bytes as before.
