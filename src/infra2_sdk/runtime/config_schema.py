@@ -260,11 +260,6 @@ def environment_manifest_from_model(
         aliases = val_aliases[1:]
         extra = getattr(info, "json_schema_extra", None)
         extra = extra if isinstance(extra, Mapping) else {}
-        extra_keys = extra.get("extra_keys", ())
-        if isinstance(extra_keys, (list, tuple, set, frozenset)):
-            for k in extra_keys:
-                if isinstance(k, str) and k not in aliases:
-                    aliases.append(k)
         f_source = str(extra.get("source") or _FieldSource.CODE)
         is_req = getattr(info, "is_required", None)
         required = bool(is_req()) if callable(is_req) else False

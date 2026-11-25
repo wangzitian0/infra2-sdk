@@ -16,7 +16,7 @@ from wheel_smoke import REMOVED_MODULES
 import infra2_sdk
 import infra2_sdk.runtime
 
-# Second, independent copy of the nine names. It is the oracle for the list imported above.
+# Second, independent copy of the eleven names. It is the oracle for the list imported above.
 EXPECTED_REMOVED_MODULES = frozenset(
     {
         "infra2_sdk.cli",

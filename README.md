@@ -577,6 +577,9 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   `format_check_grid`, `_validate_evidence_urls`, `"deploy-v2-canary"` routing, `"open-only"`
   mode, and the `INSTANCE_ID` fallback read, and moved 9 zero-caller aliases in `shared_env.yaml`
   to `retired`. See [CHANGELOG.md](CHANGELOG.md).
+- In v4.8.0, the SDK moved `ENV`, `APP_ENV`, and `IMAGE_TAG` to `retired` in `shared_env.yaml`,
+  stopped reading them in runtime env helpers, and changed the `x-vault` sidecar key from `ENV`
+  to `ENVIRONMENT`.
 - `tests/surface.json` records the reason for each name in `__all__`: a consumer imports it or the
   README documents it.
 
