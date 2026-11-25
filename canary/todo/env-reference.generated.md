@@ -53,6 +53,7 @@ Source: `canary/todo`
 
 | Variable | Required | Sensitive | Source | Description |
 |---|---|---|---|---|
+| `STATUS_CACHE_TTL_SECONDS` | no | no | code | Canary status probe cache TTL in seconds. |
 | `ENVIRONMENT` | no | no | code | Environment tier. The SDK reads it. |
 | `SERVICE_VERSION` | no | no | code | Deployed service version. The SDK reads it. |
 | `IMAGE_DIGEST` | no | no | code | Deployed immutable image digest. The SDK reads it. |

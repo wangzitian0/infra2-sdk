@@ -48,7 +48,7 @@ services:
       context: ../..
       dockerfile: canary/todo/Dockerfile
     image: infra2-canary-todo:local
-    pull_policy: build
+    pull_policy: never
     depends_on:
       s3:
         condition: service_healthy
@@ -156,6 +156,7 @@ services:
       OTEL_SERVICE_NAME: platform-todo
       OTEL_RESOURCE_ATTRIBUTES: deployment.environment.name=local_test,infra.service.id=platform/todo,service.version=local-standalone,infra.iac.ref=0000000000000000000000000000000000000000
       OTEL_METRIC_EXPORT_INTERVAL: "1000"
+      STATUS_CACHE_TTL_SECONDS: "2"
     ports:
       - "127.0.0.1:8000:8000"
     healthcheck:

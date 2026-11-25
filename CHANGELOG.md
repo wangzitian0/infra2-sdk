@@ -4,6 +4,25 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 4.10.1 - 2026-11-25
+
+Hardens delivery cell resolution, hook environment scoping, and empty-permitted environment validation, and speeds up CI and release workflows.
+
+### Fixed (4.10.1)
+
+- `delivery.run_cell` fails closed when a cell matches zero checks and returns a failing `CheckVerdict`.
+- `delivery.resolve_check_cells` keeps code-only and recorded-LLM checks in code-only `app` cells unless overrides include post-deploy cells.
+- `config.validate_env` accepts an empty string for an `empty_ok=True` injected variable present in the environment.
+
+### Added (4.10.1)
+
+- `delivery.CheckRow` accepts `required_env` and `optional_env`, validated with the manifest env guard and scoped to selected checks in `build_hook_env` and `run_cell`.
+
+### Changed (4.10.1)
+
+- Switched `.github/workflows/ci.yml` and `.github/workflows/release.yml` to `uv` with frozen lockfile sync, single-job extras smoke testing, and Buildx GHA layer caching.
+- Added `STATUS_CACHE_TTL_SECONDS` configuration to Canary Todo (`compose.yaml` sets `2` s) and `--no-build` reuse to `scripts/check_canary_standalone.sh`.
+
 ## 4.10.0 - 2026-11-25
 
 MECE 6-module architectural consolidation, legacy shim purge, and full end-to-end Canary Todo alignment.

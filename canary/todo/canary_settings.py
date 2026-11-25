@@ -103,6 +103,11 @@ class CanarySettings(BaseModel):
     )
 
     # Read by the SDK, not by app.py: runtime identity, telemetry and the LLM client.
+    status_cache_ttl_seconds: float = _field(
+        30.0,
+        "Canary status probe cache TTL in seconds.",
+        group="sdk",
+    )
     environment: str = _field("", "Environment tier. The SDK reads it.", empty_ok=True, group="sdk")
     service_version: str = _field(
         "", "Deployed service version. The SDK reads it.", empty_ok=True, group="sdk"

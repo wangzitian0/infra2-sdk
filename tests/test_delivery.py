@@ -224,3 +224,135 @@ def test_deploy_contracts_and_health_polling() -> None:
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def test_run_cell_fails_closed_when_zero_checks_match() -> None:
+    manifest = delivery.RuntimeHooksManifest(
+        schema_version=delivery.HOOKS_SCHEMA_VERSION,
+        service="demo/svc",
+        checks=(
+            delivery.CheckRow(
+                id="smoke",
+                argv=("echo", "ok"),
+                needs=("code", "running_service"),
+            ),
+        ),
+    )
+    res = delivery.run_cell(manifest, "ci.pre", environ={})
+    assert res.passed is False
+    assert res.cell == "ci.pre"
+    assert res.service == "demo/svc"
+    assert res.verdicts == (
+        delivery.CheckVerdict(
+            id="ci.pre",
+            cell="ci.pre",
+            passed=False,
+            exit_code=1,
+            duration_seconds=0.0,
+            stderr="cell 'ci.pre' matched 0 checks in 'demo/svc'",
+        ),
+    )
+
+
+def test_resolve_check_cells_code_only_excludes_post_deploy_unless_overridden() -> None:
+    code_check = delivery.CheckRow(id="unit", argv=("pytest",), needs=("code",))
+    recorded_check = delivery.CheckRow(
+        id="llm-replay", argv=("pytest",), needs=("code", "recorded_llm")
+    )
+    expected_code_cells = {"local.pre", "local.post", "ci.pre", "ci.post"}
+    assert set(delivery.resolve_check_cells(code_check)) == expected_code_cells
+    assert set(delivery.resolve_check_cells(recorded_check)) == expected_code_cells
+
+    overridden = delivery.CheckRow(
+        id="unit-preview",
+        argv=("pytest",),
+        needs=("code",),
+        overrides={
+            "preview.post": delivery.OverrideReason(
+                action="include", reason="explicit preview post check"
+            )
+        },
+    )
+    resolved_overridden = set(delivery.resolve_check_cells(overridden))
+    assert "preview.post" in resolved_overridden
+    assert not (resolved_overridden & {"staging.post", "prod.post", "scheduled_audit"})
+
+
+def test_per_check_required_and_optional_env_scoping() -> None:
+    with pytest.raises(ValueError, match="forbidden sensitive env var"):
+        delivery.CheckRow(id="bad-req", argv=("echo", "1"), required_env=("DATABASE_URL",))
+    with pytest.raises(ValueError, match="forbidden sensitive env var"):
+        delivery.CheckRow(id="bad-opt", argv=("echo", "1"), optional_env=("SECRET_TOKEN",))
+
+    ci_check = delivery.CheckRow(
+        id="lint",
+        argv=("ruff", "check"),
+        needs=("code",),
+        required_env=("CI_ONLY_REQ",),
+        optional_env=("CI_ONLY_OPT",),
+    )
+    post_check = delivery.CheckRow(
+        id="e2e",
+        argv=("pytest", "e2e"),
+        needs=("code", "running_service"),
+        required_env=("POST_ONLY_REQ",),
+        optional_env=("POST_ONLY_OPT",),
+    )
+    manifest = delivery.RuntimeHooksManifest(
+        schema_version=delivery.HOOKS_SCHEMA_VERSION,
+        service="demo/svc",
+        required_env=("APP_URL",),
+        checks=(ci_check, post_check),
+    )
+
+    # Backward compatibility: build_hook_env(manifest, environ) ignores per-check fields.
+    base_env = delivery.build_hook_env(manifest, {"APP_URL": "http://127.0.0.1:8000"})
+    assert base_env == {"APP_URL": "http://127.0.0.1:8000"}
+
+    seen_envs: list[dict[str, str]] = []
+
+    def _capture_runner(argv, **kw):
+        seen_envs.append(dict(kw["env"]))
+        return subprocess.CompletedProcess(argv, 0, stdout="ok", stderr="")
+
+    ci_res = delivery.run_cell(
+        manifest,
+        "ci.pre",
+        environ={
+            "APP_URL": "http://127.0.0.1:8000",
+            "CI_ONLY_REQ": "yes",
+            "CI_ONLY_OPT": "opt-ci",
+            "POST_ONLY_OPT": "should-not-pass",
+        },
+        runner=_capture_runner,
+    )
+    assert ci_res.passed is True
+    assert seen_envs[-1] == {
+        "APP_URL": "http://127.0.0.1:8000",
+        "CI_ONLY_REQ": "yes",
+        "CI_ONLY_OPT": "opt-ci",
+    }
+
+    with pytest.raises(ValueError, match="CI_ONLY_REQ"):
+        delivery.run_cell(
+            manifest,
+            "ci.pre",
+            environ={"APP_URL": "http://127.0.0.1:8000"},
+            runner=_capture_runner,
+        )
+
+    post_res = delivery.run_cell(
+        manifest,
+        "preview.post",
+        environ={
+            "APP_URL": "http://127.0.0.1:8000",
+            "CI_ONLY_OPT": "should-not-pass",
+            "POST_ONLY_REQ": "post-yes",
+        },
+        runner=_capture_runner,
+    )
+    assert post_res.passed is True
+    assert seen_envs[-1] == {
+        "APP_URL": "http://127.0.0.1:8000",
+        "POST_ONLY_REQ": "post-yes",
+    }

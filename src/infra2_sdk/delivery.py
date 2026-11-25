@@ -82,6 +82,14 @@ NeedKind = Literal[
     "staging_data",
     "real_provider",
 ]
+_CODE_ONLY_NEEDS: frozenset[str] = frozenset({"code", "recorded_llm"})
+
+
+def _validate_hook_env_names(names: tuple[str, ...]) -> tuple[str, ...]:
+    for name in names:
+        if name in FORBIDDEN_HOOK_ENV_NAMES or name.startswith(FORBIDDEN_HOOK_ENV_PREFIXES):
+            raise ValueError(f"forbidden sensitive env var {name!r} in runtime hooks manifest")
+    return names
 
 
 class CellPolicy(ContractModel):
@@ -165,6 +173,8 @@ class CheckRow(ContractModel):
     writes: bool = False
     accepts_scale: bool = False
     timeout_seconds: int = 60
+    required_env: tuple[str, ...] = ()
+    optional_env: tuple[str, ...] = ()
     overrides: dict[str, OverrideReason] = Field(default_factory=dict)
 
     @field_validator("id")
@@ -188,6 +198,11 @@ class CheckRow(ContractModel):
         if value <= 0:
             raise ValueError("timeout_seconds must be positive")
         return int(value)
+
+    @field_validator("required_env", "optional_env")
+    @classmethod
+    def _validate_env_names(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _validate_hook_env_names(value)
 
     @field_validator("overrides")
     @classmethod
@@ -225,10 +240,7 @@ class RuntimeHooksManifest(ContractModel):
     @field_validator("required_env", "optional_env")
     @classmethod
     def _validate_env_names(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        for name in value:
-            if name in FORBIDDEN_HOOK_ENV_NAMES or name.startswith(FORBIDDEN_HOOK_ENV_PREFIXES):
-                raise ValueError(f"forbidden sensitive env var {name!r} in runtime hooks manifest")
-        return value
+        return _validate_hook_env_names(value)
 
     @model_validator(mode="after")
     def _validate_unique_checks(self) -> RuntimeHooksManifest:
@@ -282,6 +294,8 @@ def resolve_check_cells(
             continue
         if policy.owner != "app" or not (needed <= set(policy.capabilities)):
             continue
+        if needed <= _CODE_ONLY_NEEDS and not (set(policy.capabilities) <= _CODE_ONLY_NEEDS):
+            continue
         if check.writes and policy.scale == "read_only":
             continue
         if not check.accepts_scale and policy.scale == "full":
@@ -301,13 +315,22 @@ def resolve_check_cells(
 def build_hook_env(
     manifest: RuntimeHooksManifest,
     environ: Mapping[str, str] | None = None,
+    checks: Sequence[CheckRow] = (),
 ) -> dict[str, str]:
     """Construct an allowlisted, secret-free environment dictionary for hook processes."""
     source = os.environ if environ is None else environ
-    allowed_keys = (
-        set(_HOOK_PASSTHROUGH_KEYS) | set(manifest.required_env) | set(manifest.optional_env)
+    required_keys = tuple(
+        dict.fromkeys(
+            [*manifest.required_env, *(k for check in checks for k in check.required_env)]
+        )
     )
-    missing = [k for k in manifest.required_env if not str(source.get(k, "")).strip()]
+    optional_keys = tuple(
+        dict.fromkeys(
+            [*manifest.optional_env, *(k for check in checks for k in check.optional_env)]
+        )
+    )
+    allowed_keys = set(_HOOK_PASSTHROUGH_KEYS) | set(required_keys) | set(optional_keys)
+    missing = [k for k in required_keys if not str(source.get(k, "")).strip()]
     if missing:
         raise ValueError(f"missing required hook env vars: {', '.join(missing)}")
     out: dict[str, str] = {}
@@ -341,7 +364,23 @@ def run_cell(
         raise ValueError(f"unknown delivery cell {cell!r}")
     policy = CELL_POLICIES[cell]
     selected = [c for c in manifest.checks if cell in resolve_check_cells(c)]
-    env = build_hook_env(manifest, environ) if selected else {}
+    if not selected:
+        return HookRunResult(
+            cell=cell,
+            service=manifest.service,
+            passed=False,
+            verdicts=(
+                CheckVerdict(
+                    id=cell,
+                    cell=cell,
+                    passed=False,
+                    exit_code=1,
+                    duration_seconds=0.0,
+                    stderr=f"cell {cell!r} matched 0 checks in {manifest.service!r}",
+                ),
+            ),
+        )
+    env = build_hook_env(manifest, environ, checks=selected)
     exec_fn = subprocess.run if runner is None else runner
     source_env = os.environ if environ is None else environ
 

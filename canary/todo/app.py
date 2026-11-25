@@ -990,9 +990,14 @@ def cached_canary_status() -> dict[str, Any]:
     reused result never reads as a fresh one.
     """
     global _STATUS_CACHE
+    ttl = (
+        STATUS_CACHE_TTL_SECONDS
+        if STATUS_CACHE_TTL_SECONDS != 30.0
+        else _settings().status_cache_ttl_seconds
+    )
     with _STATUS_LOCK:
         cached = _STATUS_CACHE
-        if cached is None or time.monotonic() - cached[0] >= STATUS_CACHE_TTL_SECONDS:
+        if cached is None or time.monotonic() - cached[0] >= ttl:
             report = run_all_checks()
             cached = (time.monotonic(), report)
             _STATUS_CACHE = cached
