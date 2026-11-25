@@ -6,6 +6,15 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+### Added (Unreleased)
+
+- `runtime.schema_check.cover_with_dropped_tables`: the contract-step mirror of `cover_with_new_tables` (finance_report #3227). While migrations are pending, a DB-only enum type does not block when the code declares no such type, at least one database table uses it, and the code declares none of those tables. The pre-deploy CLI prints `DROPPED_TABLE_COVERS: <type> (<tables>)` for each covered type.
+- `runtime.schema_check.fetch_db_enum_tables` reads each enum type and the ordinary or partitioned tables that use it (direct, array and domain columns) with one read-only catalog `SELECT`. A query failure covers nothing, so the gate blocks.
+
+### Changed (Unreleased)
+
+- The CLI computes `ROLLBACK_CLASS` from all discrepancies before coverage. A covered drop exits 0 and prints `ROLLBACK_CLASS: C`, because a drop is not automatically reversible. A covered new type still prints `ROLLBACK_CLASS: A`.
+
 ## 4.8.1 - 2026-11-25
 
 Patch release: clean dead Canary code, converge DSN/HTTP helpers, and harden contract guards.
