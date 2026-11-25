@@ -9,7 +9,7 @@ COPY pyproject.toml README.md LICENSE /tmp/sdk/
 COPY src /tmp/sdk/src
 RUN pip install --no-cache-dir \
        "uvicorn[standard]>=0.28,<1" \
-       "/tmp/sdk[fastapi,postgres,s3,http,pydantic-ai]" \
+       "/tmp/sdk[fastapi,http,postgres,s3,llm]" \
     && rm -rf /tmp/sdk
 
 COPY canary/todo/app.py canary/todo/ui.py canary/todo/canary_settings.py \

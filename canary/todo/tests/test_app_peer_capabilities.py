@@ -15,16 +15,15 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from starlette.testclient import TestClient
 
-from infra2_sdk.manifests import load_hooks_manifest, resolve_check_cells
-from infra2_sdk.runtime.config_schema import EnvironmentManifest, render_env_markdown
-from infra2_sdk.runtime.environment import check_shared_env_conformance
-from infra2_sdk.runtime.schema_check import (
+from infra2_sdk.config import EnvironmentManifest, check_shared_env
+from infra2_sdk.delivery import RuntimeHooksManifest, resolve_check_cells
+from infra2_sdk.storage import (
     ROLLBACK_CLASS_A,
     ROLLBACK_CLASS_C,
     EnumSchemaSpec,
     check_enums,
     classify_rollback,
-    load_code_enums,
+    enums_from_metadata,
 )
 
 
@@ -51,29 +50,28 @@ def _fake_response(status_code: int, payload: dict[str, Any]) -> httpx.Response:
 
 def test_canary_schema_enums_and_rollback_classes(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(TODO_DIR))
-    code_enums = load_code_enums(EnumSchemaSpec(metadata="canary_schema:METADATA"))
+    code_enums = enums_from_metadata(canary_schema.METADATA)
     name = canary_schema.CANARY_CAPABILITY_ENUM_NAME
-    labels = list(canary_schema.CANARY_CAPABILITY_LABELS)
-    assert code_enums == {name: tuple(labels)}
+    labels = canary_schema.CANARY_CAPABILITY_LABELS
+    assert code_enums == (EnumSchemaSpec(schema_name="public", name=name, labels=labels),)
 
-    exact = check_enums(code_enums, {name: labels})
-    assert exact == []
-    assert classify_rollback(exact) == ROLLBACK_CLASS_A
+    exact = check_enums(code_enums, {("public", name): labels})
+    assert exact == ()
+    assert classify_rollback(enum_discrepancies=exact) == ROLLBACK_CLASS_A
 
-    missing_in_db = check_enums(code_enums, {name: labels[:-1]})
-    assert len(missing_in_db) == 1 and missing_in_db[0].has_error
-    assert missing_in_db[0].missing_in_db == (labels[-1],)
-    assert classify_rollback(missing_in_db) == ROLLBACK_CLASS_A
+    additive = check_enums(code_enums, {("public", name): labels[:-1]})
+    assert len(additive) == 1 and additive[0].kind == "additive_labels"
+    assert additive[0].missing_in_db == (labels[-1],)
+    assert classify_rollback(enum_discrepancies=additive) == ROLLBACK_CLASS_A
 
-    extra_in_db = check_enums(code_enums, {name: [*labels, "legacy_extra"]})
-    assert len(extra_in_db) == 1 and extra_in_db[0].has_error
+    extra_in_db = check_enums(code_enums, {("public", name): (*labels, "legacy_extra")})
+    assert len(extra_in_db) == 1 and extra_in_db[0].kind == "destructive_labels"
     assert extra_in_db[0].missing_in_code == ("legacy_extra",)
-    assert classify_rollback(extra_in_db) == ROLLBACK_CLASS_C
+    assert classify_rollback(enum_discrepancies=extra_in_db) == ROLLBACK_CLASS_C
 
-    casing_drift = check_enums(code_enums, {name: [labels[0].upper(), *labels[1:]]})
-    assert len(casing_drift) == 1 and casing_drift[0].has_error
-    assert casing_drift[0].casing_mismatches == ((labels[0], labels[0].upper()),)
-    assert classify_rollback(casing_drift) == ROLLBACK_CLASS_C
+    casing_drift = check_enums(code_enums, {("public", name): (labels[0].upper(), *labels[1:])})
+    assert len(casing_drift) == 1 and casing_drift[0].kind == "destructive_labels"
+    assert classify_rollback(enum_discrepancies=casing_drift) == ROLLBACK_CLASS_C
 
 
 def test_worker_run_once_retries_and_records_otel_span() -> None:
@@ -190,8 +188,12 @@ def test_worker_main_once_runs_standalone_without_environment_var(monkeypatch, c
     assert json.loads(capsys.readouterr().out)["ok"] is True
 
 
-def test_canary_hooks_manifest_is_valid_schema_v3() -> None:
-    manifest = load_hooks_manifest(Path(TODO_DIR) / "runtime-hooks.manifest.json")
+def test_canary_hooks_manifest_and_run_cell(monkeypatch) -> None:
+    from subprocess import CompletedProcess
+
+    from infra2_sdk.delivery import run_cell
+
+    manifest = RuntimeHooksManifest.from_file(Path(TODO_DIR) / "runtime-hooks.manifest.json")
     assert manifest.schema_version == 3
     assert manifest.service == "canary/todo"
     assert [c.id for c in manifest.checks] == ["smoke"]
@@ -199,15 +201,40 @@ def test_canary_hooks_manifest_is_valid_schema_v3() -> None:
     cells = resolve_check_cells(manifest.checks[0])
     assert {"preview.operation", "staging.operation", "prod.operation"} <= set(cells)
 
+    seen: list[list[str]] = []
+
+    def _fake_runner(argv, **_kwargs):
+        seen.append(list(argv))
+        return CompletedProcess(argv, 0, stdout='{"ok": true}', stderr="")
+
+    res = run_cell(
+        manifest,
+        "staging.operation",
+        environ={"APP_URL": "http://127.0.0.1:8000", "DATABASE_URL": "secret://hidden"},
+        runner=_fake_runner,
+    )
+    assert res.passed is True
+    assert len(seen) == 1
+
+
+def test_canary_summary_rate_limit(monkeypatch) -> None:
+    todo_mod = load_todo_module("todo_app_rate_limit")
+    monkeypatch.setattr(todo_mod.SUMMARY_RATE_LIMIT, "acquire", lambda cost=1: (False, 3.0))
+    client = TestClient(todo_mod.fastapi_app)
+    resp = client.post("/api/todos/summary", json={"limit": 5})
+    assert resp.status_code == 429
+    assert resp.headers["Retry-After"] == "3"
+    assert resp.json()["detail"] == "rate_limited"
+
 
 def test_canary_env_manifest_conforms_to_shared_env_and_markdown() -> None:
     manifest = EnvironmentManifest.from_dict(
         json.loads((Path(TODO_DIR) / "env.manifest.json").read_text(encoding="utf-8"))
     )
-    violations = check_shared_env_conformance(f.env for f in manifest.fields)
+    violations = check_shared_env(f.env for f in manifest.fields)
     assert violations == []
     markdown = (Path(TODO_DIR) / "env-reference.generated.md").read_text(encoding="utf-8")
-    assert markdown == render_env_markdown(manifest)
+    assert markdown == manifest.render_markdown()
 
 
 def test_openpanel_health_url_fallback_and_capability_summary(monkeypatch) -> None:

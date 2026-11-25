@@ -14,9 +14,9 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from infra2_sdk.runtime.config_schema import assert_environment
-from infra2_sdk.runtime.http import request_with_retry
-from infra2_sdk.runtime.otel import init_worker
+from infra2_sdk.config import assert_env
+from infra2_sdk.service import request_with_retry
+from infra2_sdk.telemetry import init_worker
 
 try:
     from canary_settings import CanarySettings
@@ -149,7 +149,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.validate_env:
-        assert_environment(ENV_MANIFEST_PATH, environ=os.environ, require_injected=True)
+        assert_env(ENV_MANIFEST_PATH, environ=os.environ, require_injected=True)
 
     providers = init_worker(
         args.service_name,

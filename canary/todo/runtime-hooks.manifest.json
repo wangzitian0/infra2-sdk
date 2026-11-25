@@ -13,7 +13,7 @@
       "argv": [
         "sh",
         "-c",
-        "python3 canary/todo/worker.py --once --health-url \"${TARGET_URL:-$APP_URL}/readyz\""
+        "script=canary/todo/worker.py; [ -f worker.py ] && script=worker.py; exec python3 \"$script\" --once --health-url \"${TARGET_URL:-$APP_URL}/readyz\""
       ],
       "needs": [
         "code",

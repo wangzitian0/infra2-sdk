@@ -288,10 +288,6 @@ def _env(monkeypatch, **values: str) -> None:
         "S3_BUCKET",
         "S3_ACCESS_KEY",
         "S3_SECRET_KEY",
-        "CANARY_S3_ENDPOINT_URL",
-        "CANARY_S3_BUCKET",
-        "CANARY_S3_ACCESS_KEY",
-        "CANARY_S3_SECRET_KEY",
     ):
         monkeypatch.delenv(key, raising=False)
     for key, value in values.items():
@@ -362,7 +358,7 @@ def _load_todo_app():
 @pytest.fixture()
 def telemetry_calls(monkeypatch):
     """Replace the SDK exporter bootstrap so the test needs no collector."""
-    import infra2_sdk.runtime.otel as sdk_otel
+    import infra2_sdk.telemetry as sdk_telemetry
 
     calls: list[dict] = []
 
@@ -374,7 +370,7 @@ def telemetry_calls(monkeypatch):
         calls.append({"settings": settings, **kwargs})
         return _Providers()
 
-    monkeypatch.setattr(sdk_otel, "configure_telemetry", fake_configure)
+    monkeypatch.setattr(sdk_telemetry, "configure_telemetry", fake_configure)
     return calls
 
 
@@ -713,15 +709,14 @@ def test_run_all_checks_hands_each_probe_its_credentials(app, monkeypatch) -> No
     }
 
 
-def test_retired_canary_s3_names_do_not_configure_the_s3_probe(app, monkeypatch) -> None:
-    """CANARY_S3_* were replaced by the shared S3_* names. Setting only the old names
-    must leave the probe without an endpoint, bucket and credentials."""
+def test_shared_s3_names_configure_the_s3_probe(app, monkeypatch) -> None:
+    """S3_* names from shared_env.yaml configure the S3 probe."""
     _env(
         monkeypatch,
-        CANARY_S3_ENDPOINT_URL="http://old-host:9000",
-        CANARY_S3_BUCKET="old-bucket",
-        CANARY_S3_ACCESS_KEY="old-access",
-        CANARY_S3_SECRET_KEY="old-secret",
+        S3_ENDPOINT="http://s3:9000",
+        S3_BUCKET="canary-bucket",
+        S3_ACCESS_KEY="test-access",
+        S3_SECRET_KEY="test-secret",
     )
     seen: dict = {}
 
@@ -737,10 +732,10 @@ def test_retired_canary_s3_names_do_not_configure_the_s3_probe(app, monkeypatch)
     app.run_all_checks()
 
     assert seen == {
-        "endpoint_url": "",
-        "bucket": "",
-        "access_key": "",
-        "secret_key": "",
+        "endpoint_url": "http://s3:9000",
+        "bucket": "canary-bucket",
+        "access_key": "test-access",
+        "secret_key": "test-secret",
     }
 
 
@@ -1056,16 +1051,16 @@ def test_startup_fails_fast_when_the_issued_environment_is_unknown(
 def test_init_service_gets_the_strict_flag_and_the_readiness_timeout(
     monkeypatch,
 ) -> None:
-    import infra2_sdk.fastapi as sdk_fastapi
+    import infra2_sdk.service as sdk_service
 
     seen: list[dict] = []
-    original = sdk_fastapi.init_service
+    original = sdk_service.init_service
 
     def recording(app, name, **kwargs):
         seen.append({"name": name, **kwargs})
         return original(app, name, **kwargs)
 
-    monkeypatch.setattr(sdk_fastapi, "init_service", recording)
+    monkeypatch.setattr(sdk_service, "init_service", recording)
 
     module = _load_todo_app()
 

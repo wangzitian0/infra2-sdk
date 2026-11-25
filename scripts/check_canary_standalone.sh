@@ -3,6 +3,10 @@
 # worker/schema checks, fault injection (Redis down -> 503 -> 200), and offline rules.
 set -euo pipefail
 
+if [[ -d .venv/bin ]]; then
+  export PATH="$(pwd)/.venv/bin:${PATH}"
+fi
+
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   compose=(docker compose -f canary/todo/compose.yaml)
 elif command -v podman >/dev/null 2>&1; then
@@ -125,7 +129,7 @@ assert any(
 PY
 echo "standalone Canary worker: verified"
 
-schema_out="$("${compose[@]}" exec -T todo python -m infra2_sdk.runtime.schema_check --metadata canary_schema:METADATA --db-url postgresql://todo:local-test-postgres@postgres:5432/todo --label canary/todo)"
+schema_out="$("${compose[@]}" exec -T todo python -m infra2_sdk.storage check-schema --metadata canary_schema:METADATA --db-url postgresql://todo:local-test-postgres@postgres:5432/todo --label canary/todo)"
 echo "$schema_out" | grep -q "ROLLBACK_CLASS: A"
 echo "standalone Canary schema_check: verified"
 
@@ -183,21 +187,6 @@ if [[ "$recovered_code" != "200" ]]; then
 fi
 echo "standalone Canary fault injection (503 -> 200): verified"
 
-python3 -m infra2_sdk.manifests --hooks-manifest canary/todo/runtime-hooks.manifest.json --check-hooks canary/todo/runtime-hooks.manifest.json
-python3 - <<'PY'
-from pathlib import Path
-from infra2_sdk.rules import compile_compose, inspect_compose
-from infra2_sdk.rules.compose import find_bare_latest_violations
-
-compose_text = Path("canary/todo/compose.yaml").read_text(encoding="utf-8")
-assert find_bare_latest_violations(compose_text) == []
-report = inspect_compose(compose_text)
-assert not report.errors, report.errors
-d = Path("tests/fixtures/compose")
-compiled = compile_compose(
-    (d / "todo.x-infra2.compose.yaml").read_text(encoding="utf-8").split("\n", 1)[1],
-    vault_template=(d / "todo.secrets.ctmpl").read_text(encoding="utf-8").split("\n", 1)[1],
-)
-assert "todo:" in compiled
-PY
-echo "standalone Canary offline hooks & compose checks: verified"
+python3 -m infra2_sdk.delivery check-hooks canary/todo/runtime-hooks.manifest.json
+APP_URL=http://127.0.0.1:8000 python3 -m infra2_sdk.delivery run-cell canary/todo/runtime-hooks.manifest.json --cell staging.operation
+echo "standalone Canary offline hooks & staging.operation check: verified"

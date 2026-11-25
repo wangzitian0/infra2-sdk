@@ -1,4 +1,4 @@
-"""Code-side PostgreSQL enum contract for Canary Todo (`infra2_sdk.runtime.schema_check`)."""
+"""Code-side PostgreSQL enum contract for Canary Todo (`infra2_sdk.storage`)."""
 
 from __future__ import annotations
 
