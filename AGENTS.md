@@ -1,4 +1,4 @@
-<!-- WS_STATIC_START adapter=rules-v2 inputs=59d079636fd1e890ac3ca480be6575e3291dd75699416786a69d511ed543ee91 -->
+<!-- WS_STATIC_START adapter=rules-v2 inputs=9e7f770bd9049ad1a11cda164354b6e78596ac8caa999a53a4079a2575b3f73d -->
 <!-- Generated file: do not edit by hand. These rules are maintained in the owner's rule source and re-rendered here. -->
 
 ## Engineering discipline
@@ -51,13 +51,13 @@ The `infra2-sdk` repository owns the public code contract between `infra2` and d
 1. **Contract and open-protocol adapter boundary (P1):** Own pure data contracts, offline validators, and explicitly invoked open-protocol adapters (`boto3`, `psycopg`, `httpx`, `opentelemetry`). Never add import-time I/O, network calls, or global provider configuration (`tests/test_exports.py`). Applications must run and pass CI with plain environment variables and zero `infra2` runtime dependency.
 2. **One source per fact and Manifest v2 supply chain (P2):** Every environment field declares one `source` class (`bootstrap`, `human`, `runtime`, `release`, `decision`, `code`). Cross-repository generic libraries (the modules that `init.md` §2 lists) live here so applications do not duplicate infrastructure logic. `LlmSettings` in `src/infra2_sdk/runtime/llm.py` owns default `large`, `small`, and `multimodal` model chains.
 3. **100% consumer-reachable public surface (P3):** Every public symbol must have at least one production caller across `infra2`, `finance_report`, or `truealpha`, or an explicit standalone entry in `tests/surface.json`. Package public attributes must equal `__all__` (`tests/test_exports.py`). Prefix internal helpers with `_`.
-4. **Locked environment reads and bidirectional guards (P4):** `tests/test_source_environment_reads.py` locks every environment variable read in `src/infra2_sdk/` to `RuntimeEnvKey` plus `FIXED_READS`. Do not read legacy aliases (`ENV`, `APP_ENV`, `IMAGE_TAG`, `SERVICE_NAME`) directly at call sites; resolve aliases only in `src/infra2_sdk/runtime/environment.py`. Keep `README.md` examples and module tables executable under `tests/test_readme_claims.py` and `tests/test_release_hygiene.py`.
+4. **Locked environment reads and bidirectional guards (P4):** `tests/test_source_environment_reads.py` locks every environment variable read in `src/infra2_sdk/` to `RuntimeEnvKey` plus `FIXED_READS`. Retired aliases (`ENV`, `APP_ENV`, `IMAGE_TAG`, `SERVICE_NAME`) are forbidden and guarded in `REMOVED_ENV_NAMES`. Keep `README.md` examples and module tables executable under `tests/test_readme_claims.py` and `tests/test_release_hygiene.py`.
 5. **Pragmatic compatibility and release hygiene (P5):** Add new runtime dataclass fields as `kw_only=True`. Do not add compatibility shims for symbols with zero callers in the cross-repository usage census (`sdk_usage_census`). A change under `src/infra2_sdk/` does not need a release. A release PR updates `pyproject.toml`, `CHANGELOG.md`, and the `README.md` install pins together (`tests/test_release_hygiene.py`).
 
 ## Merge gate and release lifecycle
 
 - Weight unresolved review findings by literal `severity: <level>` label: high=1.0, middle=0.5, low=0.25, unlabeled=middle. A total of 1.0 or more blocks merge.
-- Required CI jobs in `.github/workflows/ci.yml` (`test` across Python 3.11–3.13, `package`, and `extras-smoke` across `core`, `s3`, `postgres`, `http`, `otel`, `fastapi`, `all`) must pass on the current `head SHA`.
+- Required CI jobs in `.github/workflows/ci.yml` (`test` across Python 3.11–3.13, `package`, `extras-smoke` across `core`, `s3`, `postgres`, `http`, `otel`, `fastapi`, `pydantic-ai`, `all`, and `canary-todo`) must pass on the current `head SHA`.
 - Merging to `main` is Stage 1 (Code Landed). The agent pushes a `vX.Y.Z` tag when a consumer needs the change. The tag triggers `.github/workflows/release.yml`, which publishes the wheel with no approval.
 
 ## Load on demand
