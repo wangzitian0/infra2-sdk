@@ -323,3 +323,13 @@ def test_redact_postgres_error_redacts_query_string_password_on_fragment_error()
     assert "s3cr%40t" not in redacted
     assert "s3cr@t" not in redacted
     assert redacted == "FATAL: password authentication failed: password=<redacted> (<redacted>)"
+
+
+def test_normalize_dsn_handles_postgres_and_postgresql_driver_prefixes() -> None:
+    assert _normalize_dsn("  postgres+psycopg2://u:p@db/app  ") == "postgres://u:p@db/app"
+    assert _normalize_dsn("postgresql+asyncpg://u:p@db/app") == "postgresql://u:p@db/app"
+    assert (
+        PostgresSettings("  postgres+psycopg://u:p@db/app  ").psycopg_dsn == "postgres://u:p@db/app"
+    )
+    with pytest.raises(ValueError, match="PostgreSQL"):
+        PostgresSettings("sqlite+aiosqlite:///tmp/test.db")

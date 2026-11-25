@@ -175,3 +175,12 @@ def test_invalid_named_overrides_fail_before_writing(
         manifests._write(root=tmp_path, specs=(spec,))
     assert "sensitive-value" not in str(error.value)
     assert not (tmp_path / "env.json").exists()
+
+
+def test_yaml_fallback_parser_matches_pyyaml_for_stages_yaml() -> None:
+    from importlib.resources import files
+
+    import yaml
+
+    raw = files("infra2_sdk").joinpath("data/stages.yaml").read_text(encoding="utf-8")
+    assert manifests._parse_yaml_fallback(raw) == yaml.safe_load(raw)

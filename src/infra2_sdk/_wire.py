@@ -130,6 +130,7 @@ __all__ = [
     "parse_iso_utc",
     "parse_string",
     "redact_text",
+    "reject_unknown",
     "require_contract_version",
     "validate_http_url",
 ]

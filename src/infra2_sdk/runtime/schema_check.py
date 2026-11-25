@@ -37,6 +37,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from infra2_sdk.runtime.postgres import _normalize_dsn
+
 EXIT_OK = 0
 EXIT_BLOCKED = 1
 # 2 is argparse's usage error; "not evaluated" gets its own code so a caller can tell
@@ -395,7 +397,7 @@ def load_code_enums(
 
 def libpq_url(db_url: str) -> str:
     """Drop a SQLAlchemy driver suffix (``postgresql+asyncpg://``) libpq rejects."""
-    return re.sub(r"^(postgres(?:ql)?)\+[A-Za-z0-9_]+://", r"\1://", db_url)
+    return _normalize_dsn(db_url)
 
 
 _SAFE_SQL_IDENTIFIER_RE = re.compile(r"\A[A-Za-z_][A-Za-z0-9_.]*\Z")

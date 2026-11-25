@@ -399,6 +399,7 @@ def test_libpq_url_drops_only_the_driver_suffix() -> None:
     assert gate.libpq_url("postgresql+asyncpg://db:5432/app") == ("postgresql://db:5432/app")
     assert gate.libpq_url("postgres+psycopg2://db/app") == "postgres://db/app"
     assert gate.libpq_url("postgresql://db/app") == "postgresql://db/app"
+    assert gate.libpq_url("  postgresql+psycopg://db/app  ") == "postgresql://db/app"
 
 
 # --- ROLLBACK_CLASS (Infra-022 T3.2 / TODOWRITE:20) ---
