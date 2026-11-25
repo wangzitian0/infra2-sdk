@@ -4,15 +4,17 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
-## Unreleased
+## 4.9.0 - 2026-11-25
 
-### Added (Unreleased)
+Minor release: the pre-deploy schema check accepts a pending migration that drops tables and their enum types (finance_report #3227).
+
+### Added (4.9.0)
 
 - `runtime.schema_check.cover_with_dropped_tables`: the contract-step mirror of `cover_with_new_tables` (finance_report #3227). While migrations are pending, a DB-only enum type does not block when the code declares no type of that name, at least one database table uses it, and the code declares none of those tables. The pre-deploy CLI prints `DROPPED_TABLE_COVERS: <type> (<tables>)` for each covered type.
 - `runtime.schema_check.fetch_db_enum_tables` reads each enum type and the ordinary or partitioned tables that use it, with one read-only recursive catalog query. A table uses the type through a column of any type built on it: a domain (at any depth), an array, a composite type or table row type, a range or a multirange. Views, materialized views and foreign tables do not count. A query failure covers nothing, so the gate blocks.
 - `tests/test_schema_check_enum_tables_postgres.py` runs that query on a real PostgreSQL server (`INFRA2_SDK_TEST_POSTGRES_DSN`, else a podman container on a free port). Without a server, the module is skipped with a reason.
 
-### Changed (Unreleased)
+### Changed (4.9.0)
 
 - The CLI computes `ROLLBACK_CLASS` from all discrepancies before coverage. A covered drop exits 0 and prints `ROLLBACK_CLASS: C`, because a drop is not automatically reversible. A covered new type still prints `ROLLBACK_CLASS: A`.
 
