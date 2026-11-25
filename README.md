@@ -25,7 +25,7 @@ Consumers should pin a release and update deliberately:
 
 ```bash
 python -m pip install \
-  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v4.8.0"
+  "infra2-sdk @ git+https://github.com/wangzitian0/infra2-sdk.git@v4.8.1"
 ```
 
 ## Modules
@@ -76,10 +76,10 @@ open-protocol adapters an application uses:
 
 ```bash
 python -m pip install \
-  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v4.8.0'
+  'infra2-sdk[s3,postgres,otel,http] @ git+https://github.com/wangzitian0/infra2-sdk.git@v4.8.1'
 # or, for a conformance canary:
 python -m pip install \
-  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v4.8.0'
+  'infra2-sdk[all] @ git+https://github.com/wangzitian0/infra2-sdk.git@v4.8.1'
 ```
 
 Adapter modules deliberately return standard library objects rather than infra2-specific
@@ -200,7 +200,7 @@ Install the published wheel in a fresh Python 3.11+ environment:
 ```bash
 python -m venv .venv
 .venv/bin/python -m pip install \
-  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v4.8.0/infra2_sdk-4.8.0-py3-none-any.whl'
+  'infra2-sdk[http] @ https://github.com/wangzitian0/infra2-sdk/releases/download/v4.8.1/infra2_sdk-4.8.1-py3-none-any.whl'
 ```
 
 For a local connectivity exercise, start this server in another terminal:
@@ -497,7 +497,7 @@ variables. A non-infra2 deployment can provide the same canonical variables dire
   variables. The field layout is the same. A receiver that requires version 1 rejects version 2, as
   the rule above says, so change it to require version 2.
 - In v3.4.0, the SDK no longer reads `SERVICE_NAME`, the unused alias of `OTEL_SERVICE_NAME`.
-  `ENV`, `APP_ENV` and `IMAGE_TAG` stay. A deployment that sets only `SERVICE_NAME` must set
+  `ENV`, `APP_ENV` and `IMAGE_TAG` stayed until v4.8.0. A deployment that sets only `SERVICE_NAME` must set
   `OTEL_SERVICE_NAME` instead. Until then:
   - `OtelSettings.from_env` gives the service name `unknown_service` and raises no error;
   - when both variables are set, the SDK uses `OTEL_SERVICE_NAME` and reports no conflict.

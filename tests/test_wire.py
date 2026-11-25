@@ -72,3 +72,12 @@ def test_canonical_sha256_is_key_order_independent_and_matches_the_runtime_helpe
     assert canonical_json_bytes(left) == b'{"a":{"x":"\\u00e9","y":1},"b":[1,2]}'
     assert canonical_sha256(left) == hashlib.sha256(canonical_json_bytes(left)).hexdigest()
     assert canonical_sha256({"a": 1}) != canonical_sha256({"a": 2})
+
+
+def test_wire_exports_reject_unknown_and_validates_fields() -> None:
+    from infra2_sdk import _wire
+
+    assert "reject_unknown" in _wire.__all__
+    _wire.reject_unknown({"a": 1}, ("a", "b"), "item")
+    with pytest.raises(ValueError, match="unknown item field"):
+        _wire.reject_unknown({"a": 1, "c": 2}, ("a",), "item")

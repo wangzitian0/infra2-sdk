@@ -13,11 +13,11 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 from infra2_sdk.runtime._optional import require
 from infra2_sdk.runtime.health import DependencyStatus, ProbeResult, _elapsed
 
-_SQLALCHEMY_DRIVER_RE = re.compile(r"\Apostgresql\+[a-zA-Z0-9_]+://")
+_SQLALCHEMY_DRIVER_RE = re.compile(r"\A(postgres(?:ql)?)\+[a-zA-Z0-9_]+://")
 
 
 def _normalize_dsn(dsn: str) -> str:
-    return _SQLALCHEMY_DRIVER_RE.sub("postgresql://", dsn.strip(), count=1)
+    return _SQLALCHEMY_DRIVER_RE.sub(r"\1://", dsn.strip(), count=1)
 
 
 @dataclass(frozen=True)

@@ -492,9 +492,9 @@ def verify_production_evidence(
 
 
 def _require_httpx() -> Any:
-    from infra2_sdk.runtime._optional import require_httpx
+    from infra2_sdk.runtime._optional import require
 
-    return require_httpx()
+    return require("httpx", extra="http")
 
 
 HttpGet = Callable[[str], tuple[int, str]]

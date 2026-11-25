@@ -411,55 +411,6 @@ class _FakeTracer:
         return manager()
 
 
-class _Run:
-    def __init__(self, ok=True, stdout="", stderr=""):
-        self.ok, self.failed = ok, not ok
-        self.stdout, self.stderr = stdout, stderr
-
-
-class _Host:
-    def __init__(self, ok=True, stderr=""):
-        self.commands: list[str] = []
-        self.stdin: list[str] = []
-        self._ok, self._stderr = ok, stderr
-
-    def run(self, command, in_stream=None, hide=True, warn=True, **kwargs):
-        self.commands.append(command)
-        self.stdin.append(in_stream.read() if in_stream is not None else "")
-        return _Run(self._ok, stderr=self._stderr)
-
-
-class _Store:
-    def __init__(self, values):
-        self.values = values
-
-    def get(self, key):
-        return self.values.get(key)
-
-
-def _stub_role_env(monkeypatch, deployer, store_values) -> None:
-    monkeypatch.setattr(
-        deployer,
-        "env",
-        classmethod(
-            lambda cls: {
-                "ENV": "staging",
-                "ENV_SUFFIX": "-staging",
-                "VPS_HOST": "vps.example",
-            }
-        ),
-    )
-    monkeypatch.setattr(
-        deployer,
-        "secrets_backend",
-        classmethod(lambda cls, env=None: _Store(store_values)),
-    )
-
-
-def _now(offset: float = 0.0) -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + offset))
-
-
 def test_redis_probe_reports_unconfigured_without_a_password(app) -> None:
     """The production canary ran with an empty REDIS_PASSWORD and passed. No password
     still keeps the check red, but as `unconfigured`: a configuration gap is not a

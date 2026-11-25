@@ -44,14 +44,10 @@ from pydantic import BaseModel, Field, StrictBool, StrictStr
 from infra2_sdk.fastapi import init_service
 from infra2_sdk.runtime.config_schema import assert_environment
 from infra2_sdk.runtime.environment import (
-    EnvironmentTier,
     RuntimeEnvKey,
     resolve_runtime_env,
 )
 from infra2_sdk.runtime.health import (
-    Dependency,
-    DependencyKind,
-    DependencyManifest,
     DependencyStatus,
     ProbeResult,
     run_probes,
@@ -90,36 +86,6 @@ UNCONFIGURED = "unconfigured"
 # Authentik have their own probes and severities, so they stay informational here.
 GATING_CHECKS = ("postgres", "redis", "s3")
 INFORMATIONAL_CHECKS = ("signoz", "openpanel", "authentik")
-_HOSTED_TIERS = frozenset({EnvironmentTier.STAGING, EnvironmentTier.PRODUCTION})
-CANARY_DEPENDENCY_MANIFEST = DependencyManifest(
-    (
-        Dependency(
-            "postgres",
-            DependencyKind.CODE_DOMINANT,
-            _HOSTED_TIERS,
-            frozenset({"DATABASE_URL"}),
-        ),
-        Dependency(
-            "redis",
-            DependencyKind.CODE_DOMINANT,
-            _HOSTED_TIERS,
-            frozenset({"REDIS_PASSWORD"}),
-        ),
-        Dependency(
-            "s3",
-            DependencyKind.CODE_DOMINANT,
-            _HOSTED_TIERS,
-            frozenset(
-                {
-                    "S3_ENDPOINT",
-                    "S3_BUCKET",
-                    "S3_ACCESS_KEY",
-                    "S3_SECRET_KEY",
-                }
-            ),
-        ),
-    )
-)
 
 # Each run does real writes and opens a Postgres connection, and the canary role allows 5.
 # One run is in flight at a time, and a result is reused for this long. It stays below the

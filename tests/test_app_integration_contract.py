@@ -61,3 +61,16 @@ def test_prose_init_service_parameters_match_signature() -> None:
         if token == "...":
             continue
         assert token in sig_params, f"init_service parameter {token!r} not in {sorted(sig_params)}"
+
+
+def test_prose_sidecar_fixed_keys_match_compose_compiler() -> None:
+    from infra2_sdk.rules.compose import _FIXED_SIDECAR_ENV
+
+    text = PAGE.read_text(encoding="utf-8")
+    match = re.search(r"^- The sidecar gets ([^.]+)\.", text, re.MULTILINE)
+    assert match is not None, "app-integration-contract.md must list the fixed sidecar keys"
+    documented = re.findall(r"`([A-Z0-9_]+)`", match.group(1))
+    assert documented, "sidecar fixed key list must not be empty"
+    assert len(documented) == len(set(documented)), "duplicate sidecar key in prose"
+    expected = _FIXED_SIDECAR_ENV - {"VAULT_AGENT_HCL", "VAULT_SECRETS_TEMPLATE"}
+    assert set(documented) == expected

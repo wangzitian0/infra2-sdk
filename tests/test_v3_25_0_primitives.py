@@ -66,8 +66,10 @@ def test_sdk_source_byte_budget() -> None:
     # 4.7.0 measured 412,950 B after `x-infra2.vault.env` and the template env check.
     # 4.8.0 measured 413,424 B: three `retired` entries keep ENV, APP_ENV and IMAGE_TAG
     # flagged, and the preview override became Compose text (infra2#1823 N1).
+    # 4.8.1 measured 413,126 B after removing `require_httpx` and `extra_keys`, delegating
+    # `libpq_url` to `_normalize_dsn`, and adding `reject_unknown` to `_wire.__all__`.
     # A new feature raises this cap with a comment; a removal lowers it.
-    assert 150_000 <= total <= 413_500, f"src/infra2_sdk byte budget drifted: {total} B"
+    assert 150_000 <= total <= 413_200, f"src/infra2_sdk byte budget drifted: {total} B"
 
 
 def test_init_service_multi_checks_and_manifest(monkeypatch: pytest.MonkeyPatch) -> None:

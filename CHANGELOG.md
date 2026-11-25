@@ -6,6 +6,22 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+## 4.8.1 - 2026-11-25
+
+Patch release: clean dead Canary code, converge DSN/HTTP helpers, and harden contract guards.
+
+### Changed (4.8.1)
+
+- Align `docs/app-integration-contract.md`, `README.md`, and `CONTRIBUTING.md` with `v4.8.0` sidecar `ENVIRONMENT` and retired aliases (`#288`, `#289`).
+- Delegate `runtime.schema_check.libpq_url` to `runtime.postgres._normalize_dsn` across both `postgres+...` and `postgresql+...` driver prefixes.
+- Export `reject_unknown` in `_wire.__all__`.
+- Add contract and equivalence tests for `docs/app-integration-contract.md` fixed sidecar keys and `manifests._parse_yaml_fallback`.
+
+### Removed (4.8.1)
+
+- Remove unused `extra_keys` manifest path (`#288`) and single-caller `runtime._optional.require_httpx`.
+- Remove unused `CANARY_DEPENDENCY_MANIFEST` from `canary/todo/app.py` and dead migrated stubs from `canary/todo/tests/test_canary_depth.py`.
+
 ## 4.8.0 - 2026-11-25
 
 Minor release: retire the runtime aliases ENV, APP_ENV and IMAGE_TAG.
