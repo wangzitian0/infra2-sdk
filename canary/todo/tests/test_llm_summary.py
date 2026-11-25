@@ -42,14 +42,14 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage
 from starlette.testclient import TestClient
 
-from infra2_sdk.runtime.llm import (
+from infra2_sdk.llm import (
     LlmSettings,
     allow_vcr_model_requests,
     create_llm_agent,
     redact_llm_error,
     vcr_llm_config,
 )
-from infra2_sdk.runtime.otel import OtelSettings, configure_telemetry
+from infra2_sdk.telemetry import OtelSettings, configure_telemetry
 
 models.ALLOW_MODEL_REQUESTS = False
 
@@ -354,7 +354,7 @@ def test_agent_missing_call_site_warns(
 ) -> None:
     settings = LlmSettings(provider="zai", api_key="test-key", small_model="glm-5.3-flash")
     agent = create_llm_agent(settings, model=TestModel(custom_output_text="ok"))
-    with caplog.at_level(logging.WARNING, logger="infra2_sdk.runtime.llm"):
+    with caplog.at_level(logging.WARNING, logger="infra2_sdk.llm"):
         res = agent.run_sync("ping")
     assert res.output == "ok"
     assert any("missing explicit call_site" in rec.message for rec in caplog.records)

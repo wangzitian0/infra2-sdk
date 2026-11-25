@@ -12,7 +12,7 @@ from types import ModuleType
 import psycopg
 import pytest
 
-from infra2_sdk.runtime.environment import runtime_env_contract
+from infra2_sdk.config import RuntimeEnvKey
 
 TODO_DIR = Path(__file__).resolve().parents[1]
 TODO_APP = TODO_DIR / "app.py"
@@ -22,11 +22,7 @@ if str(TODO_DIR) not in sys.path:
 
 
 def _contract_names() -> set[str]:
-    names: set[str] = set()
-    for variable in runtime_env_contract()["variables"]:
-        names.add(variable["name"])
-        names.update(variable["aliases"])
-    return names
+    return {k.value for k in RuntimeEnvKey}
 
 
 def clear_telemetry_env(monkeypatch: pytest.MonkeyPatch) -> None:

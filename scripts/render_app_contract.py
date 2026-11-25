@@ -4,8 +4,6 @@ Usage:
     python scripts/render_app_contract.py
 
 The output replaces the text between the ``app-contract`` markers of the page.
-``tests/test_app_integration_contract.py`` compares the two byte for byte.
-This script is a development tool. The wheel does not ship it.
 """
 
 from __future__ import annotations
@@ -16,32 +14,19 @@ from pathlib import Path
 # Import the SDK of this checkout, never an installed copy.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from infra2_sdk.manifests import CELL_POLICIES  # noqa: E402
-from infra2_sdk.runtime.environment import shared_env_contract  # noqa: E402
+from infra2_sdk.config import shared_env_contract  # noqa: E402
+from infra2_sdk.delivery import CELL_POLICIES  # noqa: E402
 
 
 def render() -> str:
-    """The shared environment names by group, the cells that an app owns, and its manual cells."""
+    """Render shared environment names by group and app-owned delivery cells."""
     contract = shared_env_contract()
-    lines = ["| Group | Canonical name | Sensitive | Owners |", "|---|---|---|---|"]
+    lines = ["| Group | Canonical name | Sensitive |", "|---|---|---|"]
     for group, entries in contract["groups"].items():
         for entry in entries:
-            owners = ", ".join(entry.get("owners") or ()) or "none"
             sensitive = "yes" if entry.get("sensitive") else "no"
-            lines.append(f"| {group} | `{entry['name']}` | {sensitive} | {owners} |")
-    aliases = [
-        f"| `{alias}` | `{entry['name']}` |"
-        for entries in contract["groups"].values()
-        for entry in entries
-        for alias in entry.get("deprecated_aliases") or ()
-    ]
-    if aliases:
-        lines += ["", "| Deprecated alias | Use |", "|---|---|", *aliases]
-    else:
-        lines += ["", "No deprecated alias remains. The SDK reads only the canonical names."]
-    lines += ["", "| Retired name | Use |", "|---|---|"]
-    for entry in contract.get("retired") or ():
-        lines.append(f"| `{entry['name']}` | `{entry['use']}` |")
+            lines.append(f"| {group} | `{entry['name']}` | {sensitive} |")
+
     lines += ["", "| Cell (app owned) | Trigger | Budget (s) | Check list |", "|---|---|---|---|"]
     for cell_id, policy in CELL_POLICIES.items():
         if policy.owner != "app":

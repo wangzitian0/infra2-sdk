@@ -41,22 +41,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, StrictBool, StrictStr
 
-from infra2_sdk.fastapi import init_service
-from infra2_sdk.runtime.config_schema import assert_environment
-from infra2_sdk.runtime.environment import (
+from infra2_sdk.config import (
     EnvironmentTier,
     RuntimeEnvKey,
-    resolve_runtime_env,
+    assert_env,
+    read_runtime_env,
 )
-from infra2_sdk.runtime.health import (
-    Dependency,
-    DependencyKind,
-    DependencyManifest,
-    DependencyStatus,
-    ProbeResult,
-    run_probes,
-)
-from infra2_sdk.runtime.llm import (
+from infra2_sdk.llm import (
     DecodingSpec,
     LlmSettings,
     create_llm_agent,
@@ -66,15 +57,33 @@ from infra2_sdk.runtime.llm import (
     request_sha256,
     schema_sha256,
 )
-from infra2_sdk.runtime.redis import RedisSettings, probe_redis, redact_redis_error
-from infra2_sdk.runtime.s3 import (
+from infra2_sdk.service import (
+    Dependency,
+    DependencyKind,
+    DependencyManifest,
+    DependencyStatus,
+    HttpClientSettings,
+    ProbeResult,
+    RateLimitWindow,
+    init_service,
+    probe_http,
+    run_probes,
+)
+from infra2_sdk.storage import (
+    PostgresSettings,
+    RedisSettings,
     S3Settings,
     create_s3_client,
+    probe_postgres,
+    probe_redis,
     probe_s3,
     put_object_bytes,
     read_object_bytes,
+    redact_postgres_error,
     redact_presigned_url,
+    redact_redis_error,
 )
+from infra2_sdk.telemetry import current_request_id
 
 LOGGER = logging.getLogger("platform-todo")
 SERVICE_TRACER_NAME = "platform-todo"
@@ -459,23 +468,18 @@ def _probe_postgres(
             start,
             _DATABASE_URL_UNSET,
         )
+    dsn = ""
     try:
-        from infra2_sdk.runtime.postgres import (
-            PostgresSettings,
-            probe_postgres,
-        )
-
         dsn = (
             f"postgresql://{urllib.parse.quote(user, safe='')}"
             f":{urllib.parse.quote(password, safe='')}"
             f"@{f'[{host}]' if ':' in host else host}:{int(port)}"
             f"/{urllib.parse.quote(dbname, safe='')}"
         )
-        settings = PostgresSettings(
-            dsn=dsn, connect_timeout_seconds=max(1, min(60, math.ceil(timeout)))
-        )
-        if not verify_write:
-            result = probe_postgres(settings, connector=connector)
+        timeout_arg = max(1, min(60, math.ceil(timeout)))
+        settings = PostgresSettings(url=dsn, connect_timeout_seconds=timeout_arg)
+        if not verify_write and connector is None:
+            result = probe_postgres(settings.url, connect_timeout=timeout_arg)
             if result.status != DependencyStatus.PRESENT:
                 return _outcome("fail", start, f"login as {user} failed: {result.detail}")
             return _outcome("pass", start, f"login as {user}: {result.detail}")
@@ -491,7 +495,7 @@ def _probe_postgres(
 
             def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
                 try:
-                    if exc_type is None and self._conn is not None:
+                    if exc_type is None and self._conn is not None and verify_write:
                         self._conn.execute("SELECT 1").fetchone()
                         self._conn.execute(
                             "CREATE TEMP TABLE IF NOT EXISTS canary_todo_probe (id TEXT PRIMARY KEY, title TEXT NOT NULL)"
@@ -516,31 +520,33 @@ def _probe_postgres(
                             target.close()
                 return False
 
-        def _crud_connector(psycopg_dsn: str, **kwargs: Any) -> _CrudSession:
-            if connector is None:
-                import psycopg
+        import psycopg
 
-                kwargs.setdefault(
-                    "options",
-                    f"-c statement_timeout={int(settings.statement_timeout_seconds * 1000)}",
-                )
-                return _CrudSession(psycopg.connect(psycopg_dsn, **kwargs))
-            return _CrudSession(connector(psycopg_dsn, **kwargs))
-
-        result = probe_postgres(
-            settings,
-            connector=_crud_connector,
-            query="SET LOCAL transaction_read_only = off",
+        open_conn = (
+            connector(
+                settings.url,
+                connect_timeout=timeout_arg,
+                options=f"-c statement_timeout={timeout_arg * 1000}",
+            )
+            if connector is not None
+            else psycopg.connect(
+                settings.url,
+                connect_timeout=timeout_arg,
+                options=f"-c statement_timeout={timeout_arg * 1000}",
+            )
         )
-        if result.status != DependencyStatus.PRESENT:
-            return _outcome("fail", start, f"login as {user} failed: {result.detail}")
+        with _CrudSession(open_conn) as conn:
+            conn.execute("SET LOCAL transaction_read_only = off")
+            if not verify_write:
+                conn.execute("SELECT 1").fetchone()
+                return _outcome("pass", start, f"login as {user}: ok")
         return _outcome(
             "pass",
             start,
             f"login as {user}: SELECT 1 and write/read/delete transaction succeeded",
         )
     except Exception as exc:  # noqa: BLE001 - a probe reports the failure
-        return _outcome("fail", start, f"{type(exc).__name__}: {exc}")
+        return _outcome("fail", start, f"login as {user} failed: {redact_postgres_error(exc, dsn)}")
 
 
 def probe_postgres_crud(
@@ -567,8 +573,6 @@ def probe_postgres_crud(
 
 
 async def _probe_http_async(url: str, timeout: float = 3.0) -> dict[str, Any]:
-    from infra2_sdk.runtime.http import HttpClientSettings, probe_http
-
     start = time.perf_counter()
     try:
         result = await probe_http(url, settings=HttpClientSettings(timeout_seconds=timeout))
@@ -593,25 +597,21 @@ def _probe_redis(
     *,
     timeout: float = 2.0,
 ) -> dict[str, Any]:
-    """Authenticate and run SETEX/GET/DEL through `infra2_sdk.runtime.redis.probe_redis`."""
+    """Authenticate and run SETEX/GET/DEL through `infra2_sdk.storage.probe_redis`."""
     start = time.perf_counter()
     cleaned = redis_url.strip()
     if not cleaned:
         return _unconfigured(start, "REDIS_URL is not configured")
     try:
-        settings = RedisSettings(
-            url=cleaned,
-            connect_timeout_seconds=timeout,
-            socket_timeout_seconds=timeout,
-        )
+        settings = RedisSettings(url=cleaned, connect_timeout_seconds=timeout)
     except ValueError as exc:
-        return _outcome("fail", start, redact_redis_error(str(exc), cleaned))
-    if not settings.password:
+        return _outcome("fail", start, redact_redis_error(exc, cleaned))
+    if not urllib.parse.urlsplit(settings.url).password:
         return _unconfigured(
             start,
             "REDIS_URL has no password; the canary cannot prove an authenticated write",
         )
-    result = probe_redis(settings, write_probe=True, key_prefix="canary:probe:", ttl_seconds=10)
+    result = probe_redis(settings.url, key_prefix="canary:probe:", connect_timeout=timeout)
     status = "pass" if result.status == DependencyStatus.PRESENT else "fail"
     return _outcome(status, start, result.detail)
 
@@ -648,7 +648,7 @@ def _probe_s3(
             endpoint_url=endpoint_url,
             access_key_id=access_key,
             secret_access_key=secret_key,
-            addressing_style="path",
+            use_path_style=True,
             connect_timeout_seconds=timeout,
             read_timeout_seconds=timeout,
         )
@@ -693,9 +693,7 @@ def _probe_s3(
 
 
 def _otlp_active() -> bool:
-    return bool(
-        (resolve_runtime_env(None, RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT).value or "").strip()
-    )
+    return bool(read_runtime_env(RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT).strip())
 
 
 class _NullSpan:
@@ -793,17 +791,17 @@ async def _traced_check_async(name: str, probe: Callable[[], Any]) -> dict[str, 
 def _to_probe_result(name: str, raw: dict[str, Any]) -> ProbeResult:
     status = DependencyStatus.PRESENT if raw.get("status") == PASS else DependencyStatus.ABSENT
     return ProbeResult(
-        name,
-        status,
-        str(raw.get("detail") or ""),
-        float(raw.get("latency_ms") or 0.0),
+        name=name,
+        status=status,
+        detail=str(raw.get("detail") or ""),
+        duration_ms=float(raw.get("latency_ms") or 0.0),
     )
 
 
 def _run_checks(
     plan: dict[str, Callable[[], Any]],
 ) -> dict[str, dict[str, Any]]:
-    """Run every check in parallel through infra2_sdk.runtime.health.run_probes."""
+    """Run every check in parallel through infra2_sdk.service.run_probes."""
     raw_outcomes: dict[str, dict[str, Any]] = {}
     checks: list[Any] = []
     for name, fn in plan.items():
@@ -1014,7 +1012,7 @@ SERVER_START_TIME = time.time()
 
 _ALL_TIERS = frozenset(EnvironmentTier)
 CANARY_DEPENDENCY_MANIFEST = DependencyManifest(
-    [
+    dependencies=(
         Dependency(
             name="postgres",
             kind=DependencyKind.CODE_DOMINANT,
@@ -1036,7 +1034,7 @@ CANARY_DEPENDENCY_MANIFEST = DependencyManifest(
             env_vars=frozenset({"S3_ENDPOINT", "S3_BUCKET", "S3_ACCESS_KEY", "S3_SECRET_KEY"}),
             summary="S3 PUT/GET/DELETE write path probe",
         ),
-    ]
+    )
 )
 
 
@@ -1052,10 +1050,10 @@ class _CanaryDependencyCheck:
             report = cached_canary_status()
         except Exception as exc:  # noqa: BLE001
             return ProbeResult(
-                self.name,
-                DependencyStatus.ABSENT,
-                f"canary status check failed: {exc}",
-                _elapsed_ms(started),
+                name=self.name,
+                status=DependencyStatus.ABSENT,
+                detail=f"canary status check failed: {exc}",
+                duration_ms=_elapsed_ms(started),
             )
         checks = report.get("checks")
         if isinstance(checks, Mapping) and isinstance(checks.get(self.name), Mapping):
@@ -1065,17 +1063,17 @@ class _CanaryDependencyCheck:
             detail = str(entry.get("detail") or (PASS if present else status_val or "absent"))
             latency = float(entry.get("latency_ms") or _elapsed_ms(started))
             return ProbeResult(
-                self.name,
-                DependencyStatus.PRESENT if present else DependencyStatus.ABSENT,
-                detail,
-                max(0.0, latency),
+                name=self.name,
+                status=DependencyStatus.PRESENT if present else DependencyStatus.ABSENT,
+                detail=detail,
+                duration_ms=max(0.0, latency),
             )
         if report.get("ok") is True:
             return ProbeResult(
-                self.name,
-                DependencyStatus.PRESENT,
-                "canary write path passed",
-                _elapsed_ms(started),
+                name=self.name,
+                status=DependencyStatus.PRESENT,
+                detail="canary write path passed",
+                duration_ms=_elapsed_ms(started),
             )
         failed = report.get("failed") or ()
         unconfigured = report.get("unconfigured") or ()
@@ -1085,14 +1083,19 @@ class _CanaryDependencyCheck:
             detail = f"unconfigured={self.name}"
         elif failed or unconfigured:
             return ProbeResult(
-                self.name,
-                DependencyStatus.PRESENT,
-                "canary write path passed",
-                _elapsed_ms(started),
+                name=self.name,
+                status=DependencyStatus.PRESENT,
+                detail="canary write path passed",
+                duration_ms=_elapsed_ms(started),
             )
         else:
             detail = "canary checks not ok"
-        return ProbeResult(self.name, DependencyStatus.ABSENT, detail, _elapsed_ms(started))
+        return ProbeResult(
+            name=self.name,
+            status=DependencyStatus.ABSENT,
+            detail=detail,
+            duration_ms=_elapsed_ms(started),
+        )
 
 
 def _installed_sdk_version() -> str:
@@ -1107,10 +1110,11 @@ def _installed_sdk_version() -> str:
 def _todo_health_extra(verdict: Mapping[str, Any] | None = None) -> dict[str, Any]:
     doc = dict(verdict) if verdict is not None else peek_canary_verdict()
     canary_ok = doc.get("ok") is True
-    env_name = resolve_runtime_env(None, RuntimeEnvKey.ENVIRONMENT).value or "unknown"
-    config_sha = resolve_runtime_env(None, RuntimeEnvKey.CONFIGURATION_SHA256).value or "unknown"
+    env_name = read_runtime_env(RuntimeEnvKey.ENVIRONMENT) or "unknown"
+    config_sha = read_runtime_env(RuntimeEnvKey.CONFIGURATION_SHA256) or "unknown"
     return {
         "ok": canary_ok,
+        "request_id": current_request_id(),
         "domain": "todo.zitian.party",
         "environment": env_name,
         "configuration_sha256": config_sha,
@@ -1362,12 +1366,13 @@ def fastapi_delete_todo(todo_id: int) -> Response:
 
 TODO_SUMMARY_CALL_SITE = "todo.summary"
 TODO_SUMMARY_DECODING = DecodingSpec(
-    "todo.summary.v1",
+    decoding_version="todo.summary.v1",
     thinking=False,
     temperature=0.0,
     max_tokens=512,
     timeout=20.0,
 )
+SUMMARY_RATE_LIMIT = RateLimitWindow(max_requests=30, window_seconds=60.0)
 
 
 def _telemetry_providers() -> tuple[Any | None, Any | None]:
@@ -1390,7 +1395,7 @@ async def summarize_recent_todos(
     usage_limits: Any | None = None,
 ) -> TodoSummaryResponse:
     """Summarize recent persisted todos through the single SDK Agent entrypoint."""
-    settings = LlmSettings.from_mapping(os.environ)
+    settings = LlmSettings.from_env(os.environ)
     if model_override is None and not (settings.api_key and settings.api_key.strip()):
         return TodoSummaryResponse(
             status=UNCONFIGURED,
@@ -1491,6 +1496,17 @@ async def summarize_recent_todos(
 async def fastapi_summarize_todos(
     payload: TodoSummaryRequest | None = Body(default=None),
 ) -> Response:
+    allowed, retry_after = SUMMARY_RATE_LIMIT.acquire()
+    if not allowed:
+        return JSONResponse(
+            status_code=429,
+            headers={"Retry-After": str(max(1, math.ceil(retry_after)))},
+            content={
+                "error": "Summary rate limit exceeded",
+                "detail": "rate_limited",
+                "request_id": current_request_id(),
+            },
+        )
     req = payload or TodoSummaryRequest()
     from pydantic_ai.exceptions import UsageLimitExceeded
 
@@ -1576,7 +1592,7 @@ ENV_MANIFEST_PATH = Path(__file__).resolve().parent / "env.manifest.json"
 
 def validate_startup_environment(environ: Mapping[str, str] | None = None) -> None:
     """Fail closed at startup when any required variable in env.manifest.json is missing."""
-    assert_environment(ENV_MANIFEST_PATH, environ=environ, require_injected=True)
+    assert_env(ENV_MANIFEST_PATH, environ=environ, require_injected=True)
 
 
 def main() -> None:

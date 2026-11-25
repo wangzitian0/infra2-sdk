@@ -733,9 +733,9 @@ def test_the_manifest_file_is_the_output_of_the_settings_class() -> None:
 
     from canary_settings import CanarySettings
 
-    from infra2_sdk.runtime.config_schema import environment_manifest_from_model
+    from infra2_sdk.config import EnvironmentManifest
 
-    manifest = environment_manifest_from_model(CanarySettings, source="canary/todo")
+    manifest = EnvironmentManifest.from_model(CanarySettings, source="canary/todo")
     expected = json.dumps(manifest.to_dict(), indent=2, sort_keys=True) + "\n"
     assert (TODO_APP.parent / "env.manifest.json").read_text(encoding="utf-8") == expected
     # The app manifest holds no binding of one platform.
@@ -806,6 +806,6 @@ def test_app_reads_the_process_environment_only_through_the_settings_class() -> 
         assert ast.unparse(parent.func) in {
             "CanarySettings.from_environ",
             "CanarySettings.read",
-            "LlmSettings.from_mapping",
-            "assert_environment",
+            "LlmSettings.from_env",
+            "assert_env",
         }, ast.unparse(parent.func)

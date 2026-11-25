@@ -4,6 +4,26 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 4.10.0 - 2026-11-25
+
+MECE 6-module architectural consolidation, legacy shim purge, and full end-to-end Canary Todo alignment.
+
+### Added (4.10.0)
+
+- Flat 6-module public package layout (`infra2_sdk.{config,telemetry,service,storage,llm,delivery}`) backed by shared `ContractModel(pydantic.BaseModel)` in `_core.py`, removing `pydantic-settings` from core dependencies.
+- `service.RateLimitWindow` wired into `canary/todo` `/api/todos/summary`, plus `telemetry.current_request_id()` correlation in `/api/health` and rate-limit responses.
+- Clean 1:1 positive unit tests across all six modules plus Podman PostgreSQL enum/schema catalog coverage (`tests/test_storage_postgres_podman.py`) and architecture guards (`tests/test_architecture_guards.py`).
+
+### Changed (4.10.0)
+
+- Consolidated `runtime.{environment,config_schema}` into `config`, `runtime.otel` into `telemetry`, `fastapi` + `runtime.{health,http}` into `service`, `runtime.{postgres,redis,s3,schema_check}` (single `psycopg` connection, zero `psycopg2`) into `storage`, `runtime.llm` into `llm`, and `manifests` + `deploy` + `ci` into `delivery`.
+- Cleaned `data/shared_env.yaml` to canonical schema v2 variables only; regenerated `docs/app-integration-contract.md` and `canary/todo/env.manifest.json`.
+- Updated optional extras to `telemetry`, `http`, `fastapi`, `postgres`, `s3`, `llm`, and `all` across `pyproject.toml`, `canary/todo/Dockerfile`, `tests/wheel_smoke.py`, and `.github/workflows/ci.yml`.
+
+### Removed (4.10.0)
+
+- Removed single-consumer `infra2` control-plane modules (`capacity`, `ci`, `observability`, `refs`, `routing`, `rules/*`, `secrets`, `stage_record`, `transport`) and all legacy compatibility aliases/fallback branches/tombstone tests.
+
 ## 4.9.1 - 2026-11-25
 
 Patch release: add stdlib RESP Redis probe, harden Phase 1A runtime/rules contracts, and align Canary Todo fail-closed readiness and standalone OTLP/fault verification.

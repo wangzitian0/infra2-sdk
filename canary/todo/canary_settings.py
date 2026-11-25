@@ -1,7 +1,8 @@
 """The environment contract of the Canary Todo: one class, read by the app and by the manifest.
 
 `CanarySettings.from_environ()` is the one reader of the process environment in `app.py`.
-`python -m infra2_sdk.runtime.config_schema canary_settings:CanarySettings` generates
+`python -m infra2_sdk.config export canary_settings:CanarySettings` with
+`--source canary/todo --json env.manifest.json --markdown env-reference.generated.md` generates
 `env.manifest.json` from the same class, so a variable cannot be read and not declared.
 
 No default names a host of one platform. A deployment gives each address; a local run gives

@@ -1,52 +1,24 @@
 # Contributing
 
-The [README](README.md) defines this package's ownership and public compatibility
-contract; `pyproject.toml` defines the release version and dependency surface.
+The [README](README.md) defines the public 6-module contract; [`pyproject.toml`](pyproject.toml) defines the `4.10.0` version and minimal core dependency surface (`pydantic`, `pyyaml`).
 
 ## Ownership
 
-- Share stable data contracts and explicitly invoked protocol adapters when consumers
-  need the same semantics. Imports must not perform I/O or configure global providers.
-- Applications own domain policy, dependency requirements and settings models. Infra2
-  owns deployment orchestration and when credentials or infrastructure are mutated.
-- Coding-agent tooling, agent workflow policy and repository management do not belong
-  in this runtime SDK.
-- Consumers install an exact released artifact; never depend on a sibling checkout.
+- Share stable Pydantic `ContractModel` schemas and explicit open-protocol adapters (`config`, `telemetry`, `service`, `storage`, `llm`, `delivery`). Imports must stay lazy and perform zero I/O or global provider mutation.
+- Applications own domain logic, dependency manifests, SQL models, and settings classes (`CanarySettings`). Infrastructure orchestration stays in `infra2`.
+- Keep modules strictly MECE: zero cross-module private imports, zero legacy fallback shims inside the current SDK, and 1:1 positive tests per module.
 
-## Changes and proof
+## Changes and Verification
 
-Use an independent branch and PR. Preserve public import paths and wire compatibility;
-apply the README's semantic-version rules before release. Add regression tests for
-changed behavior, including failure paths and secret redaction where applicable.
+Before opening or merging a PR:
 
-Before a PR, run the focused tests of the change. CI runs the full suite. Release changes
-require the repository CI and wheel checks in `.github/workflows/ci.yml`. Report the revision tested and any missing proof;
-do not treat a locally built wheel as a published release or update consumers to it.
+1. Run `.venv/bin/ruff format --check . && .venv/bin/ruff check .`.
+2. Run `.venv/bin/pytest --cov --cov-report=term-missing` (including Podman PostgreSQL catalog tests when available) and `.venv/bin/pytest canary/todo/tests -q`.
+3. Verify `python -m build` and `tests/wheel_smoke.py` across all 8 extras (`core`, `telemetry`, `http`, `fastapi`, `postgres`, `s3`, `llm`, `all`).
+4. Run `scripts/check_canary_image_sdk.sh` and `scripts/check_canary_standalone.sh`.
 
 ## Releasing
 
-The release workflow publishes each release. Do not publish manually. A change under
-`src/infra2_sdk/` does not need a release. Release when a consumer needs the change.
-
-0. A release that removes a public name or changes a default requires a usage census.
-   Run `python -m tools.sdk_usage_census --json --check` in `infra2` across `infra2`,
-   `finance_report`, and `truealpha`. The census checks `M1` symbol reachability,
-   `M2` `runtime_env_contract()` reachability, `M3` pin lag, `M4` `LEFT_THE_PACKAGES`
-   references, `M5` hardcoded `SERVICE_NAME` lists, and `M6` `tools/*.py` cross-imports.
-   Do not remove a name that a consumer uses in a minor release. A release runs with
-   consumers that are one minor version behind.
-1. Between releases, write [CHANGELOG](CHANGELOG.md) lines under `## Unreleased`. In the
-   release PR, bump `version` in `pyproject.toml` and run `uv lock`. Give the CHANGELOG entry
-   its version and date, and update the README version pins.
-   `tests/test_release_hygiene.py` fails when any of the three files is stale.
-2. After you merge the PR, tag the merge commit on `main` as `vX.Y.Z` and push the tag.
-   The agent tags releases; `.github/workflows/release.yml` needs no approval (owner,
-   2026-10-26). The workflow verifies that `$GITHUB_SHA` is on `origin/main`
-   (`git merge-base --is-ancestor "$GITHUB_SHA" origin/main`). It also verifies that the tag
-   matches `pyproject.toml`, builds the package, and runs `gh release create --verify-tag`.
-   It runs no test. It fails unless a `ci.yml` run on `main` passed for that commit: push the
-   tag after that run is green.
-3. Do not create the GitHub release manually before the workflow finishes. A manual release
-   causes the publish step to fail and leaves unverified assets attached to the tag.
-   Follow the release identity contract in `.github/workflows/release.yml`
-   ([#18](https://github.com/wangzitian0/infra2-sdk/issues/18)).
+1. Update [CHANGELOG.md](CHANGELOG.md), bump `version` in `pyproject.toml`, run `uv lock`, and open/merge the PR to `main`.
+2. After `ci.yml` on `main` (`push`) passes on the merge commit SHA, tag `vX.Y.Z` on `main` and push the tag.
+3. Let `.github/workflows/release.yml` build the distribution, create the GitHub Release, and publish `ghcr.io/wangzitian0/infra2-canary-todo:vX.Y.Z` without manual release creation.

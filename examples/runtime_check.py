@@ -6,29 +6,26 @@ import asyncio
 import json
 import os
 
-from infra2_sdk.runtime import (
+from infra2_sdk.config import EnvironmentTier, resolve_tier
+from infra2_sdk.service import (
     Dependency,
     DependencyKind,
     DependencyManifest,
-    EnvironmentTier,
     ProbeResult,
-    check_health,
-    resolve_environment_tier,
+    evaluate_health,
+    probe_http,
 )
-from infra2_sdk.runtime.http import probe_http
-from infra2_sdk.runtime.otel import OtelSettings
+from infra2_sdk.telemetry import OtelSettings
 
-# This is application policy: name the dependency and the tiers that require it.
-# Keep this declaration in your app; the SDK owns validation and probe execution.
 DEPENDENCIES = DependencyManifest(
-    [
+    dependencies=(
         Dependency(
             name="catalog",
             kind=DependencyKind.CODE_DOMINANT,
             required_in=frozenset(EnvironmentTier),
             env_vars=frozenset({"CATALOG_HEALTH_URL"}),
-        )
-    ]
+        ),
+    )
 )
 
 
@@ -46,11 +43,11 @@ class CatalogCheck:
 
 async def main() -> int:
     try:
-        tier = resolve_environment_tier(os.environ.get("ENVIRONMENT", ""))
+        tier = resolve_tier(os.environ.get("ENVIRONMENT", ""))
         settings = OtelSettings.from_env(strict=True)
         url = os.environ.get("CATALOG_HEALTH_URL", "")
         checks: list[CatalogCheck] = [CatalogCheck(url)] if url else []
-        status_code, report = await check_health(
+        status_code, report = await evaluate_health(
             checks, manifest=DEPENDENCIES, tier=tier, timeout_seconds=5
         )
     except ValueError as exc:
