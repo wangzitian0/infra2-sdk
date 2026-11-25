@@ -17,8 +17,20 @@ backfill from the merged pull requests.
 - In preview mode, the `x-preview` override writes `export ENVIRONMENT="${ENV}"` as Compose text. Before, it was `$$ENV` and needed an `ENV` variable in the container.
 - The strict `init_service` error says `set ENVIRONMENT to a known tier` when the contract has no alias of `ENVIRONMENT`.
 - `docs/app-integration-contract.md` says that no deprecated alias remains.
+- `compile_compose` checks a Vault template `env "X"` read against the new fixed sidecar keys. `ENVIRONMENT` is a fixed key and `ENV` is not, so a template that reads only `env "ENV"` fails the compile. The preamble `{{- $env := env "ENVIRONMENT" -}}` passes, and so does `or (env "ENVIRONMENT") (env "ENV")`.
 
-**Upgrade order:** a container that has only `ENV` loses its tier with this version, and a Vault Agent renders `secret/data/<project>//<service>`. Deploy wangzitian0/infra2#1969 (each hand-written service gets `ENVIRONMENT` next to `ENV`) before a consumer locks this version.
+**Release class:** this change removes public runtime names, but it is a minor release under the README [Compatibility](README.md#compatibility) rule. infra2, finance_report and truealpha are the only consumers, and the census of their production and test code finds no read of `ENV`, `APP_ENV` or `IMAGE_TAG` through the SDK.
+
+**Upgrade order:** a container that has only `ENV` loses its tier with this version, and a Vault Agent renders `secret/data/<project>//<service>`. infra2 must set `ENVIRONMENT` in every container before a consumer locks this version. wangzitian0/infra2#1969 (merged) gives each hand-written service `ENVIRONMENT` next to `ENV`; deploy it first.
+
+## 4.7.0 - 2026-11-25
+
+Minor release: an x-infra2 stack can forward named host values into its Vault Agent sidecar.
+
+### Added (4.7.0)
+
+- `compile_compose` accepts `x-infra2.vault.env`, a list of host variable names. Each name compiles to `NAME: ${NAME}` in the `vault-agent` sidecar environment, after the fixed keys (wangzitian0/infra2#1822).
+- `compile_compose` raises when the Vault template reads `env "X"` and the sidecar does not get `X`. An `or (env "A") (env "B")` read needs one branch. A stack without `env` compiles to the same bytes as before.
 
 ## 4.6.0 - 2026-11-24
 
