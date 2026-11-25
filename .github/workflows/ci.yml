@@ -17,28 +17,28 @@ jobs:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
-      - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e '.[dev]'
-      - run: ruff check .
-      - run: ruff format --check .
-      - run: pytest --cov --cov-report=term-missing
-      - run: python -m build
+          enable-cache: true
+      - run: uv sync --frozen --extra dev
+      - if: matrix.python-version == '3.12'
+        run: uv run --no-sync ruff check .
+      - if: matrix.python-version == '3.12'
+        run: uv run --no-sync ruff format --check .
+      - run: uv run --no-sync pytest --cov --cov-report=term-missing
 
   package:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.11"
-          cache: pip
-      - run: python -m pip install build
-      - run: python -m build
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv build
       - uses: actions/upload-artifact@v4
         with:
           name: python-package
@@ -49,47 +49,56 @@ jobs:
     needs: package
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      matrix:
-        extra: [core, telemetry, http, fastapi, postgres, s3, llm, all]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.11"
-          cache: pip
+          enable-cache: true
       - uses: actions/download-artifact@v4
         with:
           name: python-package
           path: dist
-      - name: Smoke-test ${{ matrix.extra }} wheel install
+      - name: Smoke-test wheel across core and all extras
         run: |
-          python -m venv .wheel-smoke
           wheel="$(find dist -name '*.whl' -print -quit)"
-          if [ "${{ matrix.extra }}" = core ]; then
-            spec="$wheel"
-          else
-            spec="${wheel}[${{ matrix.extra }}]"
-          fi
-          .wheel-smoke/bin/python -m pip install "$spec"
-          .wheel-smoke/bin/python tests/wheel_smoke.py "${{ matrix.extra }}"
-          .wheel-smoke/bin/python -m pip check
+          for extra in core telemetry http fastapi postgres s3 llm all; do
+            venv=".wheel-smoke-${extra}"
+            uv venv "$venv"
+            if [ "$extra" = core ]; then
+              spec="$wheel"
+            else
+              spec="${wheel}[${extra}]"
+            fi
+            uv pip install --python "${venv}/bin/python" "$spec"
+            "${venv}/bin/python" tests/wheel_smoke.py "$extra"
+            uv pip check --python "${venv}/bin/python"
+            rm -rf "$venv"
+          done
 
   canary-todo:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
-          cache: pip
-      - run: python -m pip install -e '.[all,dev]'
+          enable-cache: true
+      - run: uv sync --frozen --extra all --extra dev
       - name: Canary Todo tests
-        run: pytest canary/todo/tests -q
+        run: uv run --no-sync pytest canary/todo/tests -q
+      - uses: docker/setup-buildx-action@v3
       - name: Build the Canary Todo image
-        run: docker build -f canary/todo/Dockerfile -t infra2-canary-todo:ci .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: canary/todo/Dockerfile
+          load: true
+          tags: infra2-canary-todo:local
+          cache-from: type=gha,scope=canary-todo
+          cache-to: type=gha,scope=canary-todo,mode=max
       - name: The image runs the SDK version of this commit
-        run: scripts/check_canary_image_sdk.sh infra2-canary-todo:ci
+        run: scripts/check_canary_image_sdk.sh infra2-canary-todo:local
       - name: The Canary runs without a platform
         run: scripts/check_canary_standalone.sh

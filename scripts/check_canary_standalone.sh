@@ -8,8 +8,10 @@ if [[ -d .venv/bin ]]; then
 fi
 
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  runtime=docker
   compose=(docker compose -f canary/todo/compose.yaml)
 elif command -v podman >/dev/null 2>&1; then
+  runtime=podman
   compose=(podman compose -f canary/todo/compose.yaml)
 else
   echo "neither a running docker daemon nor podman is available" >&2
@@ -19,7 +21,11 @@ fi
 body="$(mktemp)"
 trap 'rm -f "$body"; "${compose[@]}" down --volumes >/dev/null 2>&1 || true' EXIT
 
-"${compose[@]}" up --build -d
+if [[ "${COMPOSE_BUILD:-0}" != "1" ]] && "$runtime" image inspect infra2-canary-todo:local >/dev/null 2>&1; then
+  "${compose[@]}" up --no-build -d
+else
+  "${compose[@]}" up --build -d
+fi
 
 status=""
 code="000"
@@ -151,7 +157,7 @@ if [[ "$otlp_ok" != "true" ]]; then
 fi
 echo "standalone Canary OTLP export: $(curl -sS http://127.0.0.1:4318/stats)"
 
-# Fault injection: stop redis and wait past STATUS_CACHE_TTL_SECONDS (30s) until fail-closed 503.
+# Fault injection: stop redis and wait past STATUS_CACHE_TTL_SECONDS (2s in compose.yaml) until fail-closed 503.
 "${compose[@]}" stop redis >/dev/null
 fault_code="000"
 for _ in $(seq 1 15); do

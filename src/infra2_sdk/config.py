@@ -508,7 +508,7 @@ def validate_env(
         present = [
             (cand, val if fld.sensitive else val.strip())
             for cand in (fld.env, *fld.aliases)
-            if isinstance(val := environ.get(cand), str) and val.strip()
+            if isinstance(val := environ.get(cand), str) and (fld.empty_ok or val.strip())
         ]
         if len({v for _, v in present}) > 1:
             conflicts.append(f"{fld.env} ({', '.join(n for n, _ in present)})")

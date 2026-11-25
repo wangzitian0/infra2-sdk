@@ -208,3 +208,40 @@ def test_manifest_lifecycle_offline_checks_and_cli(
     with pytest.raises(ValueError, match="time zone"):
         parse_iso_utc("2026-11-25T10:00:00")
     assert json.loads(json_path.read_text(encoding="utf-8"))["source"] == "sample/app"
+
+
+def test_validate_env_allows_empty_string_for_empty_ok_injected_field() -> None:
+    manifest = config.EnvironmentManifest(
+        source="demo/empty-ok",
+        fields=(
+            config.EnvironmentField(
+                field="opt_endpoint",
+                env="OPT_ENDPOINT",
+                injected=True,
+                empty_ok=True,
+            ),
+            config.EnvironmentField(
+                field="req_dsn",
+                env="REQ_DSN",
+                injected=True,
+                empty_ok=False,
+            ),
+        ),
+    )
+
+    ok_env = {"OPT_ENDPOINT": "", "REQ_DSN": "postgresql://u:p@h/db"}
+    res_ok = config.validate_env(manifest, ok_env, require_injected=True)
+    assert res_ok.ok is True
+    assert res_ok.missing == ()
+    assert res_ok.conflicts == ()
+    config.assert_env(manifest, environ=ok_env, require_injected=True)
+
+    res_absent = config.validate_env(
+        manifest, {"REQ_DSN": "postgresql://u:p@h/db"}, require_injected=True
+    )
+    assert res_absent.ok is False and res_absent.missing == ("OPT_ENDPOINT",)
+
+    res_non_empty_rejected = config.validate_env(
+        manifest, {"OPT_ENDPOINT": "", "REQ_DSN": ""}, require_injected=True
+    )
+    assert res_non_empty_rejected.ok is False and res_non_empty_rejected.missing == ("REQ_DSN",)
