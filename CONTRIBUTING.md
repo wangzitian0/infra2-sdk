@@ -9,8 +9,8 @@ contract; `pyproject.toml` defines the release version and dependency surface.
   need the same semantics. Imports must not perform I/O or configure global providers.
 - Applications own domain policy, dependency requirements and settings models. Infra2
   owns deployment orchestration and when credentials or infrastructure are mutated.
-- OMCA owns coding-agent observation, profiles and isolated runtime generations.
-  Agent workflow policy and repository management do not belong in this runtime SDK.
+- Coding-agent tooling, agent workflow policy and repository management do not belong
+  in this runtime SDK.
 - Consumers install an exact released artifact; never depend on a sibling checkout.
 
 ## Changes and proof
