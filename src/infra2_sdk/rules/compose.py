@@ -69,7 +69,7 @@ PREVIEW_DB_IMAGE = "postgres:16-alpine"
 _PREVIEW_DB = "db"
 _PREVIEW_DB_VOLUME = "preview_db"
 _PREVIEW_DB_URL_RE = re.compile(r"^postgresql(\+[a-z0-9]+)?$")
-_XINFRA2_VAULT_KEYS = frozenset({"name"})
+_XINFRA2_VAULT_KEYS = frozenset({"name", "env"})
 _SERVICE_XVAULT_KEYS = frozenset({"max_wait_seconds"})
 _ROUTES_KEYS = frozenset({"service", "port", "routes"})
 _ROUTE_KEYS = frozenset({"name", "rule", "priority", "tls", "strip_prefix", "sso"})
@@ -186,7 +186,70 @@ def _reject_unknown(block: dict[str, Any], allowed: frozenset[str], where: str) 
         raise ComposeCompileError(f"{where}: unknown key(s) {unknown}; allowed: {sorted(allowed)}")
 
 
-def _vault_sidecar(name: str, template: str) -> dict[str, Any]:
+def _sidecar_env(template: str, forwarded: tuple[str, ...]) -> dict[str, str]:
+    """The sidecar environment: the fixed keys, then each `x-infra2.vault.env` name."""
+    return {
+        "VAULT_ADDR": "${VAULT_ADDR}",
+        "VAULT_ROLE_ID": "${VAULT_ROLE_ID:-}",
+        "VAULT_SECRET_ID": "${VAULT_SECRET_ID:-}",
+        "ENV": "${ENV}",
+        # A template reads it with `env "ENV_SUFFIX"`, for example to build DATABASE_URL.
+        "ENV_SUFFIX": "${ENV_SUFFIX:-}",
+        _SHA_KEY: _SHA_REF,
+        **{key: f"${{{key}}}" for key in forwarded},
+        "VAULT_AGENT_HCL": _dollar(_VAULT_AGENT_HCL),
+        "VAULT_SECRETS_TEMPLATE": _dollar(template),
+    }
+
+
+_FIXED_SIDECAR_ENV = frozenset(_sidecar_env("", ()))
+# A Go template `or (env "A") (env "B")` passes when one branch is in the sidecar env.
+_OR_ENV_GROUP = re.compile(r'\bor((?:\s+\(env "[A-Za-z0-9_]+"\)){2,})')
+_TEMPLATE_ENV_READ = re.compile(r'\benv "([A-Za-z0-9_]+)"')
+
+
+def _vault_env_names(value: object) -> tuple[str, ...]:
+    """Validate `x-infra2.vault.env`: a non-empty list of unique UPPER_CASE names."""
+    where = "x-infra2.vault.env"
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not value:
+        raise ComposeCompileError(f"{where} must be a non-empty list of variable names")
+    seen: set[str] = set()
+    for index, key in enumerate(value):
+        if not isinstance(key, str) or not _ENV_NAME_RE.fullmatch(key):
+            raise ComposeCompileError(
+                f"{where}[{index}] {key!r} must be an UPPER_CASE variable name"
+            )
+        if key in _FIXED_SIDECAR_ENV:
+            raise ComposeCompileError(
+                f"{where}[{index}] {key!r} is a fixed sidecar key; remove it from the list"
+            )
+        if key in seen:
+            raise ComposeCompileError(f"{where}[{index}] {key!r} is listed twice")
+        seen.add(key)
+    return tuple(value)
+
+
+def _missing_template_env(template: str, present: frozenset[str]) -> list[str]:
+    """The `env "X"` reads of the template that the sidecar environment does not supply."""
+    missing = []
+    for match in _OR_ENV_GROUP.finditer(template):
+        branches = _TEMPLATE_ENV_READ.findall(match[1])
+        if not present.intersection(branches):
+            missing.append("|".join(branches))
+    remainder = _OR_ENV_GROUP.sub("", template)
+    return missing + sorted(set(_TEMPLATE_ENV_READ.findall(remainder)) - present)
+
+
+def _vault_sidecar(name: str, template: str, forwarded: tuple[str, ...] = ()) -> dict[str, Any]:
+    environment = _sidecar_env(template, forwarded)
+    missing = _missing_template_env(template, frozenset(environment))
+    if missing:
+        raise ComposeCompileError(
+            f"vault_template reads env {missing}, which the sidecar does not get; "
+            "add each name to x-infra2.vault.env"
+        )
     return {
         "init": True,
         "image": _VAULT_IMAGE,
@@ -195,17 +258,7 @@ def _vault_sidecar(name: str, template: str) -> dict[str, Any]:
         "mem_limit": "128m",
         "cpu_shares": 256,
         "entrypoint": ["sh", "-c", _dollar(_SIDECAR_SCRIPT)],
-        "environment": {
-            "VAULT_ADDR": "${VAULT_ADDR}",
-            "VAULT_ROLE_ID": "${VAULT_ROLE_ID:-}",
-            "VAULT_SECRET_ID": "${VAULT_SECRET_ID:-}",
-            "ENV": "${ENV}",
-            # A template reads it with `env "ENV_SUFFIX"`, for example to build DATABASE_URL.
-            "ENV_SUFFIX": "${ENV_SUFFIX:-}",
-            _SHA_KEY: _SHA_REF,
-            "VAULT_AGENT_HCL": _dollar(_VAULT_AGENT_HCL),
-            "VAULT_SECRETS_TEMPLATE": _dollar(template),
-        },
+        "environment": environment,
         "healthcheck": {
             "test": ["CMD-SHELL", _dollar(_SIDECAR_HEALTHCHECK)],
             "interval": "30s",
@@ -519,6 +572,7 @@ def _compile_mapping(
     if vault_cfg is not None:
         vault_cfg = _require_mapping(vault_cfg, "x-infra2.vault")
         _reject_unknown(vault_cfg, _XINFRA2_VAULT_KEYS, "x-infra2.vault")
+    forwarded: tuple[str, ...] = ()
     users = [n for n, spec in services.items() if isinstance(spec, dict) and "x-vault" in spec]
     if users and vault_cfg is None:
         raise ComposeCompileError(f"x-vault used by {users} but x-infra2.vault is missing")
@@ -530,6 +584,7 @@ def _compile_mapping(
             raise ComposeCompileError("x-infra2.vault is set: pass a non-empty vault_template")
         if _VAULT_SIDECAR in services:
             raise ComposeCompileError(f"service name {_VAULT_SIDECAR!r} is reserved for x-vault")
+        forwarded = _vault_env_names(vault_cfg.get("env"))
     preview_cfg = infra2.get("preview")
     db_container = ""
     if preview_cfg is not None:
@@ -538,7 +593,7 @@ def _compile_mapping(
         db_container = _text(preview_cfg.get("db_container"), "x-infra2.preview.db_container")
     out_services: dict[str, Any] = {}
     if vault_cfg is not None:
-        out_services[_VAULT_SIDECAR] = _vault_sidecar(vault_cfg["name"], vault_template)
+        out_services[_VAULT_SIDECAR] = _vault_sidecar(vault_cfg["name"], vault_template, forwarded)
     removed: list[str] = []
     wants_db = False
     for svc_name, spec in services.items():
@@ -635,6 +690,9 @@ def compile_compose(
     the same bytes for the same input. It applies the baseline service defaults and expands
     `x-vault` into one inline `vault-agent` sidecar, `x-routes` into Traefik labels and
     `x-capabilities` (`s3`, `openpanel`, `otel`, `browser_otel`) into environment blocks.
+    `x-infra2.vault.env` lists host variable names; each one compiles to `NAME: ${NAME}` in
+    the sidecar environment. Each `env "X"` that `vault_template` reads must be a fixed
+    sidecar key or a listed name, else the compile raises.
     `vault_template` holds the rendered Vault Agent template text. `mode="preview"` applies
     each service `x-preview` block (`remove`, `database_url`, `environment`) and adds one
     `db` service of `PREVIEW_DB_IMAGE`; `mode="deploy"` drops those blocks. Any unknown

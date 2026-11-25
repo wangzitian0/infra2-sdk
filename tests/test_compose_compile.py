@@ -867,3 +867,119 @@ def test_a_database_url_needs_the_db_container_and_x_vault() -> None:
     del source["services"]["backend"]["x-vault"]
     with pytest.raises(ComposeCompileError, match=r"it needs x-vault"):
         compile_compose(source, vault_template="T\n", mode="preview")
+
+
+# --- x-infra2.vault.env forwards named host values to the sidecar (infra2#1822) -----------
+
+# The data_engine template of wangzitian0/infra2 truealpha/truealpha/20.data_engine/secrets.ctmpl.
+_PORT_TEMPLATE = (
+    '{{- $env := or (env "ENVIRONMENT") (env "ENV") -}}\n'
+    '{{- with secret (printf "secret/data/truealpha/%s/postgres" $env) }}\n'
+    'DATABASE_URL={{ printf "%q" (printf "postgresql://postgres:%s@127.0.0.1:%s/truealpha"'
+    ' .Data.data.POSTGRES_PASSWORD (env "TA_POSTGRES_PORT")) }}\n'
+    "{{- end }}\n"
+)
+_FIXED_ENV = [
+    "VAULT_ADDR",
+    "VAULT_ROLE_ID",
+    "VAULT_SECRET_ID",
+    "ENV",
+    "ENV_SUFFIX",
+    "CONFIGURATION_SHA256",
+]
+
+
+def _sidecar_env_of(env: Any, template: str = "T") -> dict[str, Any]:
+    source = _with(["x-infra2", "vault", "env"], env)
+    return yaml.safe_load(compile_compose(source, vault_template=template))["services"][
+        "vault-agent"
+    ]["environment"]
+
+
+def test_vault_env_names_compile_after_the_fixed_keys_in_the_given_order() -> None:
+    env = _sidecar_env_of(["TA_POSTGRES_PORT", "B_PORT", "A_PORT"], _PORT_TEMPLATE)
+    assert list(env) == [
+        *_FIXED_ENV,
+        "TA_POSTGRES_PORT",
+        "B_PORT",
+        "A_PORT",
+        "VAULT_AGENT_HCL",
+        "VAULT_SECRETS_TEMPLATE",
+    ]
+    assert env["TA_POSTGRES_PORT"] == "${TA_POSTGRES_PORT}"
+    assert env["B_PORT"] == "${B_PORT}"
+    assert env["A_PORT"] == "${A_PORT}"
+
+
+def test_vault_env_names_reach_only_the_sidecar() -> None:
+    doc = yaml.safe_load(
+        compile_compose(
+            _with(["x-infra2", "vault", "env"], ["TA_POSTGRES_PORT"]), vault_template="T"
+        )
+    )
+    for name in ("api", "worker", "web"):
+        assert "TA_POSTGRES_PORT" not in doc["services"][name].get("environment", {})
+
+
+def test_a_stack_without_vault_env_compiles_to_the_bytes_of_today() -> None:
+    # The golden file predates `x-infra2.vault.env`; the todo source has no `env` key.
+    assert "env" not in yaml.safe_load(_read("todo.x-infra2.compose.yaml"))["x-infra2"]["vault"]
+    text = compile_compose(
+        _read("todo.x-infra2.compose.yaml"), vault_template=_body("todo.secrets.ctmpl")
+    )
+    assert text == _read("todo.compiled.compose.yaml")
+    env = _compiled_todo()["services"]["vault-agent"]["environment"]
+    assert list(env) == [*_FIXED_ENV, "VAULT_AGENT_HCL", "VAULT_SECRETS_TEMPLATE"]
+
+
+@pytest.mark.parametrize(
+    ("env", "message"),
+    [
+        ("TA_POSTGRES_PORT", r"x-infra2.vault.env must be a non-empty list of variable names"),
+        ({"TA_POSTGRES_PORT": 1}, r"x-infra2.vault.env must be a non-empty list"),
+        ([], r"x-infra2.vault.env must be a non-empty list"),
+        (["ta_port"], r"x-infra2.vault.env\[0\] 'ta_port' must be an UPPER_CASE variable name"),
+        (["OK", "1PORT"], r"x-infra2.vault.env\[1\] '1PORT' must be an UPPER_CASE"),
+        (["PORT-A"], r"x-infra2.vault.env\[0\] 'PORT-A' must be an UPPER_CASE"),
+        (["PORT\n"], r"x-infra2.vault.env\[0\] 'PORT\\n' must be an UPPER_CASE"),
+        ([5432], r"x-infra2.vault.env\[0\] 5432 must be an UPPER_CASE"),
+        (["A", "B", "A"], r"x-infra2.vault.env\[2\] 'A' is listed twice"),
+        *[
+            ([key], rf"x-infra2.vault.env\[0\] '{key}' is a fixed sidecar key")
+            for key in [*_FIXED_ENV, "VAULT_AGENT_HCL", "VAULT_SECRETS_TEMPLATE"]
+        ],
+    ],
+)
+def test_invalid_vault_env_fails_closed_and_names_the_entry(env: Any, message: str) -> None:
+    with pytest.raises(ComposeCompileError, match=message):
+        _sidecar_env_of(env)
+
+
+def test_other_vault_keys_still_fail_next_to_env() -> None:
+    source = _with(["x-infra2", "vault", "env"], ["TA_POSTGRES_PORT"])
+    source["x-infra2"]["vault"]["environment"] = {"A": "1"}
+    with pytest.raises(ComposeCompileError, match=r"unknown key\(s\) \['environment'\]"):
+        compile_compose(source, vault_template="T")
+
+
+def test_a_template_env_read_that_the_sidecar_does_not_get_fails_closed() -> None:
+    with pytest.raises(
+        ComposeCompileError,
+        match=r"vault_template reads env \['TA_POSTGRES_PORT'\].*x-infra2.vault.env",
+    ):
+        compile_compose(_vault_source(), vault_template=_PORT_TEMPLATE)
+    with pytest.raises(ComposeCompileError, match=r"reads env \['TA_POSTGRES_PORT'\]"):
+        _sidecar_env_of(["OTHER_PORT"], _PORT_TEMPLATE)
+
+
+def test_an_or_fallback_passes_when_one_branch_is_in_the_sidecar_env() -> None:
+    # `or (env "ENVIRONMENT") (env "ENV")` passes: ENV is a fixed key.
+    compile_compose(_vault_source(), vault_template='{{ or (env "ENVIRONMENT") (env "ENV") }}\n')
+    with pytest.raises(ComposeCompileError, match=r"reads env \['A_ONE\|B_TWO'\]"):
+        compile_compose(_vault_source(), vault_template='{{ or (env "A_ONE") (env "B_TWO") }}\n')
+    _sidecar_env_of(["B_TWO"], '{{ or (env "A_ONE") (env "B_TWO") }}\n')
+
+
+def test_each_fixed_key_satisfies_a_template_read() -> None:
+    template = "".join(f'{{{{ env "{key}" }}}}\n' for key in _FIXED_ENV)
+    compile_compose(_vault_source(), vault_template=template)
