@@ -465,3 +465,21 @@ async def test_probe_orchestrator(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.name == "prefect"
     assert result.status == DependencyStatus.PRESENT
     assert "HTTP 200" in result.detail
+
+
+def test_sync_semaphores_use_weak_loop_keys() -> None:
+    import gc
+    import weakref
+
+    from infra2_sdk.runtime import health as health_mod
+
+    assert isinstance(health_mod._SYNC_SEMAPHORES, weakref.WeakKeyDictionary)
+    refs: list[weakref.ref[asyncio.AbstractEventLoop]] = []
+
+    async def _probe() -> None:
+        refs.append(weakref.ref(asyncio.get_running_loop()))
+        await _run_sync_probe(lambda: 1, name="weak")
+
+    asyncio.run(_probe())
+    gc.collect()
+    assert refs[0]() is None

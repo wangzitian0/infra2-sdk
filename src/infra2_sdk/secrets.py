@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets as _secrets
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
@@ -537,15 +538,22 @@ def render_agent_policy(
     return "\n\n".join(blocks) + "\n"
 
 
+_COMPOSED_TOKEN_RE = re.compile(r"\{(?:env:([A-Z][A-Z0-9_]*)|([^{}]+))\}")
+
+
 def _render_line(f: EnvironmentField, *, key: str) -> str:
     if f.composed_from:
-        fmt, args = f.composed_from, []
-        for n in f.composed_keys:
-            fmt = fmt.replace(f"{{{n}}}", "%s")
-            args.append(f".Data.data.{n}")
-        for n in f.composed_env:
-            fmt = fmt.replace(f"{{env:{n}}}", "%s")
-            args.append(f'(env "{n}")')
+        args: list[str] = []
+
+        def _replace(match: re.Match[str]) -> str:
+            env_name, secret_name = match.group(1), match.group(2)
+            if env_name is not None:
+                args.append(f'(env "{env_name}")')
+            else:
+                args.append(f".Data.data.{secret_name}")
+            return "%s"
+
+        fmt = _COMPOSED_TOKEN_RE.sub(_replace, f.composed_from)
         return f'{f.env}={{{{ printf "%q" (printf "{fmt}" {" ".join(args)}) }}}}'
     if f.empty_ok:
         return (

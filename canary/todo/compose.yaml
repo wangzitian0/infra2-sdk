@@ -43,7 +43,7 @@ services:
       retries: 20
 
   s3-init:
-    # One shot: create the bucket with the S3 client of the app image, then exit.
+    # One shot: create the bucket with the SDK helper in the app image, then exit.
     build:
       context: ../..
       dockerfile: canary/todo/Dockerfile
@@ -62,15 +62,63 @@ services:
       - python
       - -c
       - |
-        import os, boto3
-        s3 = boto3.client(
-            "s3",
-            endpoint_url=os.environ["S3_ENDPOINT"],
-            aws_access_key_id=os.environ["S3_ACCESS_KEY"],
-            aws_secret_access_key=os.environ["S3_SECRET_KEY"],
-            region_name="us-east-1",
+        import os
+        from infra2_sdk.runtime.s3 import S3Settings, ensure_bucket
+        ensure_bucket(
+            S3Settings(
+                bucket=os.environ["S3_BUCKET"],
+                endpoint_url=os.environ["S3_ENDPOINT"],
+                access_key_id=os.environ["S3_ACCESS_KEY"],
+                secret_access_key=os.environ["S3_SECRET_KEY"],
+                region_name="us-east-1",
+                addressing_style="path",
+            ),
+            allow_create=True,
         )
-        s3.create_bucket(Bucket=os.environ["S3_BUCKET"])
+
+  otlp-stub:
+    image: python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+    restart: "no"
+    ports:
+      - "127.0.0.1:4318:4318"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4318/stats', timeout=2)"
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    command:
+      - python
+      - -c
+      - |
+        import http.server, json
+        counts = {"traces": 0, "metrics": 0, "logs": 0}
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a): return
+            def do_GET(self):
+                if self.path == "/stats":
+                    body = json.dumps(counts).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                else:
+                    self.send_response(404); self.end_headers()
+            def do_POST(self):
+                n = int(self.headers.get("Content-Length") or 0)
+                if n: self.rfile.read(n)
+                for k, p in (("traces", "/v1/traces"), ("metrics", "/v1/metrics"), ("logs", "/v1/logs")):
+                    if self.path.startswith(p): counts[k] += 1
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                self.wfile.write(b"{}")
+        http.server.ThreadingHTTPServer(("0.0.0.0", 4318), H).serve_forever()
 
   db-init:
     # One shot: create the canary enum type checked by schema_check, then exit.
@@ -102,15 +150,22 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      otlp-stub:
+        condition: service_healthy
       s3-init:
         condition: service_completed_successfully
       db-init:
         condition: service_completed_successfully
     environment:
       <<: *s3
+      ENVIRONMENT: local_test
+      SERVICE_VERSION: local-standalone
       DATABASE_URL: postgresql://todo:local-test-postgres@postgres:5432/todo
-      REDIS_HOST: redis
-      REDIS_PASSWORD: local-test-redis
+      REDIS_URL: redis://:local-test-redis@redis:6379/0
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otlp-stub:4318
+      OTEL_SERVICE_NAME: platform-todo
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment.name=local_test,infra.service.id=platform/todo,service.version=local-standalone,infra.iac.ref=0000000000000000000000000000000000000000
+      OTEL_METRIC_EXPORT_INTERVAL: "1000"
     ports:
       - "127.0.0.1:8000:8000"
     healthcheck:
@@ -118,7 +173,7 @@ services:
         - CMD
         - python
         - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=3)"
       interval: 3s
       timeout: 5s
       retries: 20

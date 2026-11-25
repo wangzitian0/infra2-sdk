@@ -18,9 +18,7 @@ Source: `canary/todo`
 
 | Variable | Required | Sensitive | Source | Description |
 |---|---|---|---|---|
-| `REDIS_HOST` | no | no | code | Redis host of the Redis check. |
-| `REDIS_PORT` | no | no | code | Redis port of the Redis check. |
-| `REDIS_PASSWORD` | no | yes | runtime | Redis password. The Redis check is unconfigured without it. |
+| `REDIS_URL` | no | yes | runtime | Redis connection URL with credentials. The Redis check is unconfigured without it. |
 
 ## s3
 
@@ -56,6 +54,9 @@ Source: `canary/todo`
 | Variable | Required | Sensitive | Source | Description |
 |---|---|---|---|---|
 | `ENVIRONMENT` | no | no | code | Environment tier. The SDK reads it. |
+| `SERVICE_VERSION` | no | no | code | Deployed service version. The SDK reads it. |
+| `IMAGE_DIGEST` | no | no | code | Deployed immutable image digest. The SDK reads it. |
+| `RELEASE_ID` | no | no | code | Release identifier. The SDK reads it. |
 | `CONFIGURATION_SHA256` | no | no | code | Configuration hash of the deployment. The SDK reads it. |
 | `GIT_COMMIT_SHA` | no | no | code | Commit of the deployment. The SDK reads it. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | no | no | code | OTLP endpoint. Telemetry export is off without it. |
@@ -65,4 +66,3 @@ Source: `canary/todo`
 | `LLM_BASE_URL` | no | no | code | LLM base URL. The SDK reads it. |
 | `LLM_SMALL_MODEL` | no | no | code | LLM model of the todo summary. The SDK reads it. |
 | `LLM_API_KEY` | no | yes | human | LLM API key. The todo summary is unconfigured without it. |
-

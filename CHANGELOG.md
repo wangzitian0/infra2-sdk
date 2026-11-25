@@ -4,6 +4,22 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 4.9.1 - 2026-11-25
+
+Patch release: add stdlib RESP Redis probe, harden Phase 1A runtime/rules contracts, and align Canary Todo fail-closed readiness and standalone OTLP/fault verification.
+
+### Added (4.9.1)
+
+- `infra2_sdk.runtime.redis`: `RedisSettings`, `probe_redis` (`AUTH`/`PING` and optional `SETEX`/`GET`/`DEL` write roundtrip), and `redact_redis_error`.
+- `data/shared_env.yaml` and `docs/app-integration-contract.md`: register `S3_PUBLIC_ENDPOINT`, `NEXT_PUBLIC_DEPLOYMENT_ENVIRONMENT`, and `NEXT_PUBLIC_GIT_SHA`.
+- `canary/todo`: add `SERVICE_VERSION`, `IMAGE_DIGEST`, and `RELEASE_ID` to `CanarySettings`, add a local `otlp-stub` service in `compose.yaml`, and upgrade `scripts/check_canary_standalone.sh` to verify OTLP signals, CRUD, worker `/readyz`, fail-closed fault injection (`503 -> 200`), and offline compose/hook gates.
+
+### Changed (4.9.1)
+
+- `canary/todo/app.py`: replace hand-rolled Redis sockets with `infra2_sdk.runtime.redis.probe_redis`, integrate `probe_s3` in `_probe_s3`, wire `CANARY_DEPENDENCY_MANIFEST` multi-dependency checks into `init_service`, cache OTel meter instruments per provider, ensure `canary_todo_capability` enum column on `todos`, and make `/api/health` fail closed (`503` on unhealthy gating checks).
+- `canary/todo/canary_settings.py` and `worker.py`: converge Redis config on `REDIS_URL`, default worker probe to `/readyz`, and align `ui.py` capability value with `canary_todo_capability`.
+- Harden `rules.compose` (`x-vault: null`, `.fullmatch()`, explicit `browser_otel`), `secrets._render_line` placeholder order, `manifests` schema version & `--run-cell` checks, `runtime.health._SYNC_SEMAPHORES` (`WeakKeyDictionary`), `runtime.schema_check` (`psycopg2` cursor & error redaction), `runtime.config_schema` markdown trailing newline, `refs` PR refs, and cached `ci.load_delivery_stages()`.
+
 ## 4.9.0 - 2026-11-25
 
 Minor release: the pre-deploy schema check accepts a pending migration that drops tables and their enum types (finance_report #3227).

@@ -83,7 +83,13 @@ def run_once(
             status_code = int(response.status_code)
             payload = response.json() if hasattr(response, "json") else {}
             service = payload.get("service") if isinstance(payload, Mapping) else None
-            ok = status_code == 200 and isinstance(payload, Mapping) and payload.get("ok") is True
+            ok = (
+                status_code == 200
+                and isinstance(payload, Mapping)
+                and (
+                    payload.get("ok") is True or payload.get("status") in {"ready", "healthy", "ok"}
+                )
+            )
             detail = (
                 f"health ok (service={service or 'unknown'})"
                 if ok
@@ -123,7 +129,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--health-url",
         default="",
-        help="Target /api/health URL. Defaults to http://127.0.0.1:<PORT>/api/health.",
+        help="Target /readyz URL. Defaults to http://127.0.0.1:<PORT>/readyz.",
     )
     parser.add_argument(
         "--service-name",
@@ -151,7 +157,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         require_issued_identity=not args.no_require_issued_identity,
     )
     health_url = args.health_url.strip() or (
-        f"http://127.0.0.1:{CanarySettings.from_environ(os.environ).port}/api/health"
+        f"http://127.0.0.1:{CanarySettings.from_environ(os.environ).port}/readyz"
     )
     if args.once:
         result = run_once(health_url=health_url)

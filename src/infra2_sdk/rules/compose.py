@@ -411,7 +411,7 @@ def _flag(options: dict[str, Any], key: str, where: str) -> bool:
 
 def _env_name(options: dict[str, Any], key: str, default: str, where: str) -> str:
     value = options.get(key, default)
-    if not isinstance(value, str) or not _ENV_NAME_RE.match(value):
+    if not isinstance(value, str) or not _ENV_NAME_RE.fullmatch(value):
         raise ComposeCompileError(f"{where}.{key} must be an UPPER_CASE variable name")
     return value
 
@@ -451,11 +451,15 @@ def _capability_env(name: str, options: dict[str, Any], where: str) -> dict[str,
             "OTEL_SERVICE_NAME": f"${{{name_var}:-{service_name}}}",
             "OTEL_RESOURCE_ATTRIBUTES": f"${{{attrs_var}:-}}",
         }
-    return {
-        "NEXT_PUBLIC_OTEL_EXPORTER_OTLP_ENDPOINT": "${NEXT_PUBLIC_OTEL_EXPORTER_OTLP_ENDPOINT:-}",
-        "NEXT_PUBLIC_DEPLOYMENT_ENVIRONMENT": "${ENV}",
-        "NEXT_PUBLIC_GIT_SHA": "${GIT_COMMIT_SHA:-unknown}",
-    }
+    if name == "browser_otel":
+        return {
+            "NEXT_PUBLIC_OTEL_EXPORTER_OTLP_ENDPOINT": (
+                "${NEXT_PUBLIC_OTEL_EXPORTER_OTLP_ENDPOINT:-}"
+            ),
+            "NEXT_PUBLIC_DEPLOYMENT_ENVIRONMENT": "${ENV}",
+            "NEXT_PUBLIC_GIT_SHA": "${GIT_COMMIT_SHA:-unknown}",
+        }
+    raise ComposeCompileError(f"{where}: unknown capability {name!r}")
 
 
 def _apply_capabilities(spec: dict[str, Any], capabilities: object, where: str) -> None:
@@ -502,7 +506,9 @@ def _preview_options(spec: dict[str, Any], where: str) -> dict[str, Any]:
     for key in ("remove", "environment"):
         _flag(options, key, f"{where}.x-preview")
     scheme = options.get("database_url")
-    if scheme is not None and (not isinstance(scheme, str) or not _PREVIEW_DB_URL_RE.match(scheme)):
+    if scheme is not None and (
+        not isinstance(scheme, str) or not _PREVIEW_DB_URL_RE.fullmatch(scheme)
+    ):
         raise ComposeCompileError(
             f"{where}.x-preview.database_url must be a postgresql URL scheme, "
             "for example 'postgresql' or 'postgresql+asyncpg'"
@@ -615,11 +621,12 @@ def _compile_mapping(
             removed.append(svc_name)
             continue
         overrides = _preview_overrides(preview, db_container) if mode == "preview" else ""
-        options = spec.pop("x-vault", None)
-        if options is not None:
-            _wrap_vault_service(
-                spec, _require_mapping(options, f"{where}.x-vault"), where, overrides
+        if "x-vault" in spec:
+            raw_vault = spec.pop("x-vault")
+            vault_opts = (
+                {} if raw_vault is None else _require_mapping(raw_vault, f"{where}.x-vault")
             )
+            _wrap_vault_service(spec, vault_opts, where, overrides)
         if mode == "preview" and preview.get("database_url") is not None:
             depends = spec.get("depends_on", [])
             if isinstance(depends, list):
@@ -728,14 +735,8 @@ class _ComposeReport:
 
 
 def _inspect_service_resource_limits(
-    services: Mapping[str, Any] | str | Path,
+    services: Mapping[str, Any],
 ) -> tuple[list[str], list[str]]:
-    if isinstance(services, (str, Path)):
-        report = inspect_compose(services)
-        if report.errors:
-            raise ValueError(f"Failed to inspect compose: {'; '.join(report.errors)}")
-        return list(report.compliant_services), list(report.unlimited_services)
-
     if (
         isinstance(services, Mapping)
         and "services" in services

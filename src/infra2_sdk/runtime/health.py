@@ -13,6 +13,7 @@ from enum import StrEnum
 from functools import partial
 from threading import Thread
 from typing import Any, Protocol, runtime_checkable
+from weakref import WeakKeyDictionary
 
 from infra2_sdk._wire import parse_contract_version, parse_string, require_contract_version
 from infra2_sdk.runtime.environment import EnvironmentTier, resolve_environment_tier
@@ -232,7 +233,9 @@ async def run_probes(
 
 
 _MAX_CONCURRENT_SYNC_PROBES = 16
-_SYNC_SEMAPHORES: dict[asyncio.AbstractEventLoop, asyncio.Semaphore] = {}
+_SYNC_SEMAPHORES: WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore] = (
+    WeakKeyDictionary()
+)
 
 
 def _get_sync_probe_semaphore() -> asyncio.Semaphore:

@@ -606,3 +606,38 @@ def test_vault_backend_replace_removes_keys_the_document_no_longer_has() -> None
 
     quiet = VaultKvBackend("https://vault.test", token="t", transport=unchanged)
     assert quiet.replace("p/e/s", {"KEEP": "1"}).changed == ()
+
+
+def test_render_agent_template_preserves_composed_placeholder_order() -> None:
+    mf = EnvironmentManifest(
+        source="redis.Settings",
+        fields=(
+            EnvironmentField(
+                "redis_url",
+                "REDIS_URL",
+                source="runtime",
+                sensitive=True,
+                provided_by="platform/redis:password",
+                composed_from="redis://:{password}@platform-redis{env:ENV_SUFFIX}:6379/0",
+            ),
+            EnvironmentField(
+                "alt_url",
+                "ALT_URL",
+                source="runtime",
+                sensitive=True,
+                provided_by="platform/redis:password",
+                composed_from="https://{env:HOST_PREFIX}.example/{password}",
+            ),
+        ),
+    )
+    rendered = render_agent_template(mf, project="platform", service="todo")
+    expected_redis = (
+        'REDIS_URL={{ printf "%q" (printf "redis://:%s@platform-redis%s:6379/0" '
+        '.Data.data.password (env "ENV_SUFFIX")) }}'
+    )
+    expected_alt = (
+        'ALT_URL={{ printf "%q" (printf "https://%s.example/%s" '
+        '(env "HOST_PREFIX") .Data.data.password) }}'
+    )
+    assert expected_redis in rendered
+    assert expected_alt in rendered

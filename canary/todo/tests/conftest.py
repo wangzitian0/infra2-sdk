@@ -45,7 +45,7 @@ def _no_ambient_telemetry_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 # The addresses a deployment gives the Canary. The app has no default for them.
 DEPLOYMENT_ADDRESSES = {
-    "REDIS_HOST": "platform-redis",
+    "REDIS_URL": "redis://platform-redis:6379/0",
     "SIGNOZ_OTEL_COLLECTOR": "http://platform-signoz-otel-collector:13133",
     "OPENPANEL_API_URL": "http://platform-openpanel-api:3000/healthcheck",
     "AUTHENTIK_ENDPOINT": "http://platform-authentik-server:9000/-/health/live/",
@@ -91,6 +91,8 @@ class FakeTodoPgConnection:
         normalized = " ".join(sql.split())
         if normalized.startswith("SELECT to_regclass"):
             return FakeTodoCursor([("todos" if self._store.table_created else None,)])
+        if normalized.startswith("DO $do$"):
+            return FakeTodoCursor()
         if normalized.startswith("CREATE TABLE IF NOT EXISTS todos"):
             self._store.table_created = True
             return FakeTodoCursor()

@@ -68,10 +68,12 @@ def test_sdk_source_byte_budget() -> None:
     # flagged, and the preview override became Compose text (infra2#1823 N1).
     # 4.8.1 measured 413,126 B after removing `require_httpx` and `extra_keys`, delegating
     # `libpq_url` to `_normalize_dsn`, and adding `reject_unknown` to `_wire.__all__`.
-    # Unreleased measured 420,246 B after `cover_with_dropped_tables` and the recursive
-    # `fetch_db_enum_tables` query were added (finance_report #3227).
+    # 4.9.0 / Unreleased measured 420,246 B after `cover_with_dropped_tables` and the
+    # recursive `fetch_db_enum_tables` query were added (finance_report #3227).
+    # 4.9.1 measured 428,973 B after adding `infra2_sdk.runtime.redis` (stdlib RESP probe)
+    # and hardening Phase 1A adapters.
     # A new feature raises this cap with a comment; a removal lowers it.
-    assert 150_000 <= total <= 420_300, f"src/infra2_sdk byte budget drifted: {total} B"
+    assert 150_000 <= total <= 429_100, f"src/infra2_sdk byte budget drifted: {total} B"
 
 
 def test_init_service_multi_checks_and_manifest(monkeypatch: pytest.MonkeyPatch) -> None:

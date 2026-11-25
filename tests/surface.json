@@ -68,6 +68,7 @@
     "llm": "consumer: finance_report",
     "otel": "consumer: canary_todo, finance_report, truealpha",
     "postgres": "consumer: infra2, truealpha",
+    "redis": "consumer: canary_todo",
     "s3": "consumer: finance_report, infra2, truealpha",
     "schema_check": "consumer: infra2",
     "EnvironmentTier": "consumer: truealpha",
@@ -123,6 +124,9 @@
     "schema_sha256": "consumer: canary_todo",
     "vcr_llm_config": "documented: README section Core runtime entrypoints",
     "request_with_retry": "consumer: canary_todo, truealpha",
-    "probe_orchestrator": "consumer: finance_report, truealpha"
+    "probe_orchestrator": "consumer: finance_report, truealpha",
+    "RedisSettings": "consumer: canary_todo",
+    "probe_redis": "consumer: canary_todo",
+    "redact_redis_error": "consumer: canary_todo"
   }
 }

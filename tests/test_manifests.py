@@ -184,3 +184,36 @@ def test_yaml_fallback_parser_matches_pyyaml_for_stages_yaml() -> None:
 
     raw = files("infra2_sdk").joinpath("data/stages.yaml").read_text(encoding="utf-8")
     assert manifests._parse_yaml_fallback(raw) == yaml.safe_load(raw)
+
+
+def test_run_cell_cli_without_running_service_does_not_require_app_url(tmp_path: Path) -> None:
+    hm = tmp_path / "runtime-hooks.manifest.json"
+    hm.write_text(
+        json.dumps(
+            {
+                "schema_version": 3,
+                "service": "example",
+                "checks": [
+                    {
+                        "id": "lint",
+                        "argv": ["python3", "-c", "print('ok')"],
+                        "needs": ["code"],
+                        "writes": False,
+                        "accepts_scale": False,
+                        "timeout_seconds": 30,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    rc = manifests.main(
+        [
+            "--hooks-manifest",
+            "runtime-hooks.manifest.json",
+            "--run-cell",
+            "ci.pre",
+        ],
+        root=tmp_path,
+    )
+    assert rc == 0
