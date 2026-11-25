@@ -23,7 +23,7 @@ class Settings(BaseSettings):
 
 
 class SettingsWithMalformedMetadata(BaseSettings):
-    value: str = Field(default="", json_schema_extra={"extra_keys": None})
+    value: str = Field(default="", json_schema_extra=lambda _schema: None)
 
 
 class PrefixedSettings(BaseSettings):

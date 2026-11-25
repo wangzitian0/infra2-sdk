@@ -64,7 +64,7 @@ def test_sdk_source_byte_budget() -> None:
     # 4.5.0 measured 412,686 B after the bootstrap cap and `bootstrap_seconds` were added.
     # 4.6.0 measured 410,284 B after Wave 1 removed dead shims and `arequest_with_retry`.
     # 4.7.0 measured 412,950 B after `x-infra2.vault.env` and the template env check.
-    # Unreleased measured 413,424 B: three `retired` entries keep ENV, APP_ENV and IMAGE_TAG
+    # 4.8.0 measured 413,424 B: three `retired` entries keep ENV, APP_ENV and IMAGE_TAG
     # flagged, and the preview override became Compose text (infra2#1823 N1).
     # A new feature raises this cap with a comment; a removal lowers it.
     assert 150_000 <= total <= 413_500, f"src/infra2_sdk byte budget drifted: {total} B"

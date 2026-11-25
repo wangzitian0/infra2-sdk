@@ -32,7 +32,7 @@ when they are stale. Regenerate them with `python scripts/render_app_contract.py
 - Write the stack as an `x-infra2` compose file. `compile_compose` adds the service defaults,
   one `vault-agent` sidecar (`x-vault`), Traefik routes (`x-routes`), capability environment
   blocks (`x-capabilities`) and, with `mode="preview"`, the preview database (`x-preview`).
-- The sidecar gets `VAULT_ADDR`, `VAULT_ROLE_ID`, `VAULT_SECRET_ID`, `ENV`, `ENV_SUFFIX` and
+- The sidecar gets `VAULT_ADDR`, `VAULT_ROLE_ID`, `VAULT_SECRET_ID`, `ENVIRONMENT`, `ENV_SUFFIX` and
   `CONFIGURATION_SHA256`. To give it more host values, list them in `x-infra2.vault.env`, for
   example `env: [TA_POSTGRES_PORT]`. Each name compiles to `NAME: ${NAME}` after the fixed keys.
 - A name must match `^[A-Z][A-Z0-9_]*$`, occur once, and not be a fixed sidecar key.
