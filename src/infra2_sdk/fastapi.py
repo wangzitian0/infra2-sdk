@@ -155,9 +155,10 @@ def _require_known_tier() -> None:
         raise _with_relax_hint(exc) from exc
     except ValueError as exc:
         spec = runtime_env_spec(RuntimeEnvKey.ENVIRONMENT)
-        names = ", ".join((spec.key.value, *spec.aliases))
+        names = (spec.key.value, *spec.aliases)
+        target = names[0] if len(names) == 1 else "one of " + ", ".join(names)
         raise ValueError(
-            f"{exc}; set one of {names} to a known tier, or pass strict_otel=False for a local run"
+            f"{exc}; set {target} to a known tier, or pass strict_otel=False for a local run"
         ) from exc
 
 

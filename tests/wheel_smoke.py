@@ -179,6 +179,10 @@ REMOVED_ENV_NAMES = (
     "DATABASE_CONNECT_TIMEOUT_SECONDS",
     "DATABASE_STATEMENT_TIMEOUT_SECONDS",
     "SERVICE_NAME",
+    # infra2#1823 N1: the tier and version aliases.
+    "ENV",
+    "APP_ENV",
+    "IMAGE_TAG",
 )
 
 
@@ -266,9 +270,9 @@ def smoke_removed_names() -> None:
                 assert not hasattr(package, leaf), f"{package.__name__}.{leaf} was removed"
                 assert leaf not in package.__all__, f"{package.__name__}.__all__ lists {leaf}"
 
-    assert len(REMOVED_ENV_MEMBERS) == 21 and len(REMOVED_ENV_NAMES) == 29, (
+    assert len(REMOVED_ENV_MEMBERS) == 21 and len(REMOVED_ENV_NAMES) == 32, (
         f"REMOVED_ENV_MEMBERS has {len(REMOVED_ENV_MEMBERS)} entries, expected 21; "
-        f"REMOVED_ENV_NAMES has {len(REMOVED_ENV_NAMES)} entries, expected 29"
+        f"REMOVED_ENV_NAMES has {len(REMOVED_ENV_NAMES)} entries, expected 32"
     )
     present = [member for member in REMOVED_ENV_MEMBERS if hasattr(RuntimeEnvKey, member)]
     assert not present, f"RuntimeEnvKey still has removed members: {present}"
@@ -475,7 +479,7 @@ def smoke_fastapi() -> None:
     for variable in ("ENVIRONMENT", "ENV", "APP_ENV"):
         os.environ.pop(variable, None)
     hint = (
-        "ENVIRONMENT is required; set one of ENVIRONMENT, ENV, APP_ENV to a known tier, "
+        "ENVIRONMENT is required; set ENVIRONMENT to a known tier, "
         "or pass strict_otel=False for a local run"
     )
     try:

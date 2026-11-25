@@ -4,11 +4,11 @@ schema_version: 1
 groups:
   runtime:
     - name: ENVIRONMENT
-      deprecated_aliases: [ENV, APP_ENV]
+      deprecated_aliases: []
       sensitive: false
       owners: [infra2, finance_report, truealpha]
     - name: SERVICE_VERSION
-      deprecated_aliases: [IMAGE_TAG]
+      deprecated_aliases: []
       sensitive: false
       owners: [infra2]
     - name: GIT_COMMIT_SHA
@@ -171,3 +171,10 @@ retired:
     use: S3_ACCESS_KEY
   - name: CANARY_S3_SECRET_KEY
     use: S3_SECRET_KEY
+  # infra2#1823 N1: no longer read as aliases; still flagged.
+  - name: ENV
+    use: ENVIRONMENT
+  - name: APP_ENV
+    use: ENVIRONMENT
+  - name: IMAGE_TAG
+    use: SERVICE_VERSION

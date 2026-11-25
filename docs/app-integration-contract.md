@@ -84,11 +84,7 @@ when they are stale. Regenerate them with `python scripts/render_app_contract.py
 | frontend_telemetry | `OPENPANEL_ENVIRONMENT` | no | infra2, finance_report, truealpha |
 | frontend_telemetry | `OPENPANEL_SCRIPT_URL` | no | infra2, finance_report |
 
-| Deprecated alias | Use |
-|---|---|
-| `ENV` | `ENVIRONMENT` |
-| `APP_ENV` | `ENVIRONMENT` |
-| `IMAGE_TAG` | `SERVICE_VERSION` |
+No deprecated alias remains. The SDK reads only the canonical names.
 
 | Retired name | Use |
 |---|---|
@@ -115,6 +111,9 @@ when they are stale. Regenerate them with `python scripts/render_app_contract.py
 | `CANARY_S3_BUCKET` | `S3_BUCKET` |
 | `CANARY_S3_ACCESS_KEY` | `S3_ACCESS_KEY` |
 | `CANARY_S3_SECRET_KEY` | `S3_SECRET_KEY` |
+| `ENV` | `ENVIRONMENT` |
+| `APP_ENV` | `ENVIRONMENT` |
+| `IMAGE_TAG` | `SERVICE_VERSION` |
 
 | Cell (app owned) | Trigger | Budget (s) | Check list |
 |---|---|---|---|

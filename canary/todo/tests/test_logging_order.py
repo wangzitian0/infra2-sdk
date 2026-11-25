@@ -122,17 +122,18 @@ def test_todo_main_leaves_root_logger_at_info_with_otel_handler() -> None:
     ), logs
 
 
-def test_the_probe_child_does_not_inherit_conflicting_version_variables(
+def test_the_probe_child_drops_the_contract_and_ignores_the_retired_names(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A shell with `SERVICE_VERSION` and `IMAGE_TAG` set to different values stops a strict
-    start with `EnvironmentConflictError`. The child must not inherit them, and the probe
-    reports which of these names it inherited. It must not inherit `APP_ENV` either (#1238)."""
+    """The child must not inherit `SERVICE_VERSION` of the shell (#1238). `IMAGE_TAG` and
+    `APP_ENV` are retired names (infra2#1823 N1). The child inherits them, but the SDK does
+    not read them, so a value that differs from `SERVICE_VERSION` or the tier cannot stop
+    the strict start."""
     monkeypatch.setenv("SERVICE_VERSION", "1.0.0")
     monkeypatch.setenv("IMAGE_TAG", "2.0.0")
     monkeypatch.setenv("APP_ENV", "production")
 
     (state, _logs), _stderr = _run_probe(TODO_APP)
 
-    assert state["inherited"] == [], state
+    assert state["inherited"] == ["APP_ENV", "IMAGE_TAG"], state
     assert state["level"] == logging.INFO, state

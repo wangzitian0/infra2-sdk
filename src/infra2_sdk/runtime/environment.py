@@ -40,9 +40,9 @@ class RuntimeEnvSpec:
 
 
 RUNTIME_ENV_SPECS = (
-    RuntimeEnvSpec(RuntimeEnvKey.ENVIRONMENT, ("ENV", "APP_ENV")),
+    RuntimeEnvSpec(RuntimeEnvKey.ENVIRONMENT),
     RuntimeEnvSpec(RuntimeEnvKey.SERVICE_NAME),
-    RuntimeEnvSpec(RuntimeEnvKey.SERVICE_VERSION, ("IMAGE_TAG",)),
+    RuntimeEnvSpec(RuntimeEnvKey.SERVICE_VERSION),
     RuntimeEnvSpec(RuntimeEnvKey.GIT_COMMIT_SHA),
     RuntimeEnvSpec(RuntimeEnvKey.IMAGE_DIGEST),
     RuntimeEnvSpec(RuntimeEnvKey.CONFIGURATION_SHA256),

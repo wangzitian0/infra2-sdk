@@ -138,7 +138,7 @@ def test_compiled_todo_sidecar_env_equals_handwritten_env() -> None:
 
 def test_compiled_todo_sidecar_supplies_every_env_name_the_template_reads() -> None:
     read = set(re.findall(r'\benv "([A-Z_][A-Z0-9_]*)"', _body("todo.secrets.ctmpl")))
-    assert read == {"ENV", "ENV_SUFFIX"}
+    assert read == {"ENVIRONMENT", "ENV_SUFFIX"}
     assert read <= set(_compiled_todo()["services"]["vault-agent"]["environment"])
 
 
@@ -183,7 +183,7 @@ def test_compile_does_not_mutate_its_input() -> None:
 
 
 def test_dollar_in_template_is_escaped_for_compose_interpolation() -> None:
-    template = '{{- $env := env "ENV" -}}\nA={{ printf "%q" ${X} }}\n'
+    template = '{{- $env := env "ENVIRONMENT" -}}\nA={{ printf "%q" ${X} }}\n'
     text = compile_compose(_vault_source(), vault_template=template)
     env = yaml.safe_load(text)["services"]["vault-agent"]["environment"]
     assert env["VAULT_SECRETS_TEMPLATE"] == template.replace("$", "$$")
@@ -776,14 +776,16 @@ def test_preview_mode_adds_the_db_and_overrides_after_the_secrets_are_sourced() 
         "finance_report-preview-db$${ENV_SUFFIX}:5432/preview"
     )
     assert script.index(f'export DATABASE_URL="{url}"') > source_at
-    assert script.index('export ENVIRONMENT="$$ENV"') > source_at
-    assert script.index('export ENVIRONMENT="$$ENV"') < script.index('exec "$$@"')
+    # Compose fills `${ENV}` from the deploy: the container needs no ENV (infra2#1823 N1).
+    assert script.index('export ENVIRONMENT="${ENV}"') > source_at
+    assert script.index('export ENVIRONMENT="${ENV}"') < script.index('exec "$$@"')
+    assert "$$ENV" not in script
     assert backend["depends_on"] == {
         "vault-agent": {"condition": "service_started"},
         "db": {"condition": "service_healthy"},
     }
     frontend_script = services["frontend"]["entrypoint"][2]
-    assert 'export ENVIRONMENT="$$ENV"' in frontend_script
+    assert 'export ENVIRONMENT="${ENV}"' in frontend_script
     assert "DATABASE_URL" not in frontend_script
 
 
@@ -883,7 +885,7 @@ _FIXED_ENV = [
     "VAULT_ADDR",
     "VAULT_ROLE_ID",
     "VAULT_SECRET_ID",
-    "ENV",
+    "ENVIRONMENT",
     "ENV_SUFFIX",
     "CONFIGURATION_SHA256",
 ]
@@ -973,7 +975,7 @@ def test_a_template_env_read_that_the_sidecar_does_not_get_fails_closed() -> Non
 
 
 def test_an_or_fallback_passes_when_one_branch_is_in_the_sidecar_env() -> None:
-    # `or (env "ENVIRONMENT") (env "ENV")` passes: ENV is a fixed key.
+    # `or (env "ENVIRONMENT") (env "ENV")` passes: ENVIRONMENT is a fixed key.
     compile_compose(_vault_source(), vault_template='{{ or (env "ENVIRONMENT") (env "ENV") }}\n')
     with pytest.raises(ComposeCompileError, match=r"reads env \['A_ONE\|B_TWO'\]"):
         compile_compose(_vault_source(), vault_template='{{ or (env "A_ONE") (env "B_TWO") }}\n')
@@ -983,3 +985,13 @@ def test_an_or_fallback_passes_when_one_branch_is_in_the_sidecar_env() -> None:
 def test_each_fixed_key_satisfies_a_template_read() -> None:
     template = "".join(f'{{{{ env "{key}" }}}}\n' for key in _FIXED_ENV)
     compile_compose(_vault_source(), vault_template=template)
+
+
+def test_the_retired_env_alias_is_not_a_fixed_sidecar_key() -> None:
+    # infra2#1823: the sidecar gets ENVIRONMENT, not ENV. A template read of ENV alone fails.
+    env = _sidecar_env_of(None)
+    assert "ENV" not in env
+    assert env["ENVIRONMENT"] == "${ENV}"
+    with pytest.raises(ComposeCompileError, match=r"reads env \['ENV'\]"):
+        compile_compose(_vault_source(), vault_template='{{- $env := env "ENV" -}}\n')
+    compile_compose(_vault_source(), vault_template='{{- $env := env "ENVIRONMENT" -}}\n')

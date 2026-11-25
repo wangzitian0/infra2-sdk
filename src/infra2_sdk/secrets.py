@@ -489,7 +489,7 @@ def render_agent_template(
     env_expr = f'"{source_env}"' if source_env else "$env"
     lines = [
         f"{{{{- /* Generated from {manifest.source} by infra2_sdk.secrets. Do not edit. */ -}}}}",
-        '{{- $env := or (env "ENVIRONMENT") (env "ENV") -}}',
+        '{{- $env := env "ENVIRONMENT" -}}',
     ]
     own: list[EnvironmentField] = []
     providers: dict[str, list[EnvironmentField]] = {}

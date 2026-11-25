@@ -6,6 +6,23 @@ backfill from the merged pull requests.
 
 ## Unreleased
 
+### Removed (Unreleased)
+
+- Retire the runtime aliases `ENV`, `APP_ENV` (use `ENVIRONMENT`) and `IMAGE_TAG` (use `SERVICE_VERSION`) (wangzitian0/infra2#1823 N1). `data/shared_env.yaml` moves them from `deprecated_aliases` to `retired`, so `check_shared_env_conformance` still flags them. `resolve_runtime_env`, `environment_from_env`, `OtelSettings.from_env` and `init_service` do not read them. A retired name cannot conflict with `ENVIRONMENT` or `SERVICE_VERSION`. `REMOVED_ENV_NAMES` holds 32 names.
+- `render_agent_template` writes `{{- $env := env "ENVIRONMENT" -}}`. Before, it read `ENV` when `ENVIRONMENT` was empty.
+
+### Changed (Unreleased)
+
+- `compile_compose` gives the `x-vault` sidecar `ENVIRONMENT: ${ENV}` in place of `ENV: ${ENV}`. Compose still fills the value from the deploy variable `ENV`.
+- In preview mode, the `x-preview` override writes `export ENVIRONMENT="${ENV}"` as Compose text. Before, it was `$$ENV` and needed an `ENV` variable in the container.
+- The strict `init_service` error says `set ENVIRONMENT to a known tier` when the contract has no alias of `ENVIRONMENT`.
+- `docs/app-integration-contract.md` says that no deprecated alias remains.
+- `compile_compose` checks a Vault template `env "X"` read against the new fixed sidecar keys. `ENVIRONMENT` is a fixed key and `ENV` is not, so a template that reads only `env "ENV"` fails the compile. The preamble `{{- $env := env "ENVIRONMENT" -}}` passes, and so does `or (env "ENVIRONMENT") (env "ENV")`.
+
+**Release class:** this change removes public runtime names, but it is a minor release under the README [Compatibility](README.md#compatibility) rule. infra2, finance_report and truealpha are the only consumers, and the census of their production and test code finds no read of `ENV`, `APP_ENV` or `IMAGE_TAG` through the SDK.
+
+**Upgrade order:** a container that has only `ENV` loses its tier with this version, and a Vault Agent renders `secret/data/<project>//<service>`. infra2 must set `ENVIRONMENT` in every container before a consumer locks this version. wangzitian0/infra2#1969 (merged) gives each hand-written service `ENVIRONMENT` next to `ENV`; deploy it first.
+
 ## 4.7.0 - 2026-11-25
 
 Minor release: an x-infra2 stack can forward named host values into its Vault Agent sidecar.

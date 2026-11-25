@@ -15,13 +15,21 @@ from fastapi import FastAPI, Request
 from starlette.testclient import TestClient
 
 from infra2_sdk.fastapi import _INITIALIZED_ATTRIBUTE, init_service
-from infra2_sdk.runtime.environment import EnvironmentConflictError
+from infra2_sdk.runtime import environment as runtime_environment
+from infra2_sdk.runtime.environment import (
+    EnvironmentConflictError,
+    RuntimeEnvKey,
+    RuntimeEnvSpec,
+)
 
-# Every variable that selects the tier, the service identity or the OTLP endpoint.
+# Every variable that selects the tier, the service identity or the OTLP endpoint. ENV and
+# APP_ENV are retired (infra2#1823 N1); they stay here so that a host value cannot leak in.
 _AMBIENT_VARIABLES = (
     "ENVIRONMENT",
     "ENV",
     "APP_ENV",
+    "LEGACY_TIER",
+    "LEGACY_VERSION",
     "OTEL_EXPORTER_OTLP_ENDPOINT",
     "OTEL_SDK_DISABLED",
     "OTEL_SERVICE_NAME",
@@ -33,6 +41,15 @@ _AMBIENT_VARIABLES = (
 _PROBE_ROUTES = {"/livez", "/readyz", "/health"}
 # The end of a strict error of init_service that has a way out.
 _STRICT_WAY_OUT = "; pass strict_otel=False to log the problem and start"
+
+
+def _give_alias(monkeypatch, key: RuntimeEnvKey, alias: str) -> None:
+    """Give one contract variable an alias for one test.
+
+    The contract has no alias since infra2#1823 N1. The alias resolver and its conflict
+    errors stay, so these tests give a variable a test-only alias to reach them.
+    """
+    monkeypatch.setitem(runtime_environment._SPECS_BY_KEY, key, RuntimeEnvSpec(key, (alias,)))
 
 
 @pytest.fixture(autouse=True)
@@ -826,7 +843,15 @@ def test_init_service_without_a_tier_refuses_to_start_by_default(monkeypatch, wi
     if with_endpoint:
         monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
 
-    with pytest.raises(ValueError, match=r"ENVIRONMENT.*ENV.*APP_ENV"):
+    with pytest.raises(ValueError, match=r"ENVIRONMENT is required; set ENVIRONMENT to a known"):
+        init_service(FastAPI(), "svc")
+
+
+@pytest.mark.parametrize("retired", ["ENV", "APP_ENV"])
+def test_a_retired_tier_name_does_not_set_the_tier(monkeypatch, retired):
+    monkeypatch.setenv(retired, "staging")
+
+    with pytest.raises(ValueError, match=r"ENVIRONMENT is required; set ENVIRONMENT to a known"):
         init_service(FastAPI(), "svc")
 
 
@@ -836,13 +861,14 @@ def test_init_service_with_an_unknown_tier_refuses_to_start_by_default(monkeypat
     if with_endpoint:
         monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
 
-    with pytest.raises(ValueError, match=r"bogus-tier.*ENVIRONMENT.*ENV.*APP_ENV"):
+    with pytest.raises(ValueError, match=r"bogus-tier.*set ENVIRONMENT to a known tier"):
         init_service(FastAPI(), "svc")
 
 
 def test_init_service_with_conflicting_tier_names_refuses_to_start_by_default(monkeypatch):
+    _give_alias(monkeypatch, RuntimeEnvKey.ENVIRONMENT, "LEGACY_TIER")
     monkeypatch.setenv("ENVIRONMENT", "staging")
-    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("LEGACY_TIER", "production")
 
     with pytest.raises(EnvironmentConflictError, match="ENVIRONMENT"):
         init_service(FastAPI(), "svc")
@@ -852,16 +878,18 @@ def test_init_service_with_conflicting_tier_names_refuses_to_start_by_default(mo
     "environ",
     [
         # The tier check of init_service raises this one.
-        pytest.param({"ENVIRONMENT": "staging", "APP_ENV": "production"}, id="tier"),
+        pytest.param({"ENVIRONMENT": "staging", "LEGACY_TIER": "production"}, id="tier"),
         # OtelSettings.from_env raises this one. A known tier lets the tier check pass.
         # The pair OTEL_SERVICE_NAME and SERVICE_NAME is gone: 3.4.0 removed the alias.
         pytest.param(
-            {"ENVIRONMENT": "staging", "SERVICE_VERSION": "a", "IMAGE_TAG": "b"},
+            {"ENVIRONMENT": "staging", "SERVICE_VERSION": "a", "LEGACY_VERSION": "b"},
             id="service-version",
         ),
     ],
 )
 def test_a_strict_conflict_keeps_its_type_and_ends_with_the_way_out(monkeypatch, environ):
+    _give_alias(monkeypatch, RuntimeEnvKey.ENVIRONMENT, "LEGACY_TIER")
+    _give_alias(monkeypatch, RuntimeEnvKey.SERVICE_VERSION, "LEGACY_VERSION")
     for variable, value in environ.items():
         monkeypatch.setenv(variable, value)
 
@@ -1048,13 +1076,16 @@ def test_strict_otel_refuses_a_malformed_otel_value_even_without_an_endpoint(
             {"OTEL_RESOURCE_ATTRIBUTES": "not-a-pair"}, "OTEL_RESOURCE_ATTRIBUTES", id="attributes"
         ),
         pytest.param(
-            {"SERVICE_VERSION": "a", "IMAGE_TAG": "b"}, "SERVICE_VERSION, IMAGE_TAG", id="aliases"
+            {"SERVICE_VERSION": "a", "LEGACY_VERSION": "b"},
+            "SERVICE_VERSION, LEGACY_VERSION",
+            id="aliases",
         ),
     ],
 )
 def test_strict_otel_errors_of_init_service_name_the_variable_and_the_way_out(
     monkeypatch, environ, message
 ):
+    _give_alias(monkeypatch, RuntimeEnvKey.SERVICE_VERSION, "LEGACY_VERSION")
     monkeypatch.setenv("ENVIRONMENT", "staging")
     for variable, value in environ.items():
         monkeypatch.setenv(variable, value)
@@ -1159,12 +1190,12 @@ def test_the_missing_endpoint_level_follows_the_tier_that_from_env_resolved(
     [
         pytest.param({}, logging.WARNING, id="settings-load-so-the-attribute-counts"),
         pytest.param(
-            {"SERVICE_VERSION": "a", "IMAGE_TAG": "b"},
+            {"SERVICE_VERSION": "a", "LEGACY_VERSION": "b"},
             logging.DEBUG,
             id="settings-fail-so-the-attribute-does-not-count",
         ),
         pytest.param(
-            {"SERVICE_VERSION": "a", "IMAGE_TAG": "b", "ENVIRONMENT": "production"},
+            {"SERVICE_VERSION": "a", "LEGACY_VERSION": "b", "ENVIRONMENT": "production"},
             logging.WARNING,
             id="settings-fail-but-a-tier-variable-counts",
         ),
@@ -1175,6 +1206,7 @@ def test_after_a_failed_from_env_only_the_tier_variables_set_the_missing_endpoin
 ):
     # The attribute names a deployed tier in all three cases. In the last two cases an alias
     # conflict makes OtelSettings.from_env fail.
+    _give_alias(monkeypatch, RuntimeEnvKey.SERVICE_VERSION, "LEGACY_VERSION")
     monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment.name=production")
     for variable, value in environ.items():
         monkeypatch.setenv(variable, value)
@@ -1197,8 +1229,9 @@ def test_missing_endpoint_is_silent_when_the_caller_turns_otel_off(monkeypatch, 
 
 
 def test_conflicting_environment_aliases_do_not_raise_and_count_as_deployed(monkeypatch, caplog):
+    _give_alias(monkeypatch, RuntimeEnvKey.ENVIRONMENT, "LEGACY_TIER")
     monkeypatch.setenv("ENVIRONMENT", "staging")
-    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("LEGACY_TIER", "production")
 
     with caplog.at_level(logging.DEBUG, logger="infra2_sdk.fastapi"):
         init_service(FastAPI(), "svc", enable_otel=True, strict_otel=False)
