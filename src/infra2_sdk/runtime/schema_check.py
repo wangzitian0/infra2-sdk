@@ -4,9 +4,16 @@ The check compares the native enum types of an application's SQLAlchemy ``MetaDa
 the ``pg_enum`` labels of the target database before a deploy replaces containers
 (infra2 #698: an enum case mismatch took finance_report down for 13 minutes).
 
-- Bidirectional: ``missing_in_db`` and ``missing_in_code`` both block. One exception
-  (infra2 #1658): a whole enum type that the database lacks, used only by tables that the
-  database lacks, does not block while migrations are pending. See ``cover_with_new_tables``.
+- Bidirectional: ``missing_in_db`` and ``missing_in_code`` both block. Two exceptions apply
+  only while migrations are pending:
+
+  - Expand step (infra2 #1658): a whole enum type that the database lacks, used only by
+    tables that the database lacks, does not block. See ``cover_with_new_tables``.
+  - Contract step (finance_report #3227): a whole enum type that the code does not declare,
+    used (directly or through a derived type) only by database tables that the code does not
+    declare, does not block. A pending
+    migration drops those tables and the type. See ``cover_with_dropped_tables``. The run
+    still prints ``ROLLBACK_CLASS: C``, because a drop is not automatically reversible.
 - Fail closed: a query failure or a parse error blocks.
 - Never a silent pass: a check that cannot load its code side, or has no database, exits
   ``EXIT_NOT_EVALUATED`` (3), which blocks like a finding.
@@ -22,7 +29,7 @@ imports (its image or virtualenv)::
 The application declares its source in ``EnumSchemaSpec`` (or the CLI options); the SDK
 keeps no table of applications. SQLAlchemy is duck-typed, so the SDK does not depend on it.
 A libpq driver (``psycopg`` from the ``postgres`` extra, or ``psycopg2``) opens the
-connection; ``alembic`` is needed only for the new-table coverage.
+connection; ``alembic`` is needed only for the new-table and dropped-table coverage.
 """
 
 from __future__ import annotations
@@ -296,6 +303,41 @@ def cover_with_new_tables(
     return blocking, covered
 
 
+def cover_with_dropped_tables(
+    discrepancies: Sequence[EnumDiscrepancy],
+    *,
+    enum_db_tables: Mapping[str, frozenset[str]],
+    code_enums: Collection[str],
+    code_tables: Collection[str],
+    migrations_pending: bool,
+) -> tuple[list[EnumDiscrepancy], list[tuple[str, tuple[str, ...]]]]:
+    """Split off a whole DB-only enum type that only tables the code dropped use (#3227).
+
+    This is the contract-step mirror of ``cover_with_new_tables``. The image runs
+    ``alembic upgrade head`` after this gate. A pending migration that drops tables and
+    their enum types leaves the database ahead of the code until it runs. Nothing here
+    reads migration code. Covered: a type whose name is not in ``code_enums`` (the code
+    declares no type of that name), when ``enum_db_tables`` names at least one database
+    table that uses the type and no such table is in ``code_tables``. Always blocking: no
+    pending migration, a type that the code declares (a label difference, a casing drift,
+    or zero labels), a type that no database table uses, and a type that a table of the
+    code still uses. Returns ``(blocking, covered)``; ``covered`` holds ``(enum name, tables)``.
+    """
+    if not migrations_pending:
+        return list(discrepancies), []
+    declared = set(code_tables)
+    declared_enums = set(code_enums)
+    blocking: list[EnumDiscrepancy] = []
+    covered: list[tuple[str, tuple[str, ...]]] = []
+    for discrepancy in discrepancies:
+        tables = enum_db_tables.get(discrepancy.enum_name, frozenset())
+        if discrepancy.enum_name not in declared_enums and tables and not tables & declared:
+            covered.append((discrepancy.enum_name, tuple(sorted(tables))))
+        else:
+            blocking.append(discrepancy)
+    return blocking, covered
+
+
 def _resolve(reference: str) -> Any:
     module_name, _, attribute_path = reference.partition(":")
     target: Any = importlib.import_module(module_name)
@@ -362,6 +404,16 @@ def enum_tables_from_metadata(metadata: Any) -> dict[str, frozenset[str]]:
     for table, enum_type in _native_enum_columns(metadata):
         users.setdefault(enum_type.name, set()).add(table)
     return {name: frozenset(tables) for name, tables in users.items()}
+
+
+def table_names_from_metadata(metadata: Any) -> frozenset[str]:
+    """The names of every table on ``metadata``, without a schema prefix (#3227)."""
+    tables = getattr(metadata, "tables", None)
+    if not isinstance(tables, Mapping):
+        raise GateNotEvaluated(
+            f"{type(metadata).__name__} is not a SQLAlchemy MetaData (no .tables)"
+        )
+    return frozenset(str(key).rsplit(".", 1)[-1] for key in tables)
 
 
 def load_code_enums(
@@ -574,6 +626,61 @@ def fetch_db_tables(db_url: str) -> frozenset[str]:
     return _with_libpq_cursor(db_url, read)
 
 
+# Each enum type with the tables whose columns use it (#3227). ``derived`` closes over every
+# type that is built on the enum type: a domain (``typbasetype``), an array (``typarray``), a
+# composite type or table row type with a field of the type (``reltype``), a range
+# (``rngsubtype``) and a multirange (``rngmultitypid``, PostgreSQL 14 and later). A column of
+# any derived type in an ordinary or partitioned table counts, and so does a table whose own
+# row type is derived. Views, materialized views and foreign tables do not count. Schema names
+# are dropped, matching ``query_db_enums`` and the ORM's table names. On a server that cannot
+# run this query, the query fails and the coverage blocks.
+DB_ENUM_TABLES_SQL = (
+    "WITH RECURSIVE edges(base, derived) AS ("
+    "SELECT typbasetype, oid FROM pg_catalog.pg_type WHERE typtype = 'd' "
+    "UNION ALL SELECT oid, typarray FROM pg_catalog.pg_type WHERE typarray <> 0 "
+    "UNION ALL SELECT a.atttypid, c.reltype FROM pg_catalog.pg_attribute a "
+    "JOIN pg_catalog.pg_class c ON c.oid = a.attrelid "
+    "WHERE a.attnum > 0 AND NOT a.attisdropped AND c.reltype <> 0 "
+    "UNION ALL SELECT rngsubtype, rngtypid FROM pg_catalog.pg_range "
+    "UNION ALL SELECT rngtypid, rngmultitypid FROM pg_catalog.pg_range"
+    "), derived(enum_oid, type_oid) AS ("
+    "SELECT t.oid, t.oid FROM pg_catalog.pg_type t "
+    "JOIN pg_catalog.pg_namespace tn ON tn.oid = t.typnamespace "
+    "WHERE t.typtype = 'e' AND tn.nspname NOT IN ('pg_catalog', 'information_schema') "
+    "UNION SELECT d.enum_oid, e.derived FROM derived d "
+    "JOIN edges e ON e.base = d.type_oid"
+    "), users(enum_oid, rel_oid) AS ("
+    "SELECT d.enum_oid, a.attrelid FROM derived d "
+    "JOIN pg_catalog.pg_attribute a ON a.atttypid = d.type_oid "
+    "WHERE a.attnum > 0 AND NOT a.attisdropped "
+    "UNION SELECT d.enum_oid, c.oid FROM derived d "
+    "JOIN pg_catalog.pg_class c ON c.reltype = d.type_oid"
+    ") "
+    "SELECT DISTINCT t.typname, c.relname FROM users u "
+    "JOIN pg_catalog.pg_type t ON t.oid = u.enum_oid "
+    "JOIN pg_catalog.pg_class c ON c.oid = u.rel_oid AND c.relkind IN ('r', 'p') "
+    "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+    "WHERE n.nspname NOT IN ('pg_catalog', 'information_schema');"
+)
+
+
+def fetch_db_enum_tables(db_url: str) -> dict[str, frozenset[str]]:
+    """``{database enum type name: names of the database tables that use it}`` (#3227).
+
+    The query is a read-only SELECT on the system catalog. A failure raises, and the caller
+    treats a raise as "nothing covered".
+    """
+
+    def read(cursor: Any) -> dict[str, frozenset[str]]:
+        cursor.execute(DB_ENUM_TABLES_SQL)
+        users: dict[str, set[str]] = {}
+        for row in cursor.fetchall():
+            users.setdefault(str(row[0]), set()).add(str(row[1]))
+        return {name: frozenset(tables) for name, tables in users.items()}
+
+    return _with_libpq_cursor(db_url, read)
+
+
 def migrations_pending(db_url: str, source: EnumSchemaSpec, app_path: str | None) -> bool:
     """True when the image has a migration that the database has not run (#1658).
 
@@ -682,22 +789,51 @@ def main(argv: list[str] | None = None) -> int:
         print(f"APPLIED_MIGRATION: {','.join(applied_migrations)}")
 
     discrepancies = check_enums(code_enums, db_enums)
+    # The class comes from every discrepancy, covered or not: a covered drop is still not
+    # automatically reversible (Class C), and a covered new type is additive (Class A).
+    rollback_class = classify_rollback(discrepancies)
     covered: list[tuple[str, tuple[str, ...]]] = []
+    dropped: list[tuple[str, tuple[str, ...]]] = []
+    pending = False
     if discrepancies:
+        try:
+            pending = migrations_pending(db_url, spec, args.app_path)
+        except Exception as exc:  # noqa: BLE001 - fail closed: an unreadable input covers nothing
+            print(f"NOTE: new-table coverage not applied ({type(exc).__name__})", file=sys.stderr)
+            print(
+                f"NOTE: dropped-table coverage not applied ({type(exc).__name__})",
+                file=sys.stderr,
+            )
+    if pending:
         try:
             discrepancies, covered = cover_with_new_tables(
                 discrepancies,
                 enum_tables=enum_tables_from_metadata(_resolve(spec.metadata)),
                 db_tables=fetch_db_tables(db_url),
-                migrations_pending=migrations_pending(db_url, spec, args.app_path),
+                migrations_pending=pending,
             )
         except Exception as exc:  # noqa: BLE001 - fail closed: an unreadable input covers nothing
             covered = []
             print(f"NOTE: new-table coverage not applied ({type(exc).__name__})", file=sys.stderr)
+        try:
+            discrepancies, dropped = cover_with_dropped_tables(
+                discrepancies,
+                enum_db_tables=fetch_db_enum_tables(db_url),
+                code_enums=code_enums,
+                code_tables=table_names_from_metadata(_resolve(spec.metadata)),
+                migrations_pending=pending,
+            )
+        except Exception as exc:  # noqa: BLE001 - fail closed: an unreadable input covers nothing
+            dropped = []
+            print(
+                f"NOTE: dropped-table coverage not applied ({type(exc).__name__})",
+                file=sys.stderr,
+            )
     for enum_name, tables in covered:
         print(f"NEW_TABLE_COVERS: {enum_name} ({', '.join(tables)})")
+    for enum_name, tables in dropped:
+        print(f"DROPPED_TABLE_COVERS: {enum_name} ({', '.join(tables)})")
     # Stable stdout line: infra2 common/deploy/schema_gate.py parses it in both branches.
-    rollback_class = classify_rollback(discrepancies)
     if discrepancies or precondition_failures:
         if discrepancies:
             print(f"ERROR: Schema discrepancies found for {label}:", file=sys.stderr)
@@ -717,7 +853,8 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"Pre-deploy schema check verified for service: {label} "
         f"({len(code_enums)} enum types, 0 discrepancies"
-        f"{f', {len(covered)} covered by new tables' if covered else ''})"
+        f"{f', {len(covered)} covered by new tables' if covered else ''}"
+        f"{f', {len(dropped)} covered by dropped tables' if dropped else ''})"
     )
     print(f"ROLLBACK_CLASS: {rollback_class}")
     return EXIT_OK
@@ -733,6 +870,7 @@ __all__ = [
     "check_enums",
     "classify_rollback",
     "compare_enum_values",
+    "cover_with_dropped_tables",
     "cover_with_new_tables",
     "enums_from_metadata",
     "load_code_enums",
