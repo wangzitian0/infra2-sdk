@@ -378,3 +378,136 @@ def test_resolve_check_cells_respects_active_off_override() -> None:
     assert "staging.post" in delivery.resolve_check_cells(
         expired, now=datetime(2026, 11, 26, tzinfo=UTC)
     )
+
+
+def test_resolve_check_cells_override_expires_at() -> None:
+    now = datetime(2026, 11, 26, 12, 0, tzinfo=UTC)
+    future = now + timedelta(hours=1)
+    past = now - timedelta(seconds=1)
+
+    # Future expires_at applies across add, remove, and off overrides.
+    add_remove_active = delivery.CheckRow(
+        id="unit",
+        argv=("pytest",),
+        needs=("code",),
+        cells=delivery.CellOverrides(
+            add={"preview.post": delivery.OverrideReason(reason="temp preview", expires_at=future)},
+            remove={"ci.pre": delivery.OverrideReason(reason="temp mute ci", expires_at=future)},
+        ),
+    )
+    active_cells = delivery.resolve_check_cells(add_remove_active, now=now)
+    assert "preview.post" in active_cells
+    assert "ci.pre" not in active_cells
+
+    off_active = delivery.CheckRow(
+        id="unit",
+        argv=("pytest",),
+        needs=("code",),
+        off=delivery.OverrideReason(reason="temp off", expires_at=future),
+    )
+    assert delivery.resolve_check_cells(off_active, now=now) == ()
+
+    # Expired (<= now, including exact boundary and naive now) overrides are ignored cleanly.
+    for expired_at in (past, now):
+        add_remove_expired = delivery.CheckRow(
+            id="unit",
+            argv=("pytest",),
+            needs=("code",),
+            cells=delivery.CellOverrides(
+                add={
+                    "preview.post": delivery.OverrideReason(
+                        reason="expired add", expires_at=expired_at
+                    )
+                },
+                remove={
+                    "ci.pre": delivery.OverrideReason(
+                        reason="expired remove", expires_at=expired_at
+                    )
+                },
+            ),
+        )
+        expired_cells = delivery.resolve_check_cells(
+            add_remove_expired, now=now.replace(tzinfo=None)
+        )
+        assert "preview.post" not in expired_cells
+        assert "ci.pre" in expired_cells
+
+        off_expired = delivery.CheckRow(
+            id="unit",
+            argv=("pytest",),
+            needs=("code",),
+            off=delivery.OverrideReason(reason="expired off", expires_at=expired_at),
+        )
+        assert "ci.pre" in delivery.resolve_check_cells(off_expired, now=now)
+
+
+def test_run_cell_enforces_cumulative_budget() -> None:
+    budget = delivery.CELL_POLICIES["ci.pre"].budget_seconds
+    manifest = delivery.RuntimeHooksManifest(
+        schema_version=delivery.HOOKS_SCHEMA_VERSION,
+        service="demo/budget",
+        checks=(
+            delivery.CheckRow(id="c1", argv=("echo", "1"), needs=("code",), timeout_seconds=150),
+            delivery.CheckRow(id="c2", argv=("echo", "2"), needs=("code",), timeout_seconds=150),
+            delivery.CheckRow(id="c3", argv=("echo", "3"), needs=("code",), timeout_seconds=150),
+        ),
+    )
+    clock = [1000.0]
+    seen_calls: list[tuple[list[str], float]] = []
+
+    def _advancing_runner(argv, **kwargs):
+        seen_calls.append((list(argv), float(kwargs["timeout"])))
+        clock[0] += 140.0 if argv == ["echo", "1"] else 105.0
+        return subprocess.CompletedProcess(argv, 0, stdout="ok", stderr="")
+
+    res = delivery.run_cell(
+        manifest,
+        "ci.pre",
+        environ={},
+        runner=_advancing_runner,
+        monotonic=lambda: clock[0],
+    )
+    assert res.passed is False
+    assert seen_calls == [
+        (["echo", "1"], 150.0),
+        (["echo", "2"], float(budget - 140)),
+    ]
+    assert [v.id for v in res.verdicts] == ["c1", "c2", "c3"]
+    assert res.verdicts[0].passed is True and res.verdicts[1].passed is True
+    assert res.verdicts[2].passed is False
+    assert res.verdicts[2].exit_code == 124
+    assert f"exhausted {budget}s budget" in res.verdicts[2].stderr
+
+    # Bootstrap exhausting the remaining cell budget stops before running check argv.
+    boot_manifest = delivery.RuntimeHooksManifest(
+        schema_version=delivery.HOOKS_SCHEMA_VERSION,
+        service="demo/boot-budget",
+        checks=(
+            delivery.CheckRow(
+                id="c1",
+                argv=("echo", "main"),
+                bootstrap="echo boot",
+                needs=("code",),
+                timeout_seconds=60,
+            ),
+        ),
+    )
+    boot_clock = [500.0]
+    boot_calls: list[list[str]] = []
+
+    def _boot_runner(argv, **_kwargs):
+        boot_calls.append(list(argv))
+        boot_clock[0] += float(budget) + 1.0
+        return subprocess.CompletedProcess(argv, 0, stdout="boot ok", stderr="")
+
+    boot_res = delivery.run_cell(
+        boot_manifest,
+        "ci.pre",
+        environ={},
+        runner=_boot_runner,
+        monotonic=lambda: boot_clock[0],
+    )
+    assert boot_res.passed is False
+    assert boot_calls == [["sh", "-c", "echo boot"]]
+    assert boot_res.verdicts[0].exit_code == 124
+    assert f"exhausted {budget}s budget" in boot_res.verdicts[0].stderr
