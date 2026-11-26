@@ -7,6 +7,7 @@ import importlib
 import json
 import os
 import re
+import sys
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from types import ModuleType
@@ -15,7 +16,22 @@ from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict
 
-_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+_UNDERSCORE_PREVIEW_RE = re.compile(
+    r"\A(?P<prefix>branch|pr|commit|tag)_(?P<rest>[a-z0-9][a-z0-9._-]*)\Z"
+)
+
+
+def canonicalize_preview_name(cleaned: str) -> str:
+    """Normalize a lowercased preview slot alias into canonical hyphenated form."""
+    stripped = cleaned.removeprefix("preview/")
+    if stripped == "canary_preview":
+        return "canary-preview"
+    match = _UNDERSCORE_PREVIEW_RE.match(stripped)
+    if match is not None:
+        rest = match["rest"].replace("_", "-") if match["prefix"] == "tag" else match["rest"]
+        return f"{match['prefix']}-{rest}"
+    return stripped
+
 
 _SECRET_ENV_RE = re.compile(
     r"(?:^|_)(?:SECRET|TOKEN|PASSWORD|PASSWD|KEY|AUTH|CREDENTIAL|WEBHOOK|DSN)(?:_URL)?$"
@@ -24,10 +40,10 @@ _SECRET_ENV_RE = re.compile(
 )
 _EMAIL_RE = re.compile(r"\b[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
 _SECRET_VAL_RE = re.compile(
-    r"Bearer\s+[\w.-]+|eyJ[\w-]{8,}\.[\w-]+\.[\w-]*|(?:gh[ps]_|sk-|op_)[\w-]{8,}|(?<=:)[^:@/\s]+(?=@)"
+    r"Bearer\s+[A-Za-z0-9._~+/=-]+|eyJ[\w-]{8,}\.[\w-]+\.[\w-]*|(?:gh[ps]_|sk-|op_)[\w-]{8,}|(?<=:)[^:@/\s]+(?=@)"
 )
 _SENSITIVE_QUERY_RE = re.compile(
-    r"(?:^|[_-])(?:api[_-]?key|apikey|key|token|access[_-]?token|secret|password|auth|sig|signature|credential)s?$",
+    r"(?:^|[_-])(?:api[_-]?key|apikey|awsaccesskeyid|key|token|access[_-]?token|secret|password|auth|code|sig|signature|credential)s?$",
     re.I,
 )
 _SENSITIVE_HEADER_NAMES = frozenset(
@@ -45,6 +61,15 @@ _SENSITIVE_HEADER_NAMES = frozenset(
     }
 )
 _SENSITIVE_HEADER_RE = re.compile(r"(?:secret|token|key|password|auth|cookie|credential)", re.I)
+
+SECRET_LOG_KEY_RE = re.compile(
+    r"^(?:token|.*_(?:secret|password|passwd|api_key|access_key|secret_key|private_key|"
+    r"auth_token|access_token|refresh_token|id_token|csrf_token|session_token|credential|"
+    r"dsn|database_url|redis_url))$|"
+    r"^(?:secret|password|passwd|authorization|cookie|set_cookie|set-cookie|"
+    r"api_key|api-key|x-api-key|x-auth-token|raw_prompt|raw_response|response_body|error_body)$",
+    re.I,
+)
 
 
 class ContractModel(BaseModel):
@@ -73,14 +98,25 @@ def require_optional(module: str, *, extra: str) -> ModuleType:
         raise RuntimeError(f"{module} is required; install infra2-sdk[{extra}]") from None
 
 
-def canonical_json_bytes(payload: Any) -> bytes:
-    """Serialize payload into canonical UTF-8 JSON bytes."""
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+def load_dotted_symbol(spec: str, *, require_type: bool = False) -> Any:
+    """Import ``module:attr.path`` dynamically and optionally verify it names a class."""
+    module_name, sep, attr_path = spec.partition(":")
+    if not sep or not module_name or not attr_path:
+        raise ValueError(f"target must be 'module:attr', not {spec!r}")
+    if "" not in sys.path:
+        sys.path.insert(0, "")
+    obj: Any = importlib.import_module(module_name)
+    for part in attr_path.split("."):
+        obj = getattr(obj, part)
+    if require_type and not isinstance(obj, type):
+        raise ValueError(f"{spec} is not a class")
+    return obj
 
 
 def canonical_sha256(payload: Any) -> str:
     """Return lowercase hex SHA-256 of canonical UTF-8 JSON bytes."""
-    return hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def require_contract_version(value: Any, expected: int, *, label: str) -> int:
@@ -92,8 +128,8 @@ def require_contract_version(value: Any, expected: int, *, label: str) -> int:
     return value
 
 
-def parse_iso_utc(value: object, *, allow_naive: bool = False) -> datetime:
-    """Parse an ISO-8601 timestamp or datetime and normalize to UTC."""
+def parse_iso_utc(value: object) -> datetime:
+    """Parse an ISO-8601 timezone-aware timestamp or datetime and normalize to UTC."""
     if isinstance(value, datetime):
         parsed = value
     elif isinstance(value, str) and value.strip():
@@ -101,25 +137,16 @@ def parse_iso_utc(value: object, *, allow_naive: bool = False) -> datetime:
     else:
         raise ValueError("expected non-empty ISO 8601 string or datetime")
     if parsed.tzinfo is None:
-        if not allow_naive:
-            raise ValueError("timestamp must have a time zone")
-        parsed = parsed.replace(tzinfo=UTC)
+        raise ValueError("timestamp must have a time zone")
     return parsed.astimezone(UTC)
 
 
-def validate_http_url(
-    value: str,
-    *,
-    label: str,
-    allow_fragment: bool = True,
-    validate_port: bool = False,
-) -> None:
-    """Validate an HTTP(S) URL without embedded credentials or whitespace."""
+def validate_http_url(value: str, *, label: str, allow_fragment: bool = True) -> None:
+    """Validate an HTTP(S) URL including port bounds and no embedded credentials."""
     try:
         ep = urlsplit(value)
         host = ep.hostname
-        if validate_port:
-            _ = ep.port
+        _ = ep.port
     except ValueError:
         raise ValueError(f"{label} must be a valid HTTP URL") from None
     if (
@@ -149,25 +176,31 @@ def redact_secrets(text: str, environ: Mapping[str, str] | None = None) -> str:
     return _EMAIL_RE.sub("[EMAIL]", scrubbed)
 
 
-def is_sensitive_header(name: str) -> bool:
-    low = name.lower()
-    return low in _SENSITIVE_HEADER_NAMES or bool(_SENSITIVE_HEADER_RE.search(low))
-
-
-def sanitize_headers(headers: Mapping[str, Any]) -> dict[str, str]:
-    """Copy HTTP headers with credential-bearing values replaced by 'REDACTED'."""
-    return {
-        str(k): "REDACTED" if is_sensitive_header(str(k)) else str(v) for k, v in headers.items()
-    }
+def sanitize_headers(headers: Mapping[str, Any]) -> dict[str, Any]:
+    """Copy HTTP headers preserving list values while redacting credential-bearing headers."""
+    out: dict[str, Any] = {}
+    for k, v in headers.items():
+        key = str(k)
+        low = key.lower()
+        if low in _SENSITIVE_HEADER_NAMES or _SENSITIVE_HEADER_RE.search(low):
+            out[key] = ["REDACTED"] if isinstance(v, list) else "REDACTED"
+        else:
+            out[key] = list(v) if isinstance(v, list) else str(v)
+    return out
 
 
 def redact_url(url: str) -> str:
-    """Strip URL userinfo and redact sensitive query parameter values."""
-    parts = urlsplit(url)
+    """Strip URL userinfo and redact sensitive query parameter values without raising."""
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname
+        port = parts.port
+    except ValueError:
+        return _SECRET_VAL_RE.sub("[REDACTED]", url)
     netloc = parts.netloc
-    if parts.hostname:
-        host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
-        netloc = f"{host}:{parts.port}" if parts.port is not None else host
+    if host:
+        fmt_host = f"[{host}]" if ":" in host else host
+        netloc = f"{fmt_host}:{port}" if port is not None else fmt_host
     query = parts.query
     if query:
         pairs = parse_qsl(query, keep_blank_values=True)
@@ -177,7 +210,7 @@ def redact_url(url: str) -> str:
 
 
 def redact_url_credentials(detail: str, url: str | None, *, placeholder: str) -> str:
-    """Redact a full URL string and any embedded credentials from an error message."""
+    """Redact a full URL string and embedded passwords without clobbering usernames."""
     redacted = detail
     if not url:
         return redacted
@@ -188,11 +221,15 @@ def redact_url_credentials(detail: str, url: str | None, *, placeholder: str) ->
         parsed = urlsplit(cleaned)
     except ValueError:
         return redacted
+    base = parsed.scheme.split("+", 1)[0].lower()
+    if base in {"postgres", "postgresql"}:
+        pg_norm = urlunsplit(
+            ("postgresql", parsed.netloc, parsed.path, parsed.query, parsed.fragment)
+        )
+        redacted = redacted.replace(pg_norm, placeholder)
     secrets: set[str] = set()
     if parsed.password:
         secrets.update((parsed.password, unquote(parsed.password)))
-    if parsed.username:
-        secrets.update((parsed.username, unquote(parsed.username)))
     if parsed.query:
         for k, v in parse_qsl(parsed.query, keep_blank_values=True):
             if k.lower() == "password" and v:

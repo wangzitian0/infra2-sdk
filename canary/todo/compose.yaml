@@ -1,6 +1,5 @@
 # Canary Todo without a platform: the app, Postgres, Redis and an S3 store on one network.
-# It proves that the app needs only the variables of env.manifest.json (canary_settings.py).
-# Every value here is a local test value. Build context: the infra2-sdk repository root.
+# Every setting is declared once on CanarySettings (`canary_settings.py`).
 #
 #   docker compose -f canary/todo/compose.yaml up --build --wait
 #   curl -f http://127.0.0.1:8000/api/canary/status
@@ -111,7 +110,7 @@ services:
         http.server.ThreadingHTTPServer(("0.0.0.0", 4318), H).serve_forever()
 
   db-init:
-    # One shot: create the canary enum type checked by schema_check, then exit.
+    # One shot: create the canary enum type and todos table checked by schema gate, then exit.
     image: infra2-canary-todo:local
     pull_policy: never
     depends_on:
@@ -127,12 +126,11 @@ services:
       - -c
       - |
         import os, psycopg
-        from canary_schema import ENSURE_ENUM_SQL
+        from canary_schema import ENSURE_SCHEMA_SQL
         with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as conn:
-            conn.execute(ENSURE_ENUM_SQL)
+            conn.execute(ENSURE_SCHEMA_SQL)
 
   todo:
-    # The image that s3-init builds.
     image: infra2-canary-todo:local
     pull_policy: never
     depends_on:

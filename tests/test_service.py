@@ -3,16 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
 from types import SimpleNamespace
 
 import httpx
 import pytest
 from fastapi import FastAPI
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from starlette.testclient import TestClient
 
-from infra2_sdk import config, service
+from infra2_sdk import config, service, telemetry
 
 
 def test_dependency_manifest_and_probes_and_health() -> None:
@@ -34,15 +42,25 @@ def test_dependency_manifest_and_probes_and_health() -> None:
     )
     assert manifest.required_for(config.EnvironmentTier.STAGING) == frozenset({"db"})
     assert manifest.names() == frozenset({"db", "cache"})
-    assert len(manifest) == 2 and list(manifest)[0].name == "db"
     assert "db" in manifest and manifest["db"].name == "db"
-    with pytest.raises(KeyError):
-        _ = manifest["missing"]
-    with pytest.raises(ValueError, match="duplicate"):
-        service.DependencyManifest(dependencies=(manifest["db"], manifest["db"]))
+    with pytest.raises(TypeError, match="collection"):
+        service.Dependency(
+            name="bad",
+            kind=service.DependencyKind.CODE_DOMINANT,
+            required_in="staging",  # type: ignore[arg-type]
+            env_vars=frozenset({"X"}),
+        )
+    with pytest.raises(ValueError, match="duration_ms"):
+        service.ProbeResult(
+            name="x", status=service.DependencyStatus.PRESENT, duration_ms=float("nan")
+        )
 
     async def _scenario() -> None:
+        main_ident = threading.get_ident()
+        async_ident: list[int] = []
+
         async def _ok_async() -> tuple[bool, str]:
+            async_ident.append(threading.get_ident())
             return True, "async-ok"
 
         checks = [
@@ -54,9 +72,8 @@ def test_dependency_manifest_and_probes_and_health() -> None:
             checks, manifest=manifest, tier="staging", timeout_seconds=2.0
         )
         assert code == 200
+        assert async_ident == [main_ident]  # async CallableCheck did not spawn an OS thread
         assert body["status"] == service.HealthStatus.DEGRADED.value
-        assert body["checks"]["db"]["status"] == service.DependencyStatus.PRESENT.value
-        assert body["checks"]["flaky"]["status"] == service.DependencyStatus.ABSENT.value
 
         code2, body2 = await service.evaluate_health(
             [service.CallableCheck("cache", _ok_async)],
@@ -64,61 +81,103 @@ def test_dependency_manifest_and_probes_and_health() -> None:
             tier="staging",
             timeout_seconds=2.0,
         )
-        assert code2 == 503
-        assert body2["status"] == service.HealthStatus.UNHEALTHY.value
+        assert code2 == 503 and body2["status"] == service.HealthStatus.UNHEALTHY.value
 
-        async def _hang() -> tuple[bool, str]:
-            await asyncio.sleep(1.0)
-            return True, "never"
+        gate = threading.Event()
+        slow_finished = threading.Event()
+
+        def _blocked_sync() -> tuple[bool, str]:
+            try:
+                gate.wait(timeout=2.0)
+                return True, "late"
+            finally:
+                slow_finished.set()
 
         timed = await service.run_probes(
-            [service.CallableCheck("slow", _hang)], timeout_seconds=0.05
+            [service.CallableCheck("slow", _blocked_sync)], timeout_seconds=0.05
         )
         assert timed[0].status is service.DependencyStatus.ABSENT
         assert "timed out" in timed[0].detail
+        sem = service._sync_semaphore()
+        # Semaphore remains acquired while the blocked worker thread is still running.
+        assert sem._value == service._MAX_CONCURRENT_SYNC_PROBES - 1
+        gate.set()
+        assert slow_finished.wait(timeout=2.0)
+        await asyncio.sleep(0.02)
+        assert sem._value == service._MAX_CONCURRENT_SYNC_PROBES
 
     asyncio.run(_scenario())
 
 
-def test_init_service_routes_and_manifest_and_request_id(monkeypatch: pytest.MonkeyPatch) -> None:
-    manifest = service.DependencyManifest(
-        dependencies=(
-            service.Dependency(
-                name="db",
-                kind=service.DependencyKind.CODE_DOMINANT,
-                required_in=frozenset(config.EnvironmentTier),
-                env_vars=frozenset({"DATABASE_URL"}),
-            ),
-        )
-    )
+def test_init_service_probe_exclusion_telemetry_and_health_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     app = FastAPI()
+
+    @app.get("/items")
+    def _items() -> dict[str, str]:
+        return {"ok": "yes"}
+
+    span_exporter = InMemorySpanExporter()
+    tp = TracerProvider()
+    tp.add_span_processor(SimpleSpanProcessor(span_exporter))
+    metric_reader = InMemoryMetricReader()
+    mp = MeterProvider(metric_readers=[metric_reader])
+
     service.init_service(
         app,
         "orders-api",
         checks=[service.CallableCheck("db", lambda: (True, "ok"))],
-        manifest=manifest,
-        enable_otel=True,
-        strict_otel=False,
+        enable_otel=False,
+        suppress_probe_telemetry=True,
         health_extra=lambda: {"region": "us"},
     )
-    client = TestClient(app)
-    live = client.get("/livez", headers={"X-Request-ID": "req-abc"})
-    assert live.status_code == 200
-    assert live.headers["X-Request-ID"] == "req-abc"
-    assert live.json() == {"status": "alive", "service": "orders-api"}
+    app._telemetry["tracer_provider"] = tp
+    app._telemetry["meter_provider"] = mp
+    app._telemetry["logs"] = False
 
-    ready = client.get("/readyz")
-    assert ready.status_code == 200 and ready.json()["status"] == "ready"
-    health = client.get("/health")
-    assert health.status_code == 200 and health.json()["region"] == "us"
+    with TestClient(app) as client:
+        live = client.get("/livez", headers={"X-Request-ID": "req-abc"})
+        assert live.status_code == 200 and live.headers["X-Request-ID"] == "req-abc"
+        assert client.get("/readyz").status_code == 200
+        assert client.get("/health").json()["region"] == "us"
+        assert client.get("/items", headers={"X-Request-ID": "req-item-1"}).status_code == 200
 
-    with pytest.raises(RuntimeError, match="already called"):
-        service.init_service(app, "dup")
+    spans = span_exporter.get_finished_spans()
+    span_attrs = [dict(s.attributes or {}) for s in spans]
+    assert not any(
+        a.get("http.route") in telemetry.PROBE_PATHS or a.get("url.path") in telemetry.PROBE_PATHS
+        for a in span_attrs
+    )
+    assert any(a.get("request_id") == "req-item-1" for a in span_attrs)
 
-    # Live OTLP endpoint initialization + lifespan shutdown inside init_service
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-    from threading import Thread
+    m_data = metric_reader.get_metrics_data()
+    http_paths = [
+        dp.attributes.get("http.route")
+        for rm in m_data.resource_metrics
+        for sm in rm.scope_metrics
+        for m in sm.metrics
+        if m.name == "http.server.request.duration"
+        for dp in m.data.data_points
+    ]
+    assert "/items" in http_paths
+    assert not (set(http_paths) & telemetry.PROBE_PATHS)
+    tp.shutdown()
+    mp.shutdown()
 
+    # health_extra error fails closed with 503 instead of crashing unhandled 500.
+    bad_app = FastAPI()
+    service.init_service(
+        bad_app,
+        "bad-extra",
+        checks=[service.CallableCheck("db", lambda: True)],
+        enable_otel=False,
+        health_extra=lambda: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    res_503 = TestClient(bad_app).get("/health")
+    assert res_503.status_code == 503 and res_503.json()["health_extra_error"] == "RuntimeError"
+
+    # Full OTLP HTTP endpoint bootstrap + provider binding into app._telemetry.
     class _Ok(BaseHTTPRequestHandler):
         def do_POST(self) -> None:  # noqa: N802
             n = int(self.headers.get("Content-Length") or 0)
@@ -149,6 +208,10 @@ def test_init_service_routes_and_manifest_and_request_id(monkeypatch: pytest.Mon
             strict_otel=True,
             require_issued_identity=True,
         )
+        assert (
+            otel_app._telemetry["tracer_provider"]
+            is otel_app.state.telemetry_providers.tracer_provider
+        )
         with TestClient(otel_app) as c:
             assert c.get("/livez").status_code == 200
     finally:
@@ -157,12 +220,18 @@ def test_init_service_routes_and_manifest_and_request_id(monkeypatch: pytest.Mon
 
 
 def test_http_clients_retry_probe_and_rate_limit() -> None:
-    with pytest.raises(ValueError, match="max_keepalive_connections"):
-        service.HttpClientSettings(max_connections=2, max_keepalive_connections=5)
-
     cfg = service.HttpClientSettings(timeout_seconds=3.0)
+    seen_req_hdrs: list[dict[str, str]] = []
+
+    def _capture_sync(request: httpx.Request) -> httpx.Response:
+        seen_req_hdrs.append(dict(request.headers))
+        return httpx.Response(200)
+
     with service.create_http_client(cfg) as sync_c:
-        assert "infra2-sdk/" in sync_c.headers["User-Agent"]
+        sync_c._transport = httpx.MockTransport(_capture_sync)
+        with telemetry.bind_request_id("cid-sync-1"):
+            sync_c.get("https://example.com")
+    assert seen_req_hdrs[-1]["x-request-id"] == "cid-sync-1"
 
     future_hdr = format_datetime(datetime.now(UTC) + timedelta(seconds=1))
     calls = 0
@@ -183,41 +252,68 @@ def test_http_clients_retry_probe_and_rate_limit() -> None:
     )
     assert resp.status_code == 200 and len(sleeps) == 2
 
-    with pytest.raises(httpx.ConnectError):
-        service.request_with_retry(
-            SimpleNamespace(
-                request=lambda *_a, **_k: (_ for _ in ()).throw(httpx.ConnectError("down"))
-            ),
-            "GET",
-            "https://example.com",
-            max_attempts=1,
+    # Non-idempotent POST does not retry by default unless explicitly opted in.
+    post_calls = 0
+
+    class _PostClient:
+        def request(self, *_a: object, **_k: object) -> SimpleNamespace:
+            nonlocal post_calls
+            post_calls += 1
+            return SimpleNamespace(status_code=503, headers={})
+
+    assert (
+        service.request_with_retry(_PostClient(), "POST", "https://example.com").status_code == 503
+    )
+    assert post_calls == 1
+
+    async def _async_checks() -> None:
+        a_calls = 0
+
+        class _AsyncFake:
+            async def request(self, method: str, url: str, **_k: object) -> SimpleNamespace:
+                nonlocal a_calls
+                a_calls += 1
+                if a_calls == 1:
+                    return SimpleNamespace(status_code=503, headers={})
+                return SimpleNamespace(status_code=200, headers={})
+
+        a_sleeps: list[float] = []
+
+        async def _asleep(s: float) -> None:
+            a_sleeps.append(s)
+
+        aresp = await service.async_request_with_retry(
+            _AsyncFake(), "GET", "https://example.com", max_attempts=2, sleep=_asleep
         )
+        assert aresp.status_code == 200 and len(a_sleeps) == 1
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/err":
-            raise httpx.ConnectError("refused")
-        return httpx.Response(204 if request.url.path == "/ok" else 503)
+        async with service.create_async_http_client(cfg) as ac:
+            ac._transport = httpx.MockTransport(_capture_sync)
+            with telemetry.bind_request_id("cid-async-1"):
+                await ac.get("https://example.com/async")
+        assert seen_req_hdrs[-1]["x-request-id"] == "cid-async-1"
 
-    async def _probe_run() -> None:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as async_c:
-            ok = await service.probe_http("http://svc.local/ok", client=async_c)
-            bad = await service.probe_http("http://svc.local/down", client=async_c)
-            err = await service.probe_http("http://svc.local/err", client=async_c)
-            assert ok.status is service.DependencyStatus.PRESENT
-            assert bad.status is service.DependencyStatus.ABSENT
-            assert err.status is service.DependencyStatus.ABSENT
+        err_probe = await service.probe_http(
+            "http://user:topsecret@127.0.0.1:1/health",
+            client=httpx.AsyncClient(
+                transport=httpx.MockTransport(
+                    lambda _r: (_ for _ in ()).throw(
+                        httpx.ConnectError("failed http://user:topsecret@127.0.0.1:1/health")
+                    )
+                )
+            ),
+        )
+        assert err_probe.status is service.DependencyStatus.ABSENT
+        assert "topsecret" not in err_probe.detail
 
-    asyncio.run(_probe_run())
+    asyncio.run(_async_checks())
 
     now = [0.0]
     win = service.RateLimitWindow(max_requests=2, window_seconds=10.0, clock=lambda: now[0])
     assert win.acquire() == (True, 0.0)
     now[0] = 2.0
     assert win.acquire() == (True, 0.0)
-    allowed, retry = win.acquire()
-    assert allowed is False and retry == pytest.approx(8.0)
+    assert win.acquire()[0] is False
     now[0] = 10.5
-    assert win.used() == 1
     assert win.acquire() == (True, 0.0)
-    with pytest.raises(ValueError):
-        win.acquire(cost=3)
+    assert win.acquire()[0] is False

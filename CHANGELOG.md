@@ -1,8 +1,25 @@
 # Changelog
 
-Versions follow the compatibility rules in the [README](README.md#compatibility). Release
-steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
-backfill from the merged pull requests.
+Versions follow `README.md`. Release steps are in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## 4.11.0 - 2026-11-26
+
+Deep repository cleanup, internal helper consolidation, Canary Todo deduplication, and function-level hardening across all six modules.
+
+### Removed / Consolidated
+
+- Merged single-caller internal modules `_schema_gate.py` -> `storage.py` and `_llm_runtime.py` -> `llm.py`, leaving `_core.py` as the sole internal helper module.
+- Deleted obsolete scripts/examples (`scripts/render_env_contract.py`, `scripts/render_app_contract.py`, `examples/runtime_check.py`), redundant generated Canary manifests (`canary/todo/env.manifest.json`, `canary/todo/env-reference.generated.md`), duplicated Canary protocol/subprocess tests, and dead SDK symbols (`is_loopback_host`, `BOOTSTRAP_CAP_SECONDS`, `ErrorResponse`, `DependencyStatus.SKIPPED`, `LlmSettings.*_reasoning_effort`).
+- Replaced hand-rolled PostgreSQL/S3/OTel/async-loop boilerplate in `canary/todo/app.py` and `worker.py` with direct SDK adapters (`storage.probe_postgres(..., verify_write=True)`, `storage.probe_s3(..., round_trip=True)`, `telemetry.get_tracer`/`get_meter`, `service.run_probes`, `service.create_http_client`).
+
+### Fixed & Hardened
+
+- `config`: real `shared_env.yaml` canonical casing and sensitivity checks in `check_shared_env`, strict `empty_ok` + `alias` handling in `validate_env`/`fingerprint`/`merge`, and shared `load_dotted_symbol` in `_core.py`.
+- `telemetry`: precise secret log key filtering (`SECRET_LOG_KEY_RE`, preserving `input_tokens`/`output_tokens`/`s3_key`), OTLP `request_id` injection, `TelemetryProviders.force_flush()`, isolated `shutdown()`, and `get_tracer()`/`get_meter()`.
+- `service`: restored FastAPI `0.162+` native telemetry probe exclusion & provider binding, fixed `_run_sync_probe` semaphore/thread leak and native async `CallableCheck` execution, added `async_request_with_retry()` and outbound `X-Request-ID`/`traceparent` injection.
+- `storage`: wired `metadata` into `check_schema()` table & `ARRAY`/`TypeDecorator` enum inspection, excluded views/`alembic_version`, fixed enum/migration rollback gate logic and `psycopg` Alembic head check, unquoted percent-encoded Redis credentials, added `statement_timeout` + `verify_write` on `probe_postgres`, and cleaned S3 round-trip objects/clients.
+- `llm`: fixed binary `bytes` SHA-256 hashing (`__bytes_sha256__`), preserved PydanticAI control-flow exceptions (`ModelRetry`, `UnexpectedModelBehavior`, etc.) and caller stream exceptions, cached duration histograms, and scrubbed VCR bodies.
+- `delivery`: lazy `stages.yaml` loading (`CELL_POLICIES`), full Schema v3 `RuntimeHooksManifest` (`cells.add/remove`, `off`, `bootstrap`, `issue`, `artifacts_dir`), enforced `expires_at` and `writes=True` prod guard, decoded `TimeoutExpired` bytes stdout/stderr, and rolling-deploy `poll_until_healthy` improvements.
 
 ## 4.10.2 - 2026-11-26
 

@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import difflib
 import functools
 import hashlib
-import importlib
 import json
 import os
 import re
@@ -18,9 +18,15 @@ from pathlib import Path
 from typing import Any, Final, get_args
 
 import yaml
-from pydantic import AliasChoices, BaseModel, SecretStr, field_validator, model_validator
+from pydantic import BaseModel, SecretStr, field_validator, model_validator
 
-from infra2_sdk._core import ContractModel, canonical_sha256, require_contract_version
+from infra2_sdk._core import (
+    ContractModel,
+    canonical_sha256,
+    canonicalize_preview_name,
+    load_dotted_symbol,
+    require_contract_version,
+)
 
 MANIFEST_CONTRACT_VERSION: Final[int] = 2
 
@@ -70,19 +76,26 @@ _FIELD_SCOPES = frozenset({"env", "project"})
 _CI_POLICIES = frozenset({"forbidden", "allowed"})
 _PROVIDED_BY_RE = re.compile(r"\A[a-z][a-z0-9_]*/[a-z][a-z0-9_-]*:[A-Za-z_][A-Za-z0-9_]*\Z")
 _PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
-_ENV_PLACEHOLDER_RE = re.compile(r"\{env:([A-Z][A-Z0-9_]*)\}")
+_ENV_PLACEHOLDER_RE = re.compile(r"\{env:([A-Za-z_][A-Za-z0-9_]*)\}")
 _IDENT_RE = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]*\Z")
-_RENDER_KEYS = ("source", "provided_by", "composed_from", "store_key", "empty_ok", "scope")
+_ENV_VAR_RE = re.compile(r"\A[A-Z][A-Z0-9_]*\Z")
+_RENDER_KEYS = (
+    "source",
+    "provided_by",
+    "composed_from",
+    "store_key",
+    "empty_ok",
+    "scope",
+    "sensitive",
+    "required",
+)
 
 _CANARY_SLOT = "canary-preview"
 _LOCAL_DEV_VALUES = frozenset({"dev", "development", "local", "local_dev"})
 _LOCAL_TEST_VALUES = frozenset({"test", "testing", "ci", "local_ci", "local_test"})
 _PRODUCTION_VALUES = frozenset({"prod", "production"})
 _PREVIEW_RE = re.compile(
-    r"\A(?:branch-[a-z0-9][a-z0-9_-]*|pr-[1-9][0-9]*|commit-[0-9a-f]{7,40}|tag-v[0-9]+-[0-9]+-[0-9]+)\Z"
-)
-_UNDERSCORE_PREVIEW_RE = re.compile(
-    r"\A(?P<prefix>branch|pr|commit|tag)_(?P<rest>[a-z0-9][a-z0-9._-]*)\Z"
+    r"\A(?:canary|branch-[a-z0-9][a-z0-9._-]*|pr-[1-9][0-9]*|commit-[0-9a-f]{7,40}|tag-v[0-9]+-[0-9]+-[0-9]+)\Z"
 )
 
 
@@ -91,19 +104,12 @@ class RuntimeEnvironment(ContractModel):
     tier: EnvironmentTier
 
 
-def _canonicalize_preview_name(cleaned: str) -> str:
-    if cleaned == "canary_preview":
-        return _CANARY_SLOT
-    match = _UNDERSCORE_PREVIEW_RE.match(cleaned)
-    if match is not None:
-        rest = match["rest"].replace("_", "-") if match["prefix"] == "tag" else match["rest"]
-        return f"{match['prefix']}-{rest}"
-    return cleaned
-
-
 def is_preview_alias(value: str) -> bool:
-    """Return True when ``value`` names a preview slot pattern."""
-    alias = _canonicalize_preview_name(value.strip().lower())
+    """Return True when ``value`` names a canonical or shorthand preview slot."""
+    cleaned = value.strip().lower()
+    if cleaned in ("pr", "canary") or cleaned.startswith("preview/"):
+        return True
+    alias = canonicalize_preview_name(cleaned)
     return alias == _CANARY_SLOT or bool(_PREVIEW_RE.match(alias))
 
 
@@ -114,8 +120,6 @@ def resolve_tier(value: str | EnvironmentTier, *, github_actions: bool = False) 
     if not isinstance(value, str):
         raise TypeError("environment must be a string or EnvironmentTier")
     cleaned = value.strip().lower()
-    if cleaned in ("pr", "canary") or cleaned.startswith("preview/"):
-        return EnvironmentTier.PREVIEW
     normalized = cleaned.replace("-", "_")
     if normalized in _LOCAL_DEV_VALUES:
         return EnvironmentTier.LOCAL_DEV
@@ -123,12 +127,7 @@ def resolve_tier(value: str | EnvironmentTier, *, github_actions: bool = False) 
         return EnvironmentTier.GITHUB_CI if github_actions else EnvironmentTier.LOCAL_TEST
     if normalized == EnvironmentTier.GITHUB_CI.value:
         return EnvironmentTier.GITHUB_CI
-    alias = _canonicalize_preview_name(cleaned)
-    if (
-        normalized == EnvironmentTier.PREVIEW.value
-        or alias == _CANARY_SLOT
-        or _PREVIEW_RE.match(alias)
-    ):
+    if normalized == EnvironmentTier.PREVIEW.value or is_preview_alias(cleaned):
         return EnvironmentTier.PREVIEW
     if normalized == EnvironmentTier.STAGING.value:
         return EnvironmentTier.STAGING
@@ -168,7 +167,7 @@ def resolve_environment(
     )
     github_actions = str(values.get("GITHUB_ACTIONS", "")).strip().lower() == "true"
     tier = resolve_tier(raw, github_actions=github_actions)
-    canonical_name = _canonicalize_preview_name(raw.strip().lower())
+    canonical_name = canonicalize_preview_name(raw.strip().lower())
     name = (
         canonical_name
         if tier is EnvironmentTier.PREVIEW and canonical_name != "preview"
@@ -186,17 +185,40 @@ def _cached_shared_env_contract() -> dict[str, Any]:
     return data
 
 
-def shared_env_contract() -> Mapping[str, Any]:
-    """Return the cross-repository shared environment variable table."""
-    return _cached_shared_env_contract()
+def shared_env_contract() -> dict[str, Any]:
+    """Return a fresh copy of the cross-repository shared environment variable table."""
+    return copy.deepcopy(_cached_shared_env_contract())
 
 
-def check_shared_env(names: Iterable[str]) -> list[str]:
-    """Validate declared shared env names against canonical rules."""
+def check_shared_env(target: EnvironmentManifest | Iterable[str]) -> list[str]:
+    """Validate env names or an EnvironmentManifest against ``shared_env.yaml``."""
+    contract = _cached_shared_env_contract()
+    canonical_by_lower: dict[str, tuple[str, bool]] = {}
+    for entries in contract["groups"].values():
+        for entry in entries:
+            canonical = str(entry["name"])
+            canonical_by_lower[canonical.lower()] = (canonical, bool(entry.get("sensitive", False)))
+
     issues: list[str] = []
-    for raw in sorted({str(item).strip() for item in names if str(item).strip()}):
-        if raw.lower() in {"env", "app_env", "image_tag", "service_name"}:
-            issues.append(f"{raw} is not a canonical shared environment variable")
+    if isinstance(target, EnvironmentManifest):
+        for fld in target.fields:
+            if not _ENV_VAR_RE.fullmatch(fld.env):
+                issues.append(f"{fld.env}: must be uppercase POSIX identifier")
+            matched = canonical_by_lower.get(fld.env.lower())
+            if matched is not None:
+                canonical, expected_sensitive = matched
+                if fld.env != canonical:
+                    issues.append(f"{fld.env}: use canonical spelling {canonical}")
+                if expected_sensitive and not fld.sensitive:
+                    issues.append(f"{fld.env}: shared variable must be marked sensitive=True")
+        return issues
+
+    for raw in sorted({str(item).strip() for item in target if str(item).strip()}):
+        matched = canonical_by_lower.get(raw.lower())
+        if matched is not None and raw != matched[0]:
+            issues.append(f"{raw}: use canonical spelling {matched[0]}")
+        elif not _ENV_VAR_RE.fullmatch(raw):
+            issues.append(f"{raw}: must be uppercase POSIX identifier")
     return issues
 
 
@@ -247,10 +269,6 @@ class EnvironmentField(ContractModel):
         return self
 
     @property
-    def key(self) -> str:
-        return self.store_key or self.env
-
-    @property
     def store_backed(self) -> bool:
         return self.source in _STORE_BACKED_SOURCES and not self.provided_by
 
@@ -261,18 +279,6 @@ class EnvironmentField(ContractModel):
     @property
     def composed_env(self) -> tuple[str, ...]:
         return tuple(dict.fromkeys(_ENV_PLACEHOLDER_RE.findall(self.composed_from)))
-
-    @property
-    def rendered(self) -> bool:
-        return self.store_backed or bool(self.provided_by) or bool(self.composed_from)
-
-
-def _validation_aliases(alias: Any) -> tuple[str, ...]:
-    if isinstance(alias, str):
-        return (alias,)
-    if isinstance(alias, AliasChoices):
-        return tuple(str(c) for c in alias.choices if isinstance(c, str))
-    return tuple(str(c) for c in getattr(alias, "choices", ()) if isinstance(c, str))
 
 
 def _is_secret_annotation(annotation: Any) -> bool:
@@ -317,16 +323,12 @@ class EnvironmentManifest(ContractModel):
                 owners[env_name] = fld.field
         return self
 
-    def by_source(self, *sources: FieldSource | str) -> tuple[EnvironmentField, ...]:
-        wanted = {FieldSource(s) for s in sources}
-        return tuple(f for f in self.fields if f.source in wanted)
-
     def store_backed(self) -> tuple[EnvironmentField, ...]:
         return tuple(f for f in self.fields if f.store_backed)
 
     def validate_offline(self) -> list[str]:
         """Return contract violations in this manifest without external infrastructure."""
-        errors: list[str] = []
+        errors: list[str] = list(check_shared_env(self))
         declared = {f.env for f in self.fields}
         for f in self.fields:
             settled = f.empty_ok or f.required or f.injected
@@ -345,14 +347,25 @@ class EnvironmentManifest(ContractModel):
             for key in f.composed_keys:
                 if key not in declared and key not in (provider_key, own_key):
                     errors.append(f"{f.env}: composed_from references undeclared {key}")
+            for env_ref in f.composed_env:
+                if not _ENV_VAR_RE.fullmatch(env_ref):
+                    errors.append(f"{f.env}: composed_from env:{env_ref} must be uppercase POSIX")
         return errors
 
     def fingerprint(self, environ: Mapping[str, str]) -> str:
-        lines = [
-            f"{f.env}={hashlib.sha256(environ[f.env].encode()).hexdigest()}"
-            for f in sorted(self.fields, key=lambda item: item.env)
-            if f.env in environ
-        ]
+        """Compute deterministic SHA-256 fingerprint across configured manifest values."""
+        lines: list[str] = []
+        for f in sorted(self.fields, key=lambda item: item.env):
+            val = next(
+                (
+                    raw if f.sensitive else raw.strip()
+                    for cand in (f.env, *f.aliases)
+                    if isinstance(raw := environ.get(cand), str) and raw.strip()
+                ),
+                None,
+            )
+            if val is not None:
+                lines.append(f"{f.env}={hashlib.sha256(val.encode()).hexdigest()}")
         return canonical_sha256(lines)
 
     def render_markdown(self, *, title: str = "") -> str:
@@ -365,8 +378,8 @@ class EnvironmentManifest(ContractModel):
                 f"## {group}",
                 "",
                 "| Variable | Required | Sensitive | Source | Description |",
+                "|---|---|---|---|---|",
             ]
-            lines.append("|---|---|---|---|---|")
             for fld in flds:
                 name = f"`{fld.env}`"
                 if fld.aliases:
@@ -400,7 +413,12 @@ class EnvironmentManifest(ContractModel):
         prefix = prefix if isinstance(prefix, str) else ""
         fields: list[EnvironmentField] = []
         for name, info in model.model_fields.items():
-            val_aliases = list(_validation_aliases(info.validation_alias))
+            raw_alias = info.validation_alias
+            val_aliases = (
+                [raw_alias]
+                if isinstance(raw_alias, str)
+                else [str(c) for c in getattr(raw_alias, "choices", ()) if isinstance(c, str)]
+            )
             canonical = val_aliases[0] if val_aliases else f"{prefix}{info.alias or name}".upper()
             aliases = tuple(a for a in val_aliases[1:] if a != canonical)
             extra = info.json_schema_extra if isinstance(info.json_schema_extra, Mapping) else {}
@@ -472,11 +490,10 @@ class EnvironmentManifest(ContractModel):
 class EnvironmentValidation(ContractModel):
     missing: tuple[str, ...] = ()
     conflicts: tuple[str, ...] = ()
-    invalid: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
-        return not (self.missing or self.conflicts or self.invalid)
+        return not (self.missing or self.conflicts)
 
     def format_error(self, *, source: str = "") -> str:
         prefix = f"{source}: " if source else ""
@@ -485,8 +502,6 @@ class EnvironmentValidation(ContractModel):
             parts.append(f"missing {len(self.missing)} variable(s): {', '.join(self.missing)}")
         if self.conflicts:
             parts.append(f"conflicting variable(s): {', '.join(self.conflicts)}")
-        if self.invalid:
-            parts.append(f"invalid variable(s): {', '.join(self.invalid)}")
         return prefix + "; ".join(parts) if parts else "environment ok"
 
 
@@ -536,25 +551,12 @@ def assert_env(
         raise RuntimeError(result.format_error(source=label))
 
 
-def _load_settings_class(target: str) -> type[Any]:
-    module_name, _, attr = target.partition(":")
-    if not module_name or not attr:
-        raise ValueError(f"settings target must be 'module:Class', not {target!r}")
-    if "" not in sys.path:
-        sys.path.insert(0, "")
-    obj: Any = importlib.import_module(module_name)
-    for part in attr.split("."):
-        obj = getattr(obj, part)
-    if not isinstance(obj, type):
-        raise ValueError(f"{target} is not a class")
-    return obj
-
-
 def _handle_export_or_check(args: argparse.Namespace, *, check_only: bool) -> int:
     if args.json is None and args.markdown is None:
-        raise SystemExit("pass at least one of --json or --markdown")
+        print("pass at least one of --json or --markdown", file=sys.stderr)
+        return 1
     manifest = EnvironmentManifest.from_model(
-        _load_settings_class(args.settings), source=args.source
+        load_dotted_symbol(args.settings, require_type=True), source=args.source
     )
     if offline_errors := manifest.validate_offline():
         for err in offline_errors:

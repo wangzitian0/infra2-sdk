@@ -1,6 +1,6 @@
 [project]
 name = "infra2-sdk"
-version = "4.10.2"
+version = "4.11.0"
 description = "Clean MECE environment contracts, telemetry, service, storage, LLM, and delivery SDK"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -107,6 +107,6 @@ target-version = "py311"
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.ruff.lint.per-file-ignores]
-"canary/todo/app.py" = ["E501", "B008", "SIM117"]
+"canary/todo/app.py" = ["E501", "B008"]
 "canary/todo/ui.py" = ["E501"]
-"canary/todo/tests/test_canary_depth.py" = ["E501"]
+"canary/todo/tests/test_canary.py" = ["E501"]
