@@ -2,6 +2,27 @@
 
 Versions follow `README.md`. Release steps are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## 4.12.0 - 2026-11-26
+
+### Removed
+
+- Pruned 72 superseded, internal-only, single-repo, and control-plane-only exports across all six modules (`126` -> `54` public submodule exports) and enforced `dir(module) == __all__`:
+  - `config`: removed `validate_env`, `EnvironmentValidation`, `EnvironmentConflictError`, `resolve_environment`, `RuntimeEnvironment`, `shared_env_contract`, `check_shared_env`, `is_preview_alias`, `FieldSource`, `MANIFEST_CONTRACT_VERSION`, `PLATFORM_OWNED_TIERS`, `EnvironmentManifest.render_markdown()`, `--markdown`/`--title`, and public `main`.
+  - `telemetry`: removed `OtelSettings`, `configure_telemetry`, `configure_logging`, `JsonLogFormatter`, `bind_request_id`, `signal_endpoint`, `PROBE_PATHS`, `SignalKind`, and `REQUIRED_IDENTITY_ATTRIBUTES`; shared telemetry bootstrap lives in `_core.py`.
+  - `service`: removed/privatized `run_probes`, `evaluate_health`, `HealthStatus`, `ProbeResponse`, `HealthResponse`, `DependencyCheck`, and `CheckOutcome`.
+  - `storage`: privatized `normalize_postgres_dsn` and schema-gate internals (`check_schema`, `enums_from_metadata`, `check_enums`, `classify_rollback`, `EnumSchemaSpec`, `EnumDiscrepancy`, `EnumDiscrepancyKind`, `SchemaDiffReport`, `TableColumn`, `ROLLBACK_CLASS_*`, `EXIT_*`, `GateNotEvaluated`, `main`) behind `python -m infra2_sdk.storage check-schema`.
+  - `llm`: deleted `create_llm_model`, `ModelRole`, `ThinkingLevel`, `vcr_llm_config`, `allow_vcr_model_requests`, recursive `FallbackModel` unwrapping, and privatized `_GuardedLlmModel`; `create_llm_agent` is the sole LLM entrypoint.
+  - `delivery`: deleted `DeployOperation`, `DeployType`, `DeployRequest`, `record_verdicts`, and `--verdicts-out`, and privatized CLI/runner internals behind `python -m infra2_sdk.delivery {check-hooks|run-cell|poll}`.
+- `packaging`: moved `dev` dependencies out of `[project.optional-dependencies]` into `[dependency-groups]`.
+
+### Fixed & Hardened
+
+- `__init__`: resolve `__version__` lazily on attribute access for zero import-time filesystem/metadata reads.
+- `_core` / `storage`: prevent password strings such as `"postgres"` from corrupting `postgresql://` scheme prefixes in `redact_url_credentials`, add `--import` back to `python -m infra2_sdk.storage check-schema`, parameterize `probe_postgres(..., probe_table=...)`, align `S3Settings` path-style docstring, and fix `probe_s3` exception URL redaction.
+- `config`: restore retired env rejection (`APP_ENV`, `IMAGE_TAG`, `SERVICE_NAME`) inside `EnvironmentManifest.validate_offline()`.
+- `delivery`: expose `CELL_POLICIES` in `dir(infra2_sdk.delivery)`.
+- `canary`: remove `service.run_probes` and redundant `asyncio.to_thread` wrapper in `canary/todo/app.py`, scrub DB errors on HTTP 503 responses, and exercise `TelemetryProviders`, `bind_log_context`, `create_async_http_client`, and `async_request_with_retry`.
+
 ## 4.11.2 - 2026-11-26
 
 ### Changed

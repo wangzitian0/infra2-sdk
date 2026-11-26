@@ -43,7 +43,6 @@ from infra2_sdk.llm import (
     schema_sha256,
 )
 from infra2_sdk.service import (
-    CallableCheck,
     Dependency,
     DependencyKind,
     DependencyManifest,
@@ -51,9 +50,10 @@ from infra2_sdk.service import (
     HttpClientSettings,
     ProbeResult,
     RateLimitWindow,
+    async_request_with_retry,
+    create_async_http_client,
     init_service,
     probe_http,
-    run_probes,
 )
 from infra2_sdk.storage import (
     PostgresSettings,
@@ -386,10 +386,22 @@ def _check_s3(cfg: CanarySettings) -> dict[str, Any]:
     return _to_outcome(probe_s3(settings, key_prefix="canary/", round_trip=True))
 
 
-async def _check_http(label: str, url: str) -> dict[str, Any]:
+async def _check_http(label: str, url: str, *, with_retry: bool = False) -> dict[str, Any]:
     started = time.perf_counter()
     if not url:
         return _unconfigured(started, f"{label} is not configured")
+    if with_retry:
+        async with create_async_http_client(HttpClientSettings(timeout_seconds=3.0)) as client:
+            try:
+                resp = await async_request_with_retry(client, "GET", url, max_attempts=2)
+            except Exception as exc:  # noqa: BLE001
+                return _outcome(
+                    FAIL, f"{type(exc).__name__}: {exc}", latency_ms=_elapsed_ms(started)
+                )
+            ok = 200 <= resp.status_code < 400
+            return _outcome(
+                PASS if ok else FAIL, f"HTTP {resp.status_code}", latency_ms=_elapsed_ms(started)
+            )
     res = await probe_http(url, name=label, settings=HttpClientSettings(timeout_seconds=3.0))
     ok = res.status is DependencyStatus.PRESENT and res.detail.startswith(("HTTP 2", "HTTP 3"))
     return _outcome(PASS if ok else FAIL, res.detail, latency_ms=res.duration_ms)
@@ -426,56 +438,65 @@ def _capability_summary(cfg: CanarySettings) -> dict[str, Any]:
 
 
 def run_all_checks() -> dict[str, Any]:
-    """Execute all gating and informational dependency probes through `service.run_probes`."""
+    """Execute all gating and informational dependency probes concurrently with bounded timeouts."""
     cfg = _settings()
-    outcomes: dict[str, dict[str, Any]] = {}
     tracer = get_tracer(SERVICE_TRACER_NAME)
 
-    def _probe_check(name: str, fn: Callable[[], Any], *, is_async: bool = False) -> CallableCheck:
-        async def _run() -> ProbeResult:
-            with tracer.start_as_current_span(
-                f"canary.check.{name}", attributes={"canary.check": name}
-            ) as span:
-                res = await fn() if is_async else await asyncio.to_thread(fn)
-                span.set_attribute("canary.status", res["status"])
-                span.set_attribute("canary.latency_ms", res["latency_ms"])
-                outcomes[name] = res
-                return _record_probe_telemetry(name, res)
+    async def _run_check(
+        name: str, fn: Callable[[], Any], *, is_async: bool = False
+    ) -> tuple[str, dict[str, Any]]:
+        started = time.perf_counter()
+        with tracer.start_as_current_span(
+            f"canary.check.{name}", attributes={"canary.check": name}
+        ) as span:
+            try:
+                res = await asyncio.wait_for(
+                    fn() if is_async else asyncio.to_thread(fn),
+                    timeout=CHECK_DEADLINE_SECONDS,
+                )
+            except TimeoutError:
+                res = _outcome(
+                    FAIL,
+                    f"probe timed out after {CHECK_DEADLINE_SECONDS:g}s",
+                    latency_ms=CHECK_DEADLINE_SECONDS * 1000,
+                )
+            except Exception as exc:  # noqa: BLE001
+                res = _outcome(
+                    FAIL, f"{type(exc).__name__}: {exc}", latency_ms=_elapsed_ms(started)
+                )
+            span.set_attribute("canary.status", res["status"])
+            span.set_attribute("canary.latency_ms", res["latency_ms"])
+            _record_probe_telemetry(name, res)
+            return name, res
 
-        return CallableCheck(name, _run)
-
-    checks = [
-        _probe_check(
-            "postgres", lambda: _check_postgres(CanarySettings.read(os.environ, "database_url"))
+    specs: tuple[tuple[str, Callable[[], Any], bool], ...] = (
+        (
+            "postgres",
+            lambda: _check_postgres(CanarySettings.read(os.environ, "database_url")),
+            False,
         ),
-        _probe_check("redis", lambda: _check_redis(cfg.redis_url)),
-        _probe_check("s3", lambda: _check_s3(cfg)),
-        _probe_check(
-            "signoz",
-            lambda: _check_http("SIGNOZ_OTEL_COLLECTOR", cfg.signoz_otel_collector),
-            is_async=True,
-        ),
-        _probe_check(
+        ("redis", lambda: _check_redis(cfg.redis_url), False),
+        ("s3", lambda: _check_s3(cfg), False),
+        ("signoz", lambda: _check_http("SIGNOZ_OTEL_COLLECTOR", cfg.signoz_otel_collector), True),
+        (
             "openpanel",
             lambda: _check_http(
                 "OPENPANEL_API_URL", cfg.openpanel_health_url or cfg.openpanel_api_url
             ),
-            is_async=True,
+            True,
         ),
-        _probe_check(
+        (
             "authentik",
-            lambda: _check_http("AUTHENTIK_ENDPOINT", cfg.authentik_endpoint),
-            is_async=True,
+            lambda: _check_http("AUTHENTIK_ENDPOINT", cfg.authentik_endpoint, with_retry=True),
+            True,
         ),
-    ]
+    )
+
+    async def _gather_all() -> list[tuple[str, dict[str, Any]]]:
+        return list(await asyncio.gather(*(_run_check(n, fn, is_async=a) for n, fn, a in specs)))
 
     with tracer.start_as_current_span("canary.run") as run_span:
-        probe_results = asyncio.run(run_probes(checks, timeout_seconds=CHECK_DEADLINE_SECONDS))
-        final_checks: dict[str, dict[str, Any]] = {}
-        for res in probe_results:
-            final_checks[res.name] = outcomes.get(
-                res.name, _outcome(FAIL, res.detail, latency_ms=res.duration_ms)
-            )
+        final_checks = dict(asyncio.run(_gather_all()))
         unconfigured = [n for n in GATING_CHECKS if final_checks[n]["status"] == UNCONFIGURED]
         failed = [n for n in GATING_CHECKS if final_checks[n]["status"] not in (PASS, UNCONFIGURED)]
         all_pass = not failed and not unconfigured
@@ -579,9 +600,10 @@ def _db_unavailable_response(exc: Exception) -> JSONResponse | None:
         or type(exc).__module__.startswith("psycopg")
     ):
         return None
-    LOGGER.warning("Todo PostgreSQL storage unavailable: %s", exc)
+    scrubbed = redact_postgres_error(exc, CanarySettings.read(os.environ, "database_url"))
+    LOGGER.warning("Todo PostgreSQL storage unavailable: %s", scrubbed)
     return JSONResponse(
-        status_code=503, content={"error": "Todo database unavailable", "detail": str(exc)}
+        status_code=503, content={"error": "Todo database unavailable", "detail": scrubbed}
     )
 
 

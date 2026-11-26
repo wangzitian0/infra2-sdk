@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from subprocess import CompletedProcess
 from typing import Any
 
 import canary_schema
@@ -18,10 +17,9 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from starlette.testclient import TestClient
 
-from infra2_sdk.config import EnvironmentManifest, check_shared_env
-from infra2_sdk.delivery import RuntimeHooksManifest, resolve_check_cells, run_cell
+from infra2_sdk.config import EnvironmentManifest
+from infra2_sdk.delivery import RuntimeHooksManifest, resolve_check_cells
 from infra2_sdk.service import DependencyStatus, ProbeResult
-from infra2_sdk.storage import EnumSchemaSpec, enums_from_metadata
 
 
 def test_canary_endpoints_probes_and_status_cache(monkeypatch) -> None:
@@ -49,7 +47,15 @@ def test_canary_endpoints_probes_and_status_cache(monkeypatch) -> None:
             name="http", status=DependencyStatus.PRESENT, detail="HTTP 200", duration_ms=1.0
         )
 
+    seen_retry_urls: list[str] = []
+
+    async def _fake_retry(_client: Any, _method: str, url: str, **_k: Any) -> httpx.Response:
+        seen_retry_urls.append(url)
+        return httpx.Response(200, request=httpx.Request("GET", url))
+
     monkeypatch.setattr(todo_mod, "probe_http", _fake_probe_http)
+    monkeypatch.setattr(todo_mod, "async_request_with_retry", _fake_retry)
+    monkeypatch.setenv("AUTHENTIK_ENDPOINT", "https://auth.zitian.party/-/health/ready/")
     monkeypatch.setenv("OPENPANEL_API_URL", "https://openpanel.zitian.party/api")
     monkeypatch.setenv("OPENPANEL_HEALTH_URL", "http://platform-openpanel-api:3000/healthcheck")
     monkeypatch.setenv("OPENPANEL_CLIENT_ID", "cid-1")
@@ -67,6 +73,7 @@ def test_canary_endpoints_probes_and_status_cache(monkeypatch) -> None:
     assert body["ok"] is True
     assert "http://platform-openpanel-api:3000/healthcheck" in seen_urls
     assert "https://openpanel.zitian.party/api" not in seen_urls
+    assert seen_retry_urls == ["https://auth.zitian.party/-/health/ready/"]
     assert body["capabilities"] == {
         "openpanel_configured": True,
         "openpanel_api_url_set": True,
@@ -131,21 +138,18 @@ def test_canary_rate_limit_logging_settings_and_schema(monkeypatch) -> None:
     assert logging.getLogger("httpx").level >= logging.WARNING
     assert logging.getLogger("httpcore").level >= logging.WARNING
 
-    # Settings manifest & shared_env contract.
+    # Settings manifest & shared_env contract via validate_offline().
     manifest = EnvironmentManifest.from_model(CanarySettings, source="canary/todo")
     assert manifest.validate_offline() == []
-    assert check_shared_env(manifest) == []
 
     # Schema metadata exposes enum & all 5 columns of todos.
     assert "todos" in canary_schema.METADATA.tables
     assert len(canary_schema.METADATA.tables["todos"].columns) == 5
-    assert enums_from_metadata(canary_schema.METADATA) == (
-        EnumSchemaSpec(
-            schema_name="public",
-            name=canary_schema.CANARY_CAPABILITY_ENUM_NAME,
-            labels=canary_schema.CANARY_CAPABILITY_LABELS,
-        ),
+    cap_col = next(
+        c for c in canary_schema.METADATA.tables["todos"].columns if c.name == "capability"
     )
+    assert cap_col.type.name == canary_schema.CANARY_CAPABILITY_ENUM_NAME
+    assert tuple(cap_col.type.enums) == canary_schema.CANARY_CAPABILITY_LABELS
 
     # Served routes contract.
     routes = {r.path for r in todo_mod.fastapi_app.routes}
@@ -209,10 +213,20 @@ def test_canary_worker_and_hooks(monkeypatch, capsys) -> None:
         "staging.operation",
         "prod.operation",
     }
-    run = run_cell(
-        hooks,
-        "staging.operation",
-        environ={"APP_URL": "http://127.0.0.1:8000", "DATABASE_URL": "secret"},
-        runner=lambda argv, **kw: CompletedProcess(argv, 0, stdout='{"ok":true}', stderr=""),
+    import subprocess
+    import sys
+
+    cli_proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "infra2_sdk.delivery",
+            "check-hooks",
+            str(Path(TODO_DIR) / "runtime-hooks.manifest.json"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
-    assert run.passed is True
+    assert cli_proc.returncode == 0
+    assert "staging.operation" in json.loads(cli_proc.stdout)["checks"]["smoke"]

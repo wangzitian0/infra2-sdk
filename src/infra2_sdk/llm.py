@@ -1,9 +1,8 @@
-"""PydanticAI model factory, guarded wrapper, OTel 4-stream attribution, and VCR."""
+"""PydanticAI agent factory, guarded wrapper, OTel attribution, and error redaction."""
 
 from __future__ import annotations
 
 import contextlib
-import copy
 import dataclasses
 import hashlib
 import inspect
@@ -27,23 +26,28 @@ from pydantic import Field, field_validator, model_validator
 from infra2_sdk._core import (
     ContractModel,
     canonical_sha256,
-    redact_secrets,
-    redact_url,
     require_optional,
     sanitize_headers,
     validate_http_url,
 )
-from infra2_sdk.config import shared_env_contract
 from infra2_sdk.telemetry import bind_log_context, get_meter
 
 _LOGGER = logging.getLogger("infra2_sdk.llm")
 
-ModelRole = Literal["large", "small", "multimodal"]
-ThinkingLevel = bool | Literal["minimal", "low", "medium", "high", "xhigh"]
+_ModelRole = Literal["large", "small", "multimodal"]
+_ThinkingLevel = bool | Literal["minimal", "low", "medium", "high", "xhigh"]
 
 _DEFAULT_ZAI_BASE_URL = "https://api.z.ai/api/coding/paas/v4"
 _DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 _ROLES = ("large", "small", "multimodal")
+_LLM_ENV_FIELDS = (
+    ("provider", "LLM_PROVIDER", False),
+    ("base_url", "LLM_BASE_URL", False),
+    ("api_key", "LLM_API_KEY", True),
+    ("large_model", "LLM_LARGE_MODEL", False),
+    ("small_model", "LLM_SMALL_MODEL", False),
+    ("multimodal_model", "LLM_MULTIMODAL_MODEL", False),
+)
 
 _CALL_SITE_RE = re.compile(r"^[a-z][a-z0-9_.-]{1,63}$")
 _SAFE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
@@ -373,36 +377,6 @@ def _resolve_instrumentation_settings(
     )
 
 
-def _strip_instrumented(model: Any, inst_mod: Any, fb_mod: Any) -> tuple[Any, Any | None]:
-    if isinstance(model, inst_mod.InstrumentedModel):
-        inner, inner_is = _strip_instrumented(model.wrapped, inst_mod, fb_mod)
-        return inner, model.instrumentation_settings or inner_is
-    if isinstance(model, fb_mod.FallbackModel):
-        found_is = None
-        new_models: list[Any] = []
-        changed = False
-        for child in model.models:
-            stripped, child_is = _strip_instrumented(child, inst_mod, fb_mod)
-            if stripped is not child:
-                changed = True
-            if found_is is None and child_is is not None:
-                found_is = child_is
-            new_models.append(stripped)
-        if not changed:
-            return model, found_is
-        cloned_fb = copy.copy(model)
-        cloned_fb.models = new_models
-        return cloned_fb, found_is
-    if hasattr(model, "wrapped"):
-        inner, inner_is = _strip_instrumented(model.wrapped, inst_mod, fb_mod)
-        if inner is model.wrapped:
-            return model, inner_is
-        cloned = copy.copy(model)
-        cloned.wrapped = inner
-        return cloned, inner_is
-    return model, None
-
-
 class LlmSettings(ContractModel):
     """Typed LLM provider, role model names, and transport configuration."""
 
@@ -424,7 +398,7 @@ class LlmSettings(ContractModel):
         validate_http_url(self.base_url, label="base_url")
         return self
 
-    def role_model(self, role: ModelRole) -> str:
+    def role_model(self, role: _ModelRole) -> str:
         """Return configured model identifier for the given role."""
         if role not in _ROLES:
             raise ValueError(f"unknown model role: {role!r}")
@@ -434,18 +408,8 @@ class LlmSettings(ContractModel):
     def from_env(cls, environ: Mapping[str, str] | None = None, **overrides: Any) -> LlmSettings:
         """Build LlmSettings strictly from canonical shared_env.yaml LLM variables."""
         env = os.environ if environ is None else environ
-        llm_names = {str(entry["name"]) for entry in shared_env_contract()["groups"]["llm"]}
         values: dict[str, Any] = {}
-        for attr, key, sensitive in (
-            ("provider", "LLM_PROVIDER", False),
-            ("base_url", "LLM_BASE_URL", False),
-            ("api_key", "LLM_API_KEY", True),
-            ("large_model", "LLM_LARGE_MODEL", False),
-            ("small_model", "LLM_SMALL_MODEL", False),
-            ("multimodal_model", "LLM_MULTIMODAL_MODEL", False),
-        ):
-            if key not in llm_names:  # pragma: no cover
-                raise KeyError(key)
+        for attr, key, sensitive in _LLM_ENV_FIELDS:
             if attr in overrides and overrides[attr] is not None:
                 continue
             raw = env.get(key)
@@ -459,12 +423,12 @@ class DecodingSpec(ContractModel):
     """Versioned decoding parameters mapped onto PydanticAI ModelSettings."""
 
     decoding_version: str = "v1"
-    thinking: ThinkingLevel | None = None
-    temperature: float | None = None
-    top_p: float | None = None
+    thinking: _ThinkingLevel | None = None
+    temperature: float | None = Field(default=None, ge=0.0)
+    top_p: float | None = Field(default=None, ge=0.0, le=1.0)
     seed: int | None = None
-    max_tokens: int | None = None
-    timeout: float | None = None
+    max_tokens: int | None = Field(default=None, ge=1)
+    timeout: float | None = Field(default=None, gt=0.0)
 
     @field_validator("seed", "max_tokens", "temperature", "top_p", "timeout", mode="before")
     @classmethod
@@ -477,30 +441,14 @@ class DecodingSpec(ContractModel):
     def _validate_decoding(self) -> DecodingSpec:
         if not self.decoding_version.strip():
             raise ValueError("decoding_version must be non-empty")
-        if self.max_tokens is not None and (
-            type(self.max_tokens) is not int or self.max_tokens < 1
+        if (self.max_tokens is not None and type(self.max_tokens) is not int) or (
+            self.seed is not None and type(self.seed) is not int
         ):
-            raise ValueError("max_tokens must be at least 1")
-        if self.seed is not None and type(self.seed) is not int:
-            raise ValueError("seed must be an integer")
-        if self.timeout is not None and (
-            isinstance(self.timeout, bool)
-            or not math.isfinite(float(self.timeout))
-            or self.timeout <= 0
-        ):
-            raise ValueError("timeout must be finite and positive")
-        if self.temperature is not None and (
-            isinstance(self.temperature, bool)
-            or not math.isfinite(float(self.temperature))
-            or self.temperature < 0
-        ):
-            raise ValueError("temperature must be finite and non-negative")
-        if self.top_p is not None and (
-            isinstance(self.top_p, bool)
-            or not math.isfinite(float(self.top_p))
-            or not 0.0 <= float(self.top_p) <= 1.0
-        ):
-            raise ValueError("top_p must be between 0.0 and 1.0")
+            raise ValueError("seed and max_tokens must be integers")
+        for label in ("temperature", "top_p", "timeout"):
+            val = getattr(self, label)
+            if val is not None and not math.isfinite(float(val)):
+                raise ValueError(f"{label} must be finite")
         return self
 
     def to_model_settings(self) -> dict[str, Any]:
@@ -635,6 +583,26 @@ def llm_call_context(
         _reset_llm_context(tok, prev)
 
 
+class _GuardedLlmModel:
+    """Factory creating WrapperModel enforcing call-site OTel correlation and error scrubbing."""
+
+    def __new__(
+        cls,
+        wrapped: Any,
+        *,
+        call_site: str | None = None,
+        decoding_version: str | None = None,
+        meter_provider: Any | None = None,
+    ) -> Any:
+        impl = _guarded_model_class()
+        return impl(
+            wrapped,
+            call_site=call_site,
+            decoding_version=decoding_version,
+            meter_provider=meter_provider,
+        )
+
+
 def _guarded_model_class() -> type[Any]:
     global _GUARDED_MODEL_CLS
     if _GUARDED_MODEL_CLS is not None:
@@ -642,10 +610,7 @@ def _guarded_model_class() -> type[Any]:
     wrapper_mod = require_optional("pydantic_ai.models.wrapper", extra="llm")
     pa_exc = require_optional("pydantic_ai.exceptions", extra="llm")
 
-    class _GuardedLlmModel(wrapper_mod.WrapperModel, GuardedLlmModel):  # type: ignore[misc]
-        def __new__(cls, *_args: Any, **_kwargs: Any) -> Any:
-            return object.__new__(cls)
-
+    class _Impl(wrapper_mod.WrapperModel):  # type: ignore[misc]
         def __init__(
             self,
             wrapped: Any,
@@ -710,10 +675,7 @@ def _guarded_model_class() -> type[Any]:
                     if caller_active and caller_active[0]:
                         error_type = type(exc).__name__
                         raise
-                    if not isinstance(exc, Exception):
-                        error_type = type(exc).__name__
-                        raise
-                    if _is_passthrough_exception(exc, pa_exc):
+                    if not isinstance(exc, Exception) or _is_passthrough_exception(exc, pa_exc):
                         error_type = type(exc).__name__
                         raise
                     scrubbed = redact_llm_error(exc)
@@ -757,223 +719,48 @@ def _guarded_model_class() -> type[Any]:
                 finally:
                     model_box[0] = str(getattr(stream, "model_name", None) or model_box[0])
 
-    _GuardedLlmModel.__name__ = "GuardedLlmModel"
-    _GuardedLlmModel.__qualname__ = "GuardedLlmModel"
-    _GUARDED_MODEL_CLS = _GuardedLlmModel
+    _Impl.__name__ = "_GuardedLlmModel"
+    _Impl.__qualname__ = "_GuardedLlmModel"
+    _GUARDED_MODEL_CLS = _Impl
     return _GUARDED_MODEL_CLS
 
 
-class GuardedLlmModel:
-    """WrapperModel enforcing call-site OTel correlation, log binding, and error scrubbing."""
-
-    def __new__(
-        cls,
-        wrapped: Any,
-        *,
-        call_site: str | None = None,
-        decoding_version: str | None = None,
-        meter_provider: Any | None = None,
-    ) -> Any:
-        impl = _guarded_model_class()
-        return impl(
-            wrapped,
-            call_site=call_site,
-            decoding_version=decoding_version,
-            meter_provider=meter_provider,
-        )
-
-
-def _disable_banner() -> Any:
-    pydantic_ai = require_optional("pydantic_ai", extra="llm")
-    pydantic_ai.BANNER_ENABLED = False
-    return pydantic_ai
-
-
-def _ensure_guarded(
-    model: Any,
-    fb_mod: Any,
-    *,
-    call_site: str | None,
-    decoding_version: str | None,
-    meter_provider: Any | None,
-) -> Any:
-    if isinstance(model, fb_mod.FallbackModel):
-        children = [
-            _ensure_guarded(
-                child,
-                fb_mod,
-                call_site=call_site,
-                decoding_version=decoding_version,
-                meter_provider=meter_provider,
-            )
-            for child in model.models
-        ]
-        if all(a is b for a, b in zip(children, model.models, strict=True)):
-            return model
-        cloned_fb = copy.copy(model)
-        cloned_fb.models = children
-        return cloned_fb
-    if isinstance(model, GuardedLlmModel):
-        return model
-    return GuardedLlmModel(
-        model,
-        call_site=call_site,
-        decoding_version=decoding_version,
-        meter_provider=meter_provider,
-    )
-
-
-def _wrap_guarded(
-    settings: LlmSettings,
+def _build_guarded_model(
+    cfg: LlmSettings,
     spec: Any,
     *,
-    role: ModelRole,
+    role: _ModelRole,
     merged_settings: Mapping[str, Any] | None,
     call_site: str | None,
     decoding_version: str | None,
     include_stream_usage: bool,
-    guard: bool,
     meter_provider: Any | None,
-) -> tuple[Any, Any | None]:
-    inst_mod = require_optional("pydantic_ai.models.instrumented", extra="llm")
-    fb_mod = require_optional("pydantic_ai.models.fallback", extra="llm")
-    chosen = settings.role_model(role) if spec is None else spec
-    extracted_is = None
-    if isinstance(chosen, str):
-        base = _build_provider_model(
-            provider_name=settings.provider,
-            base_url=settings.base_url,
-            api_key=settings.api_key,
+) -> Any:
+    chosen = cfg.role_model(role) if spec is None else spec
+    base = (
+        _build_provider_model(
+            provider_name=cfg.provider,
+            base_url=cfg.base_url,
+            api_key=cfg.api_key,
             model_name=chosen,
             model_settings=merged_settings,
             include_stream_usage=include_stream_usage,
         )
-    else:
-        base, extracted_is = _strip_instrumented(chosen, inst_mod, fb_mod)
-    if not guard:
-        return base, extracted_is
-    guarded = _ensure_guarded(
+        if isinstance(chosen, str)
+        else chosen
+    )
+    return _GuardedLlmModel(
         base,
-        fb_mod,
         call_site=call_site,
         decoding_version=decoding_version,
         meter_provider=meter_provider,
     )
-    return guarded, extracted_is
-
-
-def _merge_model_settings(
-    decoding: DecodingSpec | None,
-    model_settings: Mapping[str, Any] | None,
-) -> dict[str, Any] | None:
-    return {
-        **(decoding.to_model_settings() if decoding is not None else {}),
-        **(dict(model_settings) if model_settings is not None else {}),
-    } or None
-
-
-def _wrap_model_suite(
-    cfg: LlmSettings,
-    *,
-    role: ModelRole,
-    model: Any | None,
-    fallback_models: Sequence[Any],
-    merged_settings: Mapping[str, Any] | None,
-    call_site: str | None,
-    decoding_version: str | None,
-    include_stream_usage: bool,
-    guard: bool,
-    tracer_provider: Any | None,
-    meter_provider: Any | None,
-) -> tuple[Any, list[Any], Any]:
-    primary, extracted_is = _wrap_guarded(
-        cfg,
-        model,
-        role=role,
-        merged_settings=merged_settings,
-        call_site=call_site,
-        decoding_version=decoding_version,
-        include_stream_usage=include_stream_usage,
-        guard=guard,
-        meter_provider=meter_provider,
-    )
-    fbs: list[Any] = []
-    for fb in fallback_models:
-        wrapped_fb, fb_is = _wrap_guarded(
-            cfg,
-            fb,
-            role=role,
-            merged_settings=merged_settings,
-            call_site=call_site,
-            decoding_version=decoding_version,
-            include_stream_usage=include_stream_usage,
-            guard=guard,
-            meter_provider=meter_provider,
-        )
-        if extracted_is is None and fb_is is not None:
-            extracted_is = fb_is
-        fbs.append(wrapped_fb)
-
-    eff_tp = tracer_provider or getattr(extracted_is, "tracer_provider", None)
-    eff_mp = meter_provider or getattr(extracted_is, "meter_provider", None)
-    if guard and meter_provider is None and eff_mp is not None:
-        for wrapped_m in (primary, *fbs):
-            if hasattr(wrapped_m, "_meter_provider") and wrapped_m._meter_provider is None:
-                wrapped_m._meter_provider = eff_mp
-    isettings = _resolve_instrumentation_settings(tracer_provider=eff_tp, meter_provider=eff_mp)
-    return primary, fbs, isettings
-
-
-def create_llm_model(
-    settings: LlmSettings | None = None,
-    *,
-    role: ModelRole = "small",
-    model: Any | None = None,
-    decoding: DecodingSpec | None = None,
-    model_settings: Mapping[str, Any] | None = None,
-    fallback_models: Sequence[Any] = (),
-    call_site: str | None = None,
-    decoding_version: str | None = None,
-    include_stream_usage: bool = True,
-    instrument: bool = True,
-    guard: bool = True,
-    tracer_provider: Any | None = None,
-    meter_provider: Any | None = None,
-) -> Any:
-    """Build a guarded, OTel-instrumented PydanticAI Model with transport retries disabled."""
-    _disable_banner()
-    if call_site is not None:
-        _validate_call_site(call_site)
-    cfg = settings or LlmSettings()
-    merged = _merge_model_settings(decoding, model_settings)
-    eff_dec = decoding_version or (decoding.decoding_version if decoding is not None else None)
-    primary, fbs, isettings = _wrap_model_suite(
-        cfg,
-        role=role,
-        model=model,
-        fallback_models=fallback_models,
-        merged_settings=merged,
-        call_site=call_site,
-        decoding_version=eff_dec,
-        include_stream_usage=include_stream_usage,
-        guard=guard,
-        tracer_provider=tracer_provider,
-        meter_provider=meter_provider,
-    )
-    target = primary
-    if fbs:
-        fb_mod = require_optional("pydantic_ai.models.fallback", extra="llm")
-        target = fb_mod.FallbackModel(primary, *fbs)
-    if instrument:
-        inst_mod = require_optional("pydantic_ai.models.instrumented", extra="llm")
-        return inst_mod.InstrumentedModel(target, isettings)
-    return target
 
 
 def create_llm_agent(
     settings: LlmSettings | None = None,
     *,
-    role: ModelRole = "small",
+    role: _ModelRole = "small",
     model: Any | None = None,
     call_site: str | None = None,
     decoding: DecodingSpec | None = None,
@@ -999,27 +786,43 @@ def create_llm_agent(
     metadata: Mapping[str, Any] | None = None,
 ) -> Any:
     """Build the Agent entrypoint with OTel instrumentation, usage limits, and retries."""
-    _disable_banner()
+    pydantic_ai = require_optional("pydantic_ai", extra="llm")
+    pydantic_ai.BANNER_ENABLED = False
     if call_site is not None:
         _validate_call_site(call_site)
     cfg = settings or LlmSettings()
-    merged = _merge_model_settings(decoding, model_settings)
+    merged = {
+        **(decoding.to_model_settings() if decoding is not None else {}),
+        **(dict(model_settings) if model_settings is not None else {}),
+    } or None
     eff_dec = decoding.decoding_version if decoding is not None else None
-    primary, guarded_fbs, isettings = _wrap_model_suite(
+    guarded_primary = _build_guarded_model(
         cfg,
+        model,
         role=role,
-        model=model,
-        fallback_models=fallback_models,
         merged_settings=merged,
         call_site=call_site,
         decoding_version=eff_dec,
         include_stream_usage=include_stream_usage,
-        guard=True,
-        tracer_provider=tracer_provider,
         meter_provider=meter_provider,
     )
+    guarded_fbs = [
+        _build_guarded_model(
+            cfg,
+            fb,
+            role=role,
+            merged_settings=merged,
+            call_site=call_site,
+            decoding_version=eff_dec,
+            include_stream_usage=include_stream_usage,
+            meter_provider=meter_provider,
+        )
+        for fb in fallback_models
+    ]
+    isettings = _resolve_instrumentation_settings(
+        tracer_provider=tracer_provider, meter_provider=meter_provider
+    )
 
-    agent_mod = require_optional("pydantic_ai", extra="llm")
     cap_mod = require_optional("pydantic_ai.capabilities", extra="llm")
 
     class _RunContextCapability(cap_mod.AbstractCapability):  # type: ignore[misc]
@@ -1043,7 +846,7 @@ def create_llm_agent(
     caps.extend(capabilities)
 
     @dataclasses.dataclass(init=False)
-    class _LlmAgent(agent_mod.Agent):  # type: ignore[misc]
+    class _LlmAgent(pydantic_ai.Agent):  # type: ignore[misc]
         _default_usage_limits: Any = dataclasses.field(default=None, init=False, repr=False)
         _call_site: str | None = dataclasses.field(default=None, init=False, repr=False)
         _decoding_version: str | None = dataclasses.field(default=None, init=False, repr=False)
@@ -1173,7 +976,7 @@ def create_llm_agent(
             return _bound_events()
 
     return _LlmAgent(
-        primary,
+        guarded_primary,
         output_type=output_type,
         instructions=instructions,
         system_prompt=system_prompt,
@@ -1192,105 +995,17 @@ def create_llm_agent(
     )
 
 
-def _scrub_vcr_body(body: Any) -> Any:
-    if isinstance(body, dict) and "string" in body and isinstance(body["string"], str):
-        return {**body, "string": redact_secrets(body["string"], environ={})}
-    if isinstance(body, str):
-        return redact_secrets(body, environ={})
-    return body
-
-
-def vcr_llm_config(
-    *,
-    cassette_library_dir: str | Path | None = None,
-    record_mode: str | None = None,
-    filter_headers: Sequence[str] = (),
-    filter_query_parameters: Sequence[str] = (),
-    decode_compressed_response: bool = True,
-) -> dict[str, Any]:
-    """Return a shared pytest-recording / vcrpy config with secret & URI redaction hooks."""
-    default_hdrs = (
-        "authorization",
-        "proxy-authorization",
-        "x-api-key",
-        "api-key",
-        "x-goog-api-key",
-        "cookie",
-        "set-cookie",
-    )
-    default_qs = (
-        "key",
-        "api_key",
-        "apikey",
-        "token",
-        "access_token",
-        "secret",
-        "password",
-        "auth",
-        "sig",
-        "signature",
-    )
-    seen_headers: dict[str, str] = {h.lower(): h for h in default_hdrs}
-    for h in filter_headers:
-        seen_headers.setdefault(h.lower(), h)
-
-    seen_query: dict[str, str] = {q.lower(): q for q in default_qs}
-    for q in filter_query_parameters:
-        seen_query.setdefault(q.lower(), q)
-
-    def _before_record_request(request: Any) -> Any:
-        if getattr(request, "uri", None):
-            request.uri = redact_url(str(request.uri))
-        if getattr(request, "headers", None):
-            request.headers = sanitize_headers(dict(request.headers))
-        if getattr(request, "body", None) is not None:
-            request.body = _scrub_vcr_body(request.body)
-        return request
-
-    def _before_record_response(response: dict[str, Any]) -> dict[str, Any]:
-        hdrs = response.get("headers")
-        if isinstance(hdrs, Mapping):
-            response["headers"] = sanitize_headers(hdrs)
-        if "body" in response:
-            response["body"] = _scrub_vcr_body(response["body"])
-        return response
-
-    cfg: dict[str, Any] = {
-        "filter_headers": [(h, "REDACTED") for h in seen_headers.values()],
-        "filter_query_parameters": [(q, "REDACTED") for q in seen_query.values()],
-        "decode_compressed_response": decode_compressed_response,
-        "match_on": ("method", "scheme", "host", "port", "path", "query"),
-        "before_record_request": _before_record_request,
-        "before_record_response": _before_record_response,
-    }
-    if cassette_library_dir is not None:
-        cfg["cassette_library_dir"] = str(cassette_library_dir)
-    if record_mode is not None:
-        cfg["record_mode"] = record_mode
-    return cfg
-
-
-@contextmanager
-def allow_vcr_model_requests() -> Iterator[None]:
-    """Temporarily allow model dispatch inside @pytest.mark.vcr while vcrpy blocks sockets."""
-    models_mod = require_optional("pydantic_ai.models", extra="llm")
-    with models_mod.override_allow_model_requests(True):
-        yield
+def __dir__() -> list[str]:
+    return sorted(__all__)
 
 
 __all__ = (
     "DecodingSpec",
-    "GuardedLlmModel",
     "LlmSettings",
-    "ModelRole",
-    "ThinkingLevel",
-    "allow_vcr_model_requests",
     "create_llm_agent",
-    "create_llm_model",
     "llm_call_context",
     "prompt_sha256",
     "redact_llm_error",
     "request_sha256",
     "schema_sha256",
-    "vcr_llm_config",
 )

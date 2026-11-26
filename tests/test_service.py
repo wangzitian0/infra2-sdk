@@ -20,10 +20,21 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from starlette.testclient import TestClient
 
-from infra2_sdk import config, service, telemetry
+from infra2_sdk import _core, config, service
 
 
 def test_dependency_manifest_and_probes_and_health() -> None:
+    for obsolete in (
+        "evaluate_health",
+        "run_probes",
+        "HealthStatus",
+        "ProbeResponse",
+        "HealthResponse",
+        "DependencyCheck",
+        "CheckOutcome",
+    ):
+        assert not hasattr(service, obsolete)
+
     manifest = service.DependencyManifest(
         dependencies=(
             service.Dependency(
@@ -68,20 +79,20 @@ def test_dependency_manifest_and_probes_and_health() -> None:
             service.CallableCheck("cache", _ok_async),
             service.CallableCheck("flaky", lambda: (_ for _ in ()).throw(RuntimeError("boom"))),
         ]
-        code, body = await service.evaluate_health(
+        code, body = await service._evaluate_health(
             checks, manifest=manifest, tier="staging", timeout_seconds=2.0
         )
         assert code == 200
-        assert async_ident == [main_ident]  # async CallableCheck did not spawn an OS thread
-        assert body["status"] == service.HealthStatus.DEGRADED.value
+        assert async_ident == [main_ident]
+        assert body["status"] == service._HealthStatus.DEGRADED.value
 
-        code2, body2 = await service.evaluate_health(
+        code2, body2 = await service._evaluate_health(
             [service.CallableCheck("cache", _ok_async)],
             manifest=manifest,
             tier="staging",
             timeout_seconds=2.0,
         )
-        assert code2 == 503 and body2["status"] == service.HealthStatus.UNHEALTHY.value
+        assert code2 == 503 and body2["status"] == service._HealthStatus.UNHEALTHY.value
 
         gate = threading.Event()
         slow_finished = threading.Event()
@@ -93,13 +104,12 @@ def test_dependency_manifest_and_probes_and_health() -> None:
             finally:
                 slow_finished.set()
 
-        timed = await service.run_probes(
+        timed = await service._run_probes(
             [service.CallableCheck("slow", _blocked_sync)], timeout_seconds=0.05
         )
         assert timed[0].status is service.DependencyStatus.ABSENT
         assert "timed out" in timed[0].detail
         sem = service._sync_semaphore()
-        # Semaphore remains acquired while the blocked worker thread is still running.
         assert sem._value == service._MAX_CONCURRENT_SYNC_PROBES - 1
         gate.set()
         assert slow_finished.wait(timeout=2.0)
@@ -146,7 +156,7 @@ def test_init_service_probe_exclusion_telemetry_and_health_guard(
     spans = span_exporter.get_finished_spans()
     span_attrs = [dict(s.attributes or {}) for s in spans]
     assert not any(
-        a.get("http.route") in telemetry.PROBE_PATHS or a.get("url.path") in telemetry.PROBE_PATHS
+        a.get("http.route") in _core.PROBE_PATHS or a.get("url.path") in _core.PROBE_PATHS
         for a in span_attrs
     )
     assert any(a.get("request_id") == "req-item-1" for a in span_attrs)
@@ -161,11 +171,10 @@ def test_init_service_probe_exclusion_telemetry_and_health_guard(
         for dp in m.data.data_points
     ]
     assert "/items" in http_paths
-    assert not (set(http_paths) & telemetry.PROBE_PATHS)
+    assert not (set(http_paths) & _core.PROBE_PATHS)
     tp.shutdown()
     mp.shutdown()
 
-    # health_extra error fails closed with 503 instead of crashing unhandled 500.
     bad_app = FastAPI()
     service.init_service(
         bad_app,
@@ -177,7 +186,6 @@ def test_init_service_probe_exclusion_telemetry_and_health_guard(
     res_503 = TestClient(bad_app).get("/health")
     assert res_503.status_code == 503 and res_503.json()["health_extra_error"] == "RuntimeError"
 
-    # Full OTLP HTTP endpoint bootstrap + provider binding into app._telemetry.
     class _Ok(BaseHTTPRequestHandler):
         def do_POST(self) -> None:  # noqa: N802
             n = int(self.headers.get("Content-Length") or 0)
@@ -229,7 +237,7 @@ def test_http_clients_retry_probe_and_rate_limit() -> None:
 
     with service.create_http_client(cfg) as sync_c:
         sync_c._transport = httpx.MockTransport(_capture_sync)
-        with telemetry.bind_request_id("cid-sync-1"):
+        with _core.bind_request_id("cid-sync-1"):
             sync_c.get("https://example.com")
     assert seen_req_hdrs[-1]["x-request-id"] == "cid-sync-1"
 
@@ -252,7 +260,6 @@ def test_http_clients_retry_probe_and_rate_limit() -> None:
     )
     assert resp.status_code == 200 and len(sleeps) == 2
 
-    # Non-idempotent POST does not retry by default unless explicitly opted in.
     post_calls = 0
 
     class _PostClient:
@@ -289,7 +296,7 @@ def test_http_clients_retry_probe_and_rate_limit() -> None:
 
         async with service.create_async_http_client(cfg) as ac:
             ac._transport = httpx.MockTransport(_capture_sync)
-            with telemetry.bind_request_id("cid-async-1"):
+            with _core.bind_request_id("cid-async-1"):
                 await ac.get("https://example.com/async")
         assert seen_req_hdrs[-1]["x-request-id"] == "cid-async-1"
 

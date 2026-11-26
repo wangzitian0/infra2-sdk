@@ -31,6 +31,16 @@ class _Out(BaseModel):
 
 
 def test_llm_settings_decoding_and_binary_digests() -> None:
+    for obsolete in (
+        "create_llm_model",
+        "GuardedLlmModel",
+        "ModelRole",
+        "ThinkingLevel",
+        "vcr_llm_config",
+        "allow_vcr_model_requests",
+    ):
+        assert not hasattr(llm, obsolete)
+
     cfg = llm.LlmSettings.from_env(
         {
             "LLM_PROVIDER": "zai",
@@ -58,7 +68,7 @@ def test_llm_settings_decoding_and_binary_digests() -> None:
     assert len(s_hash) == len(r_hash) == 64
 
 
-def test_redact_errors_passthrough_streaming_and_vcr(caplog: pytest.LogCaptureFixture) -> None:
+def test_redact_errors_passthrough_and_streaming(caplog: pytest.LogCaptureFixture) -> None:
     err = ModelHTTPError(
         status_code=401,
         model_name="glm-5.3-flash",
@@ -88,7 +98,6 @@ def test_redact_errors_passthrough_streaming_and_vcr(caplog: pytest.LogCaptureFi
     with llm.llm_call_context(call_site="unit.echo", prompt_sha256="a" * 64):
         assert agent.run_sync("ping").output == _Out(answer="ok")
 
-    # Control-flow exceptions (ModelRetry, UnexpectedModelBehavior, stream faults) pass through.
     def _bad_output(_msgs: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         raise UnexpectedModelBehavior("malformed tool")
 
@@ -114,15 +123,15 @@ def test_redact_errors_passthrough_streaming_and_vcr(caplog: pytest.LogCaptureFi
             collected = [ev async for ev in events]
             assert collected
 
-        # Caller exception inside run_stream must not be overwritten into RuntimeError.
-        gm = llm.create_llm_model(
-            settings, model=TestModel(custom_output_text="hi"), call_site="unit.s", instrument=False
+        stream_agent = llm.create_llm_agent(
+            settings,
+            model=TestModel(custom_output_text="hi"),
+            call_site="unit.s",
         )
         with pytest.raises(_CallerStreamError, match="consumer aborted"):
-            async with gm.request_stream([], None, ModelRequestParameters()):
+            async with stream_agent.model.request_stream([], None, ModelRequestParameters()):
                 raise _CallerStreamError("consumer aborted")
 
-        # UsageLimitExceeded propagates without triggering retries or fallback.
         calls: list[str] = []
 
         def _over_limit(_msgs: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -155,13 +164,12 @@ def test_redact_errors_passthrough_streaming_and_vcr(caplog: pytest.LogCaptureFi
         ("openai", "gpt-4o-mini"),
         ("openrouter", "openai/gpt-4o-mini"),
     ):
-        m = llm.create_llm_model(
+        prov_agent = llm.create_llm_agent(
             llm.LlmSettings(provider=prov, api_key="test-key", small_model=model_id),
             call_site="unit.prov",
-            instrument=False,
             include_stream_usage=False,
         )
-        assert m.wrapped.client.max_retries == 0
+        assert prov_agent.model.wrapped.client.max_retries == 0
 
     def _fail(_msgs: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         raise ModelHTTPError(status_code=503, model_name="m", body="secret-token")
@@ -178,41 +186,7 @@ def test_redact_errors_passthrough_streaming_and_vcr(caplog: pytest.LogCaptureFi
     )
     assert fb_agent.run_sync("go").output == _Out(answer="fallback")
 
-    inst_wrapped = llm.create_llm_model(
-        settings,
-        model=TestModel(custom_output_text="wrapped"),
-        fallback_models=[TestModel(custom_output_text="wrapped-fb")],
-        call_site="unit.wrapped",
-        instrument=True,
-    )
-    rewrapped = llm.create_llm_model(settings, model=inst_wrapped, call_site="unit.rewrapped")
-    assert isinstance(rewrapped.wrapped.models[0], llm.GuardedLlmModel)
-
     anon_agent = llm.create_llm_agent(settings, model=TestModel(custom_output_text="hi"))
     with caplog.at_level(logging.WARNING, logger="infra2_sdk.llm"):
         assert anon_agent.run_sync("hi").output == "hi"
     assert any("missing explicit call_site" in rec.message for rec in caplog.records)
-
-    vcfg = llm.vcr_llm_config(cassette_library_dir="/tmp/cassettes", record_mode="none")
-    req_obj = type(
-        "R",
-        (),
-        {
-            "uri": "https://api.example?api_key=abc",
-            "headers": {"Authorization": ["Bearer s"], "Accept": ["application/json"]},
-        },
-    )()
-    scrubbed_req = vcfg["before_record_request"](req_obj)
-    assert "abc" not in scrubbed_req.uri
-    assert scrubbed_req.headers["Authorization"] == ["REDACTED"]
-    assert scrubbed_req.headers["Accept"] == ["application/json"]
-    scrubbed_resp = vcfg["before_record_response"](
-        {"headers": {"Set-Cookie": ["s=1"]}, "body": {"string": '{"err":"Bearer sk-leak999999"}'}}
-    )
-    assert scrubbed_resp["headers"]["Set-Cookie"] == ["REDACTED"]
-    assert "sk-leak999999" not in scrubbed_resp["body"]["string"]
-
-    with llm.allow_vcr_model_requests():
-        from pydantic_ai import models
-
-        assert models.ALLOW_MODEL_REQUESTS is True

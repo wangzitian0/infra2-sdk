@@ -8,6 +8,7 @@ import secrets
 import shutil
 import socket
 import subprocess
+import sys
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -113,18 +114,39 @@ ALTER TABLE sdkt_dropped DROP COLUMN v;
 
 
 def test_postgres_dsn_and_redaction() -> None:
+    for obsolete in (
+        "normalize_postgres_dsn",
+        "check_schema",
+        "enums_from_metadata",
+        "check_enums",
+        "classify_rollback",
+        "EnumSchemaSpec",
+        "EnumDiscrepancy",
+        "EnumDiscrepancyKind",
+        "SchemaDiffReport",
+        "TableColumn",
+        "ROLLBACK_CLASS_A",
+        "ROLLBACK_CLASS_C",
+        "EXIT_OK",
+        "EXIT_BLOCKED",
+        "EXIT_NOT_EVALUATED",
+        "GateNotEvaluated",
+        "main",
+    ):
+        assert not hasattr(storage, obsolete)
+
     assert (
-        storage.normalize_postgres_dsn(
+        storage._normalize_postgres_dsn(
             "postgresql+psycopg://u:p@db.internal:5432/app?sslmode=require"
         )
         == "postgresql://u:p@db.internal:5432/app?sslmode=require"
     )
-    assert storage.normalize_postgres_dsn("postgres://u:p@h/d") == "postgresql://u:p@h/d"
-    assert storage.normalize_postgres_dsn("postgresql:///app?host=/var/run/postgresql").startswith(
+    assert storage._normalize_postgres_dsn("postgres://u:p@h/d") == "postgresql://u:p@h/d"
+    assert storage._normalize_postgres_dsn("postgresql:///app?host=/var/run/postgresql").startswith(
         "postgresql://"
     )
     with pytest.raises(ValueError):
-        storage.normalize_postgres_dsn("mysql://u:p@h/d")
+        storage._normalize_postgres_dsn("mysql://u:p@h/d")
 
     cfg = storage.PostgresSettings.from_env({"DATABASE_URL": "postgresql://u:secretpw@h/d"})
     assert "secretpw" not in repr(cfg)
@@ -132,6 +154,14 @@ def test_postgres_dsn_and_redaction() -> None:
         RuntimeError("failed postgres://u:secretpw@h/d"), cfg.url
     )
     assert "secretpw" not in scrubbed
+
+    # Regression guard: password == "postgres" must not corrupt "postgresql://".
+    pg_pass_err = storage.redact_postgres_error(
+        RuntimeError("connect postgresql://postgres:postgres@db.internal:5432/app failed"),
+        "postgresql://postgres:postgres@db.internal:5432/app",
+    )
+    assert "postgresql://[REDACTED]" in pg_pass_err
+    assert "<redacted>ql://" not in pg_pass_err
 
     down = storage.probe_postgres("postgresql://u:secretpw@127.0.0.1:1/d", connect_timeout=0.5)
     assert down.status is service.DependencyStatus.ABSENT and "secretpw" not in down.detail
@@ -232,7 +262,7 @@ def test_redis_probe_roundtrip_unquoting_and_readonly() -> None:
     assert "secretpw" not in repr(cfg)
 
 
-def test_enum_diff_metadata_unwrapping_and_sql_safety() -> None:
+def test_enum_diff_metadata_unwrapping_and_sql_safety_and_cli_import(tmp_path) -> None:
     @dataclass(frozen=True)
     class _BaseEnum:
         name: str
@@ -259,47 +289,47 @@ def test_enum_diff_metadata_unwrapping_and_sql_safety() -> None:
             )
         }
     )
-    extracted = storage.enums_from_metadata(meta)
+    extracted = storage._enums_from_metadata(meta)
     assert [(e.name, e.labels) for e in extracted] == [
         ("state_e", ("open",)),
         ("tag_e", ("a", "b")),
     ]
 
-    spec = storage.EnumSchemaSpec(schema_name="public", name="status", labels=("open", "closed"))
-    add_diff = storage.check_enums([spec], {("public", "status"): ("open",)})
+    spec = storage._EnumSchemaSpec(schema_name="public", name="status", labels=("open", "closed"))
+    add_diff = storage._check_enums([spec], {("public", "status"): ("open",)})
     assert add_diff[0].kind == "additive_labels"
     assert (
-        storage.SchemaDiffReport(enum_discrepancies=add_diff, migrations_pending=False).is_blocking
+        storage._SchemaDiffReport(enum_discrepancies=add_diff, migrations_pending=False).is_blocking
         is True
     )
     assert (
-        storage.SchemaDiffReport(enum_discrepancies=add_diff, migrations_pending=True).is_blocking
+        storage._SchemaDiffReport(enum_discrepancies=add_diff, migrations_pending=True).is_blocking
         is False
     )
 
-    extra_diff = storage.check_enums(
+    extra_diff = storage._check_enums(
         [spec], {("public", "status"): ("open", "closed"), ("public", "old_e"): ("x",)}
     )
     assert any(d.kind == "extra_type" and d.name == "old_e" for d in extra_diff)
     assert (
-        storage.classify_rollback(enum_discrepancies=extra_diff, migrations_pending=False)
-        == storage.ROLLBACK_CLASS_C
+        storage._classify_rollback(enum_discrepancies=extra_diff, migrations_pending=False)
+        == storage._ROLLBACK_CLASS_C
     )
     assert (
-        storage.classify_rollback(
+        storage._classify_rollback(
             enum_discrepancies=extra_diff,
             enum_tables={("public", "old_e"): {("public", "old_tbl")}},
             code_tables={("public", "live_tbl")},
             migrations_pending=True,
         )
-        == storage.ROLLBACK_CLASS_A
+        == storage._ROLLBACK_CLASS_A
     )
 
-    missing_diff = storage.check_enums([spec], {})
-    assert storage.classify_rollback(enum_discrepancies=missing_diff) == storage.ROLLBACK_CLASS_C
+    missing_diff = storage._check_enums([spec], {})
+    assert storage._classify_rollback(enum_discrepancies=missing_diff) == storage._ROLLBACK_CLASS_C
     assert (
-        storage.classify_rollback(enum_discrepancies=missing_diff, new_tables={("public", "t")})
-        == storage.ROLLBACK_CLASS_A
+        storage._classify_rollback(enum_discrepancies=missing_diff, new_tables={("public", "t")})
+        == storage._ROLLBACK_CLASS_A
     )
 
     assert (
@@ -311,9 +341,32 @@ def test_enum_diff_metadata_unwrapping_and_sql_safety() -> None:
     with pytest.raises(ValueError, match="forbids keyword 'SET_CONFIG'"):
         storage._validate_readonly_sql("SELECT set_config('a','b',false)")
 
-    with pytest.raises(storage.GateNotEvaluated):
-        storage.check_schema("postgresql://u:pw@127.0.0.1:1/db", connect_timeout=0.5)
-    assert storage.main(["check-schema", "--database-url", ""]) == storage.EXIT_NOT_EVALUATED
+    with pytest.raises(storage._GateNotEvaluated):
+        storage._check_schema("postgresql://u:pw@127.0.0.1:1/db", connect_timeout=0.5)
+    assert storage._main(["check-schema", "--database-url", ""]) == storage._EXIT_NOT_EVALUATED
+
+    # CLI --import option imports side-effect module before resolving --metadata.
+    (tmp_path / "custom_side_effect.py").write_text("IMPORTED = True\n", encoding="utf-8")
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "infra2_sdk.storage",
+            "check-schema",
+            "--import",
+            "custom_side_effect",
+            "--metadata",
+            "nonexistent:METADATA",
+            "--db-url",
+            "postgresql://u:pw@127.0.0.1:1/db",
+        ],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == storage._EXIT_NOT_EVALUATED
+    assert "No module named 'nonexistent'" in proc.stderr
 
 
 def test_s3_helpers_cleanup_and_redaction() -> None:
@@ -334,7 +387,7 @@ def test_s3_helpers_cleanup_and_redaction() -> None:
 
     store: dict[str, bytes] = {}
     body_closed = [False]
-    fail_get = [False]
+    fail_mode = ["none"]
 
     class _Stream(io.BytesIO):
         def close(self) -> None:
@@ -350,8 +403,10 @@ def test_s3_helpers_cleanup_and_redaction() -> None:
             return {"ETag": '"abc"'}
 
         def get_object(self, Bucket: str, Key: str) -> dict[str, object]:  # noqa: N803
-            if fail_get[0]:
-                raise RuntimeError("read error")
+            if fail_mode[0] == "url_prose":
+                raise RuntimeError(
+                    "connect failed on https://s3user:s3pass@s3.example/canary?X-Amz-Signature=sig123"
+                )
             return {"Body": _Stream(store[Key])}
 
         def delete_object(self, Bucket: str, Key: str) -> None:  # noqa: N803
@@ -365,9 +420,11 @@ def test_s3_helpers_cleanup_and_redaction() -> None:
         is service.DependencyStatus.PRESENT
     )
 
-    fail_get[0] = True
+    fail_mode[0] = "url_prose"
     failed = storage.probe_s3(cfg, round_trip=True, client=fake)
     assert failed.status is service.DependencyStatus.ABSENT
+    assert failed.detail.startswith("RuntimeError:")
+    assert "s3pass" not in failed.detail and "sig123" not in failed.detail
     assert [k for k in store if k.startswith("canary/probe/")] == []
 
 
@@ -481,19 +538,18 @@ def test_probe_and_check_schema_live(
     probe = storage.probe_postgres(url, verify_write=True)
     assert probe.status is service.DependencyStatus.PRESENT and "write verified" in probe.detail
 
-    bad_pre = storage.check_schema(url, preconditions=["SELECT 0"])
+    bad_pre = storage._check_schema(url, preconditions=["SELECT 0"])
     assert bad_pre.is_blocking is True and bad_pre.preconditions_passed is False
 
-    # Metadata wired through check_schema catches missing table on live DB!
     missing_meta = _FakeMetadata(
         tables={"nonexistent_tbl": _MetaTable("nonexistent_tbl", (_MetaColumn("id", int),))}
     )
-    rep = storage.check_schema(url, metadata=missing_meta)
+    rep = storage._check_schema(url, metadata=missing_meta)
     assert ("public", "nonexistent_tbl") in rep.new_tables
-    assert rep.is_blocking is True  # views were NOT flagged, but dropped live tables block
+    assert rep.is_blocking is True
 
     monkeypatch.syspath_prepend("canary/todo")
-    rc = storage.main(
+    rc = storage._main(
         ["check-schema", "--database-url", url, "--metadata", "canary_schema:METADATA", "--json"]
     )
-    assert rc in {storage.EXIT_OK, storage.EXIT_BLOCKED}
+    assert rc in {storage._EXIT_OK, storage._EXIT_BLOCKED}

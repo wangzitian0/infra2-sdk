@@ -15,7 +15,7 @@ from typing import Any
 
 from infra2_sdk.config import EnvironmentManifest, assert_env
 from infra2_sdk.service import HttpClientSettings, create_http_client, request_with_retry
-from infra2_sdk.telemetry import get_tracer, init_worker
+from infra2_sdk.telemetry import TelemetryProviders, bind_log_context, get_tracer, init_worker
 
 try:
     from canary_settings import CanarySettings
@@ -104,12 +104,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             require_injected=True,
         )
 
-    providers = init_worker(DEFAULT_SERVICE_NAME, strict=True, require_issued_identity=True)
+    providers: TelemetryProviders | None = init_worker(
+        DEFAULT_SERVICE_NAME, strict=True, require_issued_identity=True
+    )
     health_url = args.health_url.strip() or (
         f"http://127.0.0.1:{CanarySettings.from_environ(os.environ).port}/readyz"
     )
     try:
-        result = run_once(health_url=health_url)
+        with bind_log_context(worker_mode="once"):
+            result = run_once(health_url=health_url)
         print(json.dumps(result))
         return 0 if result["ok"] else 1
     finally:

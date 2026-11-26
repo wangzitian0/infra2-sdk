@@ -23,28 +23,29 @@ from weakref import WeakKeyDictionary
 
 from pydantic import ConfigDict, Field, field_serializer, field_validator, model_validator
 
-import infra2_sdk.telemetry as _telemetry
-from infra2_sdk import __version__
+from infra2_sdk._core import (
+    PROBE_PATHS as _PROBE_PATHS,
+)
 from infra2_sdk._core import (
     ContractModel,
     redact_url_credentials,
     require_contract_version,
     require_optional,
 )
-from infra2_sdk.config import (
-    PLATFORM_OWNED_TIERS,
-    EnvironmentTier,
-    RuntimeEnvKey,
-    read_runtime_env,
-    resolve_environment,
-    resolve_tier,
+from infra2_sdk._core import (
+    OtelSettings as _OtelSettings,
 )
-from infra2_sdk.telemetry import (
-    OtelSettings,
-    bind_request_id,
-    configure_logging,
-    current_request_id,
+from infra2_sdk._core import (
+    bind_request_id as _bind_request_id,
 )
+from infra2_sdk._core import (
+    bootstrap_telemetry as _bootstrap_telemetry,
+)
+from infra2_sdk._core import (
+    configure_telemetry as _configure_telemetry,
+)
+from infra2_sdk.config import EnvironmentTier, resolve_tier
+from infra2_sdk.telemetry import current_request_id
 
 _DEPENDENCY_MANIFEST_VERSION = 1
 _HTTP_OK, _HTTP_UNAVAILABLE = 200, 503
@@ -64,7 +65,7 @@ class DependencyStatus(StrEnum):
     ABSENT = "absent"
 
 
-class HealthStatus(StrEnum):
+class _HealthStatus(StrEnum):
     HEALTHY = "healthy"
     DEGRADED = "degraded"
     UNHEALTHY = "unhealthy"
@@ -163,22 +164,22 @@ class ProbeResult(ContractModel):
 
 
 @runtime_checkable
-class DependencyCheck(Protocol):
+class _DependencyCheck(Protocol):
     name: str
 
     def probe(self) -> ProbeResult | Awaitable[ProbeResult]: ...
 
 
-CheckOutcome = ProbeResult | tuple[bool, str] | bool
+_CheckOutcome = ProbeResult | tuple[bool, str] | bool
 
 
 class CallableCheck:
-    """Wrap any sync or async callable as a DependencyCheck."""
+    """Wrap any sync or async callable as a dependency probe check."""
 
     def __init__(
         self,
         name: str,
-        fn: Callable[[], CheckOutcome | Awaitable[CheckOutcome]],
+        fn: Callable[[], _CheckOutcome | Awaitable[_CheckOutcome]],
     ) -> None:
         self.name = name
         self.fn = fn
@@ -194,10 +195,10 @@ class CallableCheck:
             return self._finish(outcome, started)
         return self._coerce(outcome, started)
 
-    async def _finish(self, outcome: Awaitable[CheckOutcome], started: float) -> ProbeResult:
+    async def _finish(self, outcome: Awaitable[_CheckOutcome], started: float) -> ProbeResult:
         return self._coerce(await outcome, started)
 
-    def _coerce(self, outcome: CheckOutcome, started: float) -> ProbeResult:
+    def _coerce(self, outcome: _CheckOutcome, started: float) -> ProbeResult:
         elapsed_ms = (time.perf_counter() - started) * 1000
         if isinstance(outcome, ProbeResult):
             return outcome
@@ -259,17 +260,16 @@ async def _run_sync_probe(probe: Callable[[], Any], *, name: str) -> Any:
             fut.cancel()
 
 
-async def run_probes(
-    checks: Sequence[DependencyCheck], *, timeout_seconds: float = 10.0
+async def _run_probes(
+    checks: Sequence[_DependencyCheck], *, timeout_seconds: float = 10.0
 ) -> tuple[ProbeResult, ...]:
-    """Run dependency probes concurrently with bounded per-check timeouts."""
     if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive")
     vals = tuple(checks)
     if len(vals) != len({c.name for c in vals}):
         raise ValueError("duplicate probe name")
 
-    async def execute(check: DependencyCheck) -> ProbeResult:
+    async def execute(check: _DependencyCheck) -> ProbeResult:
         started = time.perf_counter()
         try:
             res = (
@@ -293,7 +293,7 @@ async def run_probes(
                 duration_ms=(time.perf_counter() - started) * 1000,
             )
 
-    async def bounded(check: DependencyCheck) -> ProbeResult:
+    async def bounded(check: _DependencyCheck) -> ProbeResult:
         try:
             return await asyncio.wait_for(execute(check), timeout=timeout_seconds)
         except TimeoutError:
@@ -307,15 +307,14 @@ async def run_probes(
     return tuple(await asyncio.gather(*(bounded(c) for c in vals)))
 
 
-async def evaluate_health(
-    checks: Sequence[DependencyCheck],
+async def _evaluate_health(
+    checks: Sequence[_DependencyCheck],
     *,
     manifest: DependencyManifest | None = None,
     required: Collection[str] | None = None,
     tier: str | EnvironmentTier | None = None,
     timeout_seconds: float = 10.0,
 ) -> tuple[int, dict[str, Any]]:
-    """Probe checks concurrently and evaluate HTTP 200 / 503 readiness body."""
     vals = tuple(checks)
     if manifest is not None:
         if required is not None:
@@ -326,7 +325,7 @@ async def evaluate_health(
     else:
         req = frozenset(required) if required is not None else frozenset(c.name for c in vals)
 
-    results = await run_probes(vals, timeout_seconds=timeout_seconds)
+    results = await _run_probes(vals, timeout_seconds=timeout_seconds)
     names = [r.name for r in results]
     if not results and not req:
         raise ValueError("no probe results and no required dependencies: nothing to report on")
@@ -346,21 +345,21 @@ async def evaluate_health(
         key=lambda n: (not entry_map[n]["required"], n),
     )
     status = (
-        HealthStatus.UNHEALTHY
+        _HealthStatus.UNHEALTHY
         if any(entry_map[n]["required"] for n in absent)
-        else HealthStatus.DEGRADED
+        else _HealthStatus.DEGRADED
         if absent
-        else HealthStatus.HEALTHY
+        else _HealthStatus.HEALTHY
     )
     body = {
         "status": status.value,
         "checks": dict(sorted(entry_map.items())),
         "reasons": [f"{n}: {entry_map[n]['detail'] or 'absent'}" for n in absent],
     }
-    return (_HTTP_UNAVAILABLE if status is HealthStatus.UNHEALTHY else _HTTP_OK), body
+    return (_HTTP_UNAVAILABLE if status is _HealthStatus.UNHEALTHY else _HTTP_OK), body
 
 
-class ProbeResponse(ContractModel):
+class _ProbeResponse(ContractModel):
     status: str
     service: str
     reasons: list[str] | None = None
@@ -373,7 +372,7 @@ class _CheckDetail(ContractModel):
     required: bool
 
 
-class HealthResponse(ContractModel):
+class _HealthResponse(ContractModel):
     model_config = ConfigDict(frozen=True, extra="allow", populate_by_name=True)
 
     status: str
@@ -389,7 +388,7 @@ async def _rid_middleware(inner: Any, scope: Any, receive: Any, send: Any) -> No
         await inner(scope, receive, send)
         return
     raw = next((v for k, v in scope.get("headers") or () if k.lower() == b"x-request-id"), b"")
-    with bind_request_id(raw.decode("latin1").strip() or None) as rid:
+    with _bind_request_id(raw.decode("latin1").strip() or None) as rid:
         scope.setdefault("state", {})["request_id"] = rid
         if (ot := sys.modules.get("opentelemetry.trace")) is not None:
             span = ot.get_current_span()
@@ -406,9 +405,9 @@ async def _rid_middleware(inner: Any, scope: Any, receive: Any, send: Any) -> No
         await inner(scope, receive, _send)
 
 
-def _attach_telemetry(app: Any, settings: OtelSettings, *, strict: bool) -> None:
+def _attach_telemetry(app: Any, settings: _OtelSettings, *, strict: bool) -> None:
     try:
-        providers = _telemetry.configure_telemetry(settings, set_global=True)
+        providers = _configure_telemetry(settings, set_global=True)
         app.state.telemetry_providers = providers
         if isinstance(tel := getattr(app, "_telemetry", None), dict):
             tel["tracer_provider"] = providers.tracer_provider
@@ -438,7 +437,7 @@ def init_service(
     app: Any,
     name: str,
     *,
-    checks: Sequence[DependencyCheck] = (),
+    checks: Sequence[_DependencyCheck] = (),
     manifest: DependencyManifest | None = None,
     enable_otel: bool = True,
     strict_otel: bool = True,
@@ -457,58 +456,22 @@ def init_service(
     if not math.isfinite(check_timeout_seconds) or check_timeout_seconds <= 0:
         raise ValueError("check_timeout_seconds must be positive")
 
-    relax_hint = "pass strict_otel=False to log the problem and start"
-    parsed_settings: OtelSettings | None = None
-    active_settings: OtelSettings | None = None
-    tier = EnvironmentTier.LOCAL_DEV.value
-
-    if enable_otel:
-        try:
-            parsed_settings = OtelSettings.from_env(
-                strict=strict_otel,
-                default_service_name=name,
-                require_issued_identity=require_issued_identity,
-                suppress_probe_telemetry=suppress_probe_telemetry,
-            )
-            tier = parsed_settings.environment
-            if parsed_settings.endpoint and not parsed_settings.sdk_disabled:
-                active_settings = parsed_settings
-            else:
-                deployed = EnvironmentTier(tier) in PLATFORM_OWNED_TIERS
-                _LOGGER.log(
-                    logging.WARNING if deployed else logging.DEBUG,
-                    "%s is not set or disabled; OpenTelemetry export is off",
-                    RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT.value,
-                )
-        except Exception as exc:
-            if strict_otel:
-                if isinstance(exc, ValueError):
-                    raise type(exc)(f"{exc}; {relax_hint}") from exc
-                raise
-            _LOGGER.warning("Could not initialize OpenTelemetry: %s", exc)
-    else:
-        tier = resolve_environment().tier.value
-
-    sha = read_runtime_env(RuntimeEnvKey.GIT_COMMIT_SHA) or "unknown"
-    ver = (
-        parsed_settings.service_version
-        if parsed_settings is not None
-        else (read_runtime_env(RuntimeEnvKey.SERVICE_VERSION) or "unknown")
-    )
-    release_ver = ver if ver and ver != "unknown" else sha
-    release_info = {"version": release_ver, "git_sha": sha}
-
-    configure_logging(
-        level=log_level,
-        service_name=parsed_settings.service_name if parsed_settings else name,
-        environment=parsed_settings.deployment_environment if parsed_settings else tier,
-        service_version=release_ver,
+    _parsed, active_settings, tier, release_info = _bootstrap_telemetry(
+        name,
+        enable_otel=enable_otel,
+        strict_otel=strict_otel,
+        require_issued_identity=require_issued_identity,
         suppress_probes=suppress_probe_telemetry,
+        log_level=log_level,
+        set_global=True,
+        logger=_LOGGER,
+        strict_hint="pass strict_otel=False to log the problem and start",
     )
+
     if suppress_probe_telemetry and isinstance(tel := getattr(app, "_telemetry", None), dict):
         prev_exclude = tel.get("exclude")
         tel["exclude"] = lambda scope, p=prev_exclude: (
-            (scope.get("path") in _telemetry.PROBE_PATHS) or bool(p and p(scope))
+            (scope.get("path") in _PROBE_PATHS) or bool(p and p(scope))
         )
 
     app.state.service_release = release_info
@@ -522,23 +485,23 @@ def init_service(
 
     async def report() -> tuple[int, dict[str, Any]]:
         if not all_checks and manifest is None:
-            return _HTTP_OK, {"status": HealthStatus.HEALTHY.value, "checks": {}, "reasons": []}
+            return _HTTP_OK, {"status": _HealthStatus.HEALTHY.value, "checks": {}, "reasons": []}
         kw: dict[str, Any] = {"timeout_seconds": check_timeout_seconds}
         if manifest is not None:
             kw.update(manifest=manifest, tier=tier)
-        return await evaluate_health(all_checks, **kw)
+        return await _evaluate_health(all_checks, **kw)
 
     tags = ["Observability"]
 
-    @app.get("/livez", tags=tags, response_model=ProbeResponse)
+    @app.get("/livez", tags=tags, response_model=_ProbeResponse)
     def livez():
         return JSONResponse({"status": "alive", "service": name})
 
     @app.get(
         "/readyz",
         tags=tags,
-        response_model=ProbeResponse,
-        responses={503: {"model": ProbeResponse}},
+        response_model=_ProbeResponse,
+        responses={503: {"model": _ProbeResponse}},
     )
     async def readyz():
         code, body = await report()
@@ -553,8 +516,8 @@ def init_service(
     @app.get(
         "/health",
         tags=tags,
-        response_model=HealthResponse,
-        responses={503: {"model": HealthResponse}},
+        response_model=_HealthResponse,
+        responses={503: {"model": _HealthResponse}},
     )
     async def health():
         code, body = await report()
@@ -599,6 +562,8 @@ def _build_httpx_client(
     *,
     async_client: bool,
 ) -> Any:
+    import infra2_sdk
+
     cfg = settings or HttpClientSettings()
     httpx = require_optional("httpx", extra="http")
     limits = httpx.Limits(
@@ -618,7 +583,7 @@ def _build_httpx_client(
         def _hook(request: Any) -> None:
             _inject_correlation_headers(request.headers)
 
-    ua = cfg.user_agent or f"infra2-sdk/{__version__}"
+    ua = cfg.user_agent or f"infra2-sdk/{infra2_sdk.__version__}"
     return client_cls(
         timeout=timeout,
         transport=transport_cls(limits=limits),
@@ -664,22 +629,38 @@ def _retry_delay(
     return min(max_backoff, backoff_base * (2**attempt))
 
 
-def _validate_retry_args(
+def _prepare_retry(
     method: str,
     max_attempts: int,
     backoff_base: float,
     max_backoff: float,
     retry_non_idempotent: bool,
-) -> int:
+) -> tuple[int, Any]:
     if max_attempts < 1:
         raise ValueError("max_attempts must be at least 1")
     if not math.isfinite(backoff_base) or backoff_base < 0:
         raise ValueError("backoff_base must be non-negative")
     if not math.isfinite(max_backoff) or max_backoff < 0:
         raise ValueError("max_backoff must be non-negative")
-    if not retry_non_idempotent and method.strip().upper() not in _IDEMPOTENT_METHODS:
-        return 1
-    return max_attempts
+    eff_attempts = (
+        1
+        if not retry_non_idempotent and method.strip().upper() not in _IDEMPOTENT_METHODS
+        else max_attempts
+    )
+    return eff_attempts, require_optional("httpx", extra="http")
+
+
+def _next_retry_wait(
+    resp: Any,
+    attempt: int,
+    eff_attempts: int,
+    retry_statuses: Collection[int],
+    backoff_base: float,
+    max_backoff: float,
+) -> float | None:
+    if int(resp.status_code) not in retry_statuses or attempt + 1 >= eff_attempts:
+        return None
+    return _retry_delay(resp.headers, attempt, backoff_base=backoff_base, max_backoff=max_backoff)
 
 
 def request_with_retry(
@@ -696,10 +677,9 @@ def request_with_retry(
     **kwargs: Any,
 ) -> Any:
     """Execute a synchronous httpx request honoring Retry-After and exponential backoff."""
-    eff_attempts = _validate_retry_args(
+    eff_attempts, httpx = _prepare_retry(
         method, max_attempts, backoff_base, max_backoff, retry_non_idempotent
     )
-    httpx = require_optional("httpx", extra="http")
     for attempt in range(eff_attempts):
         try:
             resp = client.request(method, url, **kwargs)
@@ -708,11 +688,13 @@ def request_with_retry(
                 raise
             sleep(_retry_delay(None, attempt, backoff_base=backoff_base, max_backoff=max_backoff))
             continue
-        if int(resp.status_code) not in retry_statuses or attempt + 1 >= eff_attempts:
+        if (
+            wait := _next_retry_wait(
+                resp, attempt, eff_attempts, retry_statuses, backoff_base, max_backoff
+            )
+        ) is None:
             return resp
-        sleep(
-            _retry_delay(resp.headers, attempt, backoff_base=backoff_base, max_backoff=max_backoff)
-        )
+        sleep(wait)
     raise AssertionError("unreachable")  # pragma: no cover
 
 
@@ -730,10 +712,9 @@ async def async_request_with_retry(
     **kwargs: Any,
 ) -> Any:
     """Execute an asynchronous httpx request honoring Retry-After and exponential backoff."""
-    eff_attempts = _validate_retry_args(
+    eff_attempts, httpx = _prepare_retry(
         method, max_attempts, backoff_base, max_backoff, retry_non_idempotent
     )
-    httpx = require_optional("httpx", extra="http")
     for attempt in range(eff_attempts):
         try:
             resp = await client.request(method, url, **kwargs)
@@ -744,11 +725,13 @@ async def async_request_with_retry(
                 _retry_delay(None, attempt, backoff_base=backoff_base, max_backoff=max_backoff)
             )
             continue
-        if int(resp.status_code) not in retry_statuses or attempt + 1 >= eff_attempts:
+        if (
+            wait := _next_retry_wait(
+                resp, attempt, eff_attempts, retry_statuses, backoff_base, max_backoff
+            )
+        ) is None:
             return resp
-        await sleep(
-            _retry_delay(resp.headers, attempt, backoff_base=backoff_base, max_backoff=max_backoff)
-        )
+        await sleep(wait)
     raise AssertionError("unreachable")  # pragma: no cover
 
 
@@ -833,26 +816,23 @@ class RateLimitWindow:
             return False, max(0.0, wait_until - now)
 
 
+def __dir__() -> list[str]:
+    return sorted(__all__)
+
+
 __all__ = (
-    "DependencyKind",
-    "DependencyStatus",
-    "HealthStatus",
-    "Dependency",
-    "DependencyManifest",
-    "ProbeResult",
-    "DependencyCheck",
-    "CheckOutcome",
     "CallableCheck",
-    "run_probes",
-    "evaluate_health",
-    "ProbeResponse",
-    "HealthResponse",
-    "init_service",
+    "Dependency",
+    "DependencyKind",
+    "DependencyManifest",
+    "DependencyStatus",
     "HttpClientSettings",
-    "create_http_client",
-    "create_async_http_client",
-    "request_with_retry",
-    "async_request_with_retry",
-    "probe_http",
+    "ProbeResult",
     "RateLimitWindow",
+    "async_request_with_retry",
+    "create_async_http_client",
+    "create_http_client",
+    "init_service",
+    "probe_http",
+    "request_with_retry",
 )
