@@ -1,6 +1,6 @@
 [project]
 name = "infra2-sdk"
-version = "4.11.2"
+version = "4.12.0"
 description = "Clean MECE environment contracts, telemetry, service, storage, LLM, and delivery SDK"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -56,6 +56,11 @@ all = [
     "psycopg[binary]>=3.2,<4",
     "pydantic-ai-slim[zai]>=2.71.0,<3",
 ]
+
+[dependency-groups]
+canary = [
+    "uvicorn[standard]>=0.28,<1",
+]
 dev = [
     "boto3>=1.34,<2",
     "build>=1.2,<2,!=1.5.1",
@@ -72,11 +77,6 @@ dev = [
     "pytest-cov>=5,<8",
     "pytest-recording>=0.15,<1",
     "ruff>=0.12,<1",
-]
-
-[dependency-groups]
-canary = [
-    "uvicorn[standard]>=0.28,<1",
 ]
 
 [build-system]

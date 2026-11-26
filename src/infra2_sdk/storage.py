@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import importlib
 import json
 import math
 import os
@@ -23,6 +24,7 @@ from infra2_sdk._core import (
     ContractModel,
     load_dotted_symbol,
     redact_secrets,
+    redact_text,
     redact_url,
     redact_url_credentials,
     require_optional,
@@ -30,14 +32,15 @@ from infra2_sdk._core import (
 )
 from infra2_sdk.service import DependencyStatus, ProbeResult
 
-EXIT_OK = 0
-EXIT_BLOCKED = 1
-EXIT_NOT_EVALUATED = 3
+_EXIT_OK = 0
+_EXIT_BLOCKED = 1
+_EXIT_NOT_EVALUATED = 3
 
-ROLLBACK_CLASS_A = "A"
-ROLLBACK_CLASS_C = "C"
+_ROLLBACK_CLASS_A = "A"
+_ROLLBACK_CLASS_C = "C"
 
 _DEFAULT_TIMEOUT_SECONDS = 5.0
+_PROBE_TABLE_RE = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]{0,62}\Z")
 _RESP_CRLF = b"\r\n"
 _RESP_MAX_LINE_BYTES = 65_536
 
@@ -146,7 +149,7 @@ _STRING_LITERAL_RE = re.compile(r"'(?:''|[^'])*'")
 _FALSY_SCALAR_STRINGS = frozenset({"false", "f", "0", "no", "none", ""})
 
 
-class GateNotEvaluated(RuntimeError):
+class _GateNotEvaluated(RuntimeError):
     """Raised when the schema gate cannot evaluate database or migration state."""
 
 
@@ -187,10 +190,10 @@ class PostgresSettings(_UrlConnectionSettings):
     @field_validator("url")
     @classmethod
     def _validate_url(cls, value: str) -> str:
-        return normalize_postgres_dsn(value)
+        return _normalize_postgres_dsn(value)
 
 
-def normalize_postgres_dsn(dsn: str) -> str:
+def _normalize_postgres_dsn(dsn: str) -> str:
     """Normalize postgresql+<driver>:// or postgres:// DSNs into postgresql:// libpq form."""
     text = dsn.strip()
     if not text:
@@ -232,14 +235,17 @@ def probe_postgres(
     connect_timeout: float = _DEFAULT_TIMEOUT_SECONDS,
     name: str = "postgres",
     verify_write: bool = False,
+    probe_table: str = "infra2_sdk_probe",
 ) -> ProbeResult:
     """Verify PostgreSQL connectivity (`SELECT 1`) and optional temp-table write round-trip."""
     if not math.isfinite(connect_timeout) or connect_timeout <= 0:
         raise ValueError("connect_timeout must be positive")
+    if not _PROBE_TABLE_RE.fullmatch(probe_table):
+        raise ValueError("probe_table must be a valid SQL identifier")
     psycopg = require_optional("psycopg", extra="postgres")
     started = time.perf_counter()
     try:
-        dsn = normalize_postgres_dsn(url)
+        dsn = _normalize_postgres_dsn(url)
         timeout_arg = max(1, int(math.ceil(connect_timeout)))
         timeout_ms = timeout_arg * 1000
         with (
@@ -262,16 +268,16 @@ def probe_postgres(
             if verify_write:
                 cur.execute("SET LOCAL transaction_read_only = off")
                 cur.execute(
-                    "CREATE TEMP TABLE IF NOT EXISTS canary_todo_probe "
+                    f"CREATE TEMP TABLE IF NOT EXISTS {probe_table} "
                     "(id TEXT PRIMARY KEY, title TEXT NOT NULL)"
                 )
                 cur.execute(
-                    "INSERT INTO canary_todo_probe (id, title) VALUES ('probe-1', 'ok') "
+                    f"INSERT INTO {probe_table} (id, title) VALUES ('probe-1', 'ok') "
                     "ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title"
                 )
-                cur.execute("SELECT title FROM canary_todo_probe WHERE id = 'probe-1'")
+                cur.execute(f"SELECT title FROM {probe_table} WHERE id = 'probe-1'")
                 w_row = cur.fetchone()
-                cur.execute("DELETE FROM canary_todo_probe WHERE id = 'probe-1'")
+                cur.execute(f"DELETE FROM {probe_table} WHERE id = 'probe-1'")
                 if not w_row or w_row[0] != "ok":
                     return ProbeResult(
                         name=name,
@@ -649,9 +655,7 @@ def _normalize_expected_tables(
     return out
 
 
-class EnumSchemaSpec(ContractModel):
-    """Expected PostgreSQL enum type definition."""
-
+class _EnumSchemaSpec(ContractModel):
     schema_name: str = "public"
     name: str
     labels: tuple[str, ...]
@@ -674,7 +678,7 @@ class EnumSchemaSpec(ContractModel):
         return value
 
 
-EnumDiscrepancyKind = Literal[
+_EnumDiscrepancyKind = Literal[
     "missing_type",
     "extra_type",
     "additive_labels",
@@ -683,53 +687,46 @@ EnumDiscrepancyKind = Literal[
 ]
 
 
-class EnumDiscrepancy(ContractModel):
-    """Difference between expected and live PostgreSQL enum definitions."""
-
+class _EnumDiscrepancy(ContractModel):
     schema_name: str = "public"
     name: str
-    kind: EnumDiscrepancyKind
+    kind: _EnumDiscrepancyKind
     expected: tuple[str, ...] = ()
     actual: tuple[str, ...] = ()
     missing_in_db: tuple[str, ...] = ()
     missing_in_code: tuple[str, ...] = ()
 
 
-class TableColumn(ContractModel):
-    """Qualified database column descriptor."""
-
+class _TableColumn(ContractModel):
     schema_name: str = "public"
     table_name: str
     column_name: str
     data_type: str = ""
 
 
-class SchemaDiffReport(ContractModel):
-    """Result of evaluating live PostgreSQL schema against target contracts."""
-
-    additive_columns: tuple[TableColumn, ...] = ()
-    dropped_columns: tuple[TableColumn, ...] = ()
+class _SchemaDiffReport(ContractModel):
+    additive_columns: tuple[_TableColumn, ...] = ()
+    dropped_columns: tuple[_TableColumn, ...] = ()
     new_tables: tuple[tuple[str, str], ...] = ()
     dropped_tables: tuple[tuple[str, str], ...] = ()
-    enum_discrepancies: tuple[EnumDiscrepancy, ...] = ()
+    enum_discrepancies: tuple[_EnumDiscrepancy, ...] = ()
     migrations_pending: bool = False
     preconditions_passed: bool = True
     precondition_failures: tuple[str, ...] = ()
-    rollback_class: Literal["A", "C"] = ROLLBACK_CLASS_A
+    rollback_class: Literal["A", "C"] = _ROLLBACK_CLASS_A
 
     @property
     def is_blocking(self) -> bool:
         return (
-            self.rollback_class == ROLLBACK_CLASS_C
+            self.rollback_class == _ROLLBACK_CLASS_C
             or not self.preconditions_passed
             or (not self.migrations_pending and bool(self.enum_discrepancies))
         )
 
 
-def enums_from_metadata(
+def _enums_from_metadata(
     metadata: Any, *, default_schema: str = "public"
-) -> tuple[EnumSchemaSpec, ...]:
-    """Extract EnumSchemaSpec definitions (including ARRAY/TypeDecorator enums) from MetaData."""
+) -> tuple[_EnumSchemaSpec, ...]:
     specs: dict[tuple[str, str], tuple[str, ...]] = {}
     for _t_schema, _t_name, enum_schema, enum_name, labels in _iter_metadata_enum_columns(
         metadata, default_schema=default_schema
@@ -739,7 +736,7 @@ def enums_from_metadata(
             raise ValueError(f"conflicting enum definitions for {enum_schema}.{enum_name}")
         specs.setdefault(key, labels)
     return tuple(
-        EnumSchemaSpec(schema_name=k[0], name=k[1], labels=v) for k, v in sorted(specs.items())
+        _EnumSchemaSpec(schema_name=k[0], name=k[1], labels=v) for k, v in sorted(specs.items())
     )
 
 
@@ -754,19 +751,18 @@ def _enum_tables_from_metadata(
     return {k: frozenset(v) for k, v in refs.items()}
 
 
-def check_enums(
-    expected: Sequence[EnumSchemaSpec],
+def _check_enums(
+    expected: Sequence[_EnumSchemaSpec],
     actual: Mapping[tuple[str, str], Sequence[str]],
-) -> tuple[EnumDiscrepancy, ...]:
-    """Compare expected EnumSchemaSpec objects bidirectionally against live PostgreSQL enums."""
-    out: list[EnumDiscrepancy] = []
+) -> tuple[_EnumDiscrepancy, ...]:
+    out: list[_EnumDiscrepancy] = []
     expected_keys: set[tuple[str, str]] = set()
     for spec in expected:
         key = (spec.schema_name, spec.name)
         expected_keys.add(key)
         if key not in actual:
             out.append(
-                EnumDiscrepancy(
+                _EnumDiscrepancy(
                     schema_name=spec.schema_name,
                     name=spec.name,
                     kind="missing_type",
@@ -787,13 +783,13 @@ def check_enums(
         if not missing_in_code and [label for label in spec.labels if label in live_set] == list(
             live
         ):
-            kind: EnumDiscrepancyKind = "additive_labels"
+            kind: _EnumDiscrepancyKind = "additive_labels"
         elif not missing_in_code and not missing_in_db:
             kind = "order_mismatch"
         else:
             kind = "destructive_labels"
         out.append(
-            EnumDiscrepancy(
+            _EnumDiscrepancy(
                 schema_name=spec.schema_name,
                 name=spec.name,
                 kind=kind,
@@ -806,7 +802,7 @@ def check_enums(
     for key in sorted(set(actual) - expected_keys):
         live = tuple(str(item) for item in actual[key])
         out.append(
-            EnumDiscrepancy(
+            _EnumDiscrepancy(
                 schema_name=key[0],
                 name=key[1],
                 kind="extra_type",
@@ -819,25 +815,24 @@ def check_enums(
     return tuple(out)
 
 
-def classify_rollback(
+def _classify_rollback(
     *,
-    dropped_columns: Sequence[TableColumn] = (),
+    dropped_columns: Sequence[_TableColumn] = (),
     new_tables: Collection[tuple[str, str]] = (),
     dropped_tables: Collection[tuple[str, str]] = (),
-    enum_discrepancies: Sequence[EnumDiscrepancy] = (),
+    enum_discrepancies: Sequence[_EnumDiscrepancy] = (),
     enum_tables: Mapping[tuple[str, str], Collection[tuple[str, str]]] | None = None,
     code_tables: Collection[tuple[str, str]] | None = None,
     migrations_pending: bool = False,
 ) -> Literal["A", "C"]:
-    """Classify migration rollback safety as A (online-reversible) or C (exclusive/unsafe)."""
     dropped_table_set = {(str(s), str(t)) for s, t in dropped_tables}
     new_table_set = {(str(s), str(t)) for s, t in new_tables}
     code_table_set = {(str(s), str(t)) for s, t in code_tables} if code_tables is not None else None
     if dropped_table_set:
-        return ROLLBACK_CLASS_C
+        return _ROLLBACK_CLASS_C
     for col in dropped_columns:
         if (col.schema_name, col.table_name) not in dropped_table_set:
-            return ROLLBACK_CLASS_C
+            return _ROLLBACK_CLASS_C
     enum_ref_map = enum_tables or {}
     for diff in enum_discrepancies:
         if diff.kind == "additive_labels":
@@ -846,36 +841,35 @@ def classify_rollback(
         if diff.kind == "missing_type":
             if (refs and refs <= new_table_set) or (not refs and new_table_set):
                 continue
-            return ROLLBACK_CLASS_C
+            return _ROLLBACK_CLASS_C
         if diff.kind == "extra_type":
             if not migrations_pending or not refs:
-                return ROLLBACK_CLASS_C
+                return _ROLLBACK_CLASS_C
             if code_table_set is not None and not (refs & code_table_set):
                 continue
             if refs <= dropped_table_set:
                 continue
-            return ROLLBACK_CLASS_C
+            return _ROLLBACK_CLASS_C
         if refs and refs <= dropped_table_set:
             continue
-        return ROLLBACK_CLASS_C
-    return ROLLBACK_CLASS_A
+        return _ROLLBACK_CLASS_C
+    return _ROLLBACK_CLASS_A
 
 
-def check_schema(
+def _check_schema(
     database_url: str,
     *,
     metadata: Any = None,
     expected_tables: Mapping[tuple[str, str], Mapping[str, str]] | None = None,
-    expected_enums: Sequence[EnumSchemaSpec] = (),
+    expected_enums: Sequence[_EnumSchemaSpec] = (),
     alembic_config_path: str | None = None,
     alembic_script_location: str | None = None,
     preconditions: Sequence[str] = (),
     default_schema: str = "public",
     connect_timeout: float = _DEFAULT_TIMEOUT_SECONDS,
-) -> SchemaDiffReport:
-    """Evaluate database schema compatibility and preconditions on one read-only connection."""
+) -> _SchemaDiffReport:
     psycopg = require_optional("psycopg", extra="postgres")
-    dsn = normalize_postgres_dsn(database_url)
+    dsn = _normalize_postgres_dsn(database_url)
     target_tables = _normalize_expected_tables(
         expected_tables, metadata=metadata, default_schema=default_schema
     )
@@ -883,7 +877,7 @@ def check_schema(
     code_enum_tables: dict[tuple[str, str], frozenset[tuple[str, str]]] = {}
     if metadata is not None:
         by_key = {(e.schema_name, e.name): e for e in merged_enums}
-        for spec in enums_from_metadata(metadata, default_schema=default_schema):
+        for spec in _enums_from_metadata(metadata, default_schema=default_schema):
             by_key.setdefault((spec.schema_name, spec.name), spec)
         merged_enums = list(by_key.values())
         code_enum_tables = _enum_tables_from_metadata(metadata, default_schema=default_schema)
@@ -893,7 +887,7 @@ def check_schema(
     try:
         conn = psycopg.connect(dsn, connect_timeout=timeout_arg, options=opts)
     except Exception as exc:  # noqa: BLE001
-        raise GateNotEvaluated(redact_postgres_error(exc, database_url)) from exc
+        raise _GateNotEvaluated(redact_postgres_error(exc, database_url)) from exc
 
     try:
         with conn, conn.cursor() as cur:
@@ -907,10 +901,10 @@ def check_schema(
                 alembic_script_location=alembic_script_location,
             )
     except Exception as exc:  # noqa: BLE001
-        raise GateNotEvaluated(redact_postgres_error(exc, database_url)) from exc
+        raise _GateNotEvaluated(redact_postgres_error(exc, database_url)) from exc
 
-    additive_cols: list[TableColumn] = []
-    dropped_cols: list[TableColumn] = []
+    additive_cols: list[_TableColumn] = []
+    dropped_cols: list[_TableColumn] = []
     new_tables: list[tuple[str, str]] = []
     dropped_tables: list[tuple[str, str]] = []
 
@@ -922,7 +916,7 @@ def check_schema(
             act_cols = live_tables[table_key]
             for cname in sorted(set(exp_cols) - set(act_cols)):
                 additive_cols.append(
-                    TableColumn(
+                    _TableColumn(
                         schema_name=table_key[0],
                         table_name=table_key[1],
                         column_name=cname,
@@ -931,7 +925,7 @@ def check_schema(
                 )
             for cname in sorted(set(act_cols) - set(exp_cols)):
                 dropped_cols.append(
-                    TableColumn(
+                    _TableColumn(
                         schema_name=table_key[0],
                         table_name=table_key[1],
                         column_name=cname,
@@ -939,9 +933,9 @@ def check_schema(
                     )
                 )
 
-    enum_diffs: tuple[EnumDiscrepancy, ...] = ()
+    enum_diffs: tuple[_EnumDiscrepancy, ...] = ()
     if merged_enums or metadata is not None:
-        enum_diffs = check_enums(merged_enums, live_enums)
+        enum_diffs = _check_enums(merged_enums, live_enums)
 
     combined_enum_tables: dict[tuple[str, str], set[tuple[str, str]]] = {
         k: set(v) for k, v in db_enum_tables.items()
@@ -949,7 +943,7 @@ def check_schema(
     for key, tables in code_enum_tables.items():
         combined_enum_tables.setdefault(key, set()).update(tables)
 
-    rollback_class = classify_rollback(
+    rollback_class = _classify_rollback(
         dropped_columns=dropped_cols,
         new_tables=new_tables,
         dropped_tables=dropped_tables,
@@ -958,7 +952,7 @@ def check_schema(
         code_tables=set(target_tables) if target_tables else None,
         migrations_pending=pending,
     )
-    return SchemaDiffReport(
+    return _SchemaDiffReport(
         additive_columns=tuple(additive_cols),
         dropped_columns=tuple(dropped_cols),
         new_tables=tuple(new_tables),
@@ -972,7 +966,7 @@ def check_schema(
 
 
 class S3Settings(ContractModel):
-    """S3-compatible object storage configuration."""
+    """S3-compatible object storage configuration (path-style addressing enabled by default)."""
 
     endpoint_url: str
     bucket: str
@@ -1141,14 +1135,14 @@ def probe_s3(
             duration_ms=(time.perf_counter() - started) * 1000,
         )
     except Exception as exc:  # noqa: BLE001
-        detail = redact_secrets(f"{type(exc).__name__}: {exc}")
-        detail = detail.replace(settings.access_key_id, "[REDACTED]").replace(
-            settings.secret_access_key, "[REDACTED]"
+        detail = redact_text(
+            f"{type(exc).__name__}: {exc}",
+            extra_secrets=(settings.access_key_id, settings.secret_access_key),
         )
         return ProbeResult(
             name=name,
             status=DependencyStatus.ABSENT,
-            detail=redact_presigned_url(detail),
+            detail=detail,
             duration_ms=(time.perf_counter() - started) * 1000,
         )
     finally:
@@ -1159,7 +1153,7 @@ def probe_s3(
                     close_fn()
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def _main(argv: Sequence[str] | None = None) -> int:
     """CLI entrypoint: ``python -m infra2_sdk.storage check-schema ...``."""
     parser = argparse.ArgumentParser(prog="python -m infra2_sdk.storage")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1169,6 +1163,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--db-url",
         dest="database_url",
         default=os.environ.get("DATABASE_URL", ""),
+    )
+    gate.add_argument(
+        "--import",
+        action="append",
+        dest="import_modules",
+        default=[],
+        help="Dotted module name to import before loading --metadata",
     )
     gate.add_argument("--metadata", help="Dotted module:ATTR pointing to MetaData or enum stub")
     gate.add_argument("--label", default="", help="Optional service label for output")
@@ -1180,19 +1181,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(list(argv) if argv is not None else None)
     if not args.database_url:
         print("DATABASE_URL is required", file=sys.stderr)
-        return EXIT_NOT_EVALUATED
+        return _EXIT_NOT_EVALUATED
     try:
+        if args.import_modules:
+            if "" not in sys.path:
+                sys.path.insert(0, "")
+            for mod_name in args.import_modules:
+                importlib.import_module(mod_name)
         metadata = load_dotted_symbol(args.metadata) if args.metadata else None
-        report = check_schema(
+        report = _check_schema(
             args.database_url,
             metadata=metadata,
             alembic_config_path=args.alembic_config,
             alembic_script_location=args.alembic_script_location,
             preconditions=args.precondition,
         )
-    except (GateNotEvaluated, ValueError, ImportError, AttributeError) as exc:
+    except (_GateNotEvaluated, ValueError, ImportError, AttributeError) as exc:
         print(str(exc), file=sys.stderr)
-        return EXIT_NOT_EVALUATED
+        return _EXIT_NOT_EVALUATED
     payload = report.to_dict()
     if args.label:
         payload["label"] = args.label
@@ -1203,33 +1209,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             f"{prefix}ROLLBACK_CLASS: {report.rollback_class} pending={report.migrations_pending}"
         )
-    return EXIT_BLOCKED if report.is_blocking else EXIT_OK
+    return _EXIT_BLOCKED if report.is_blocking else _EXIT_OK
+
+
+def __dir__() -> list[str]:
+    return sorted(__all__)
 
 
 __all__ = (
-    "EXIT_BLOCKED",
-    "EXIT_NOT_EVALUATED",
-    "EXIT_OK",
-    "EnumDiscrepancy",
-    "EnumDiscrepancyKind",
-    "EnumSchemaSpec",
-    "GateNotEvaluated",
     "PostgresSettings",
-    "ROLLBACK_CLASS_A",
-    "ROLLBACK_CLASS_C",
     "RedisSettings",
     "S3Settings",
-    "SchemaDiffReport",
-    "TableColumn",
-    "check_enums",
-    "check_schema",
-    "classify_rollback",
     "create_s3_client",
     "ensure_bucket",
-    "enums_from_metadata",
     "is_not_found",
-    "main",
-    "normalize_postgres_dsn",
     "probe_postgres",
     "probe_redis",
     "probe_s3",
@@ -1241,4 +1234,4 @@ __all__ = (
 )
 
 if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(main())
+    raise SystemExit(_main())

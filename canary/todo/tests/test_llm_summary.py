@@ -40,12 +40,8 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from starlette.testclient import TestClient
 
-from infra2_sdk.llm import (
-    allow_vcr_model_requests,
-    redact_llm_error,
-    vcr_llm_config,
-)
-from infra2_sdk.telemetry import OtelSettings, configure_telemetry
+from infra2_sdk.llm import redact_llm_error
+from infra2_sdk.telemetry import init_worker
 
 models.ALLOW_MODEL_REQUESTS = False
 
@@ -85,7 +81,12 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(scope="module")
 def vcr_config() -> dict[str, Any]:
-    return vcr_llm_config(cassette_library_dir=str(CASSETTE_DIR))
+    return {
+        "cassette_library_dir": str(CASSETTE_DIR),
+        "filter_headers": [("authorization", "REDACTED"), ("x-api-key", "REDACTED")],
+        "filter_query_parameters": [("api_key", "REDACTED"), ("key", "REDACTED")],
+        "decode_compressed_response": True,
+    }
 
 
 def _load_todo_app() -> Any:
@@ -166,17 +167,17 @@ def _capture_otel_and_logs(logger: logging.Logger, sdk_formatter: logging.Format
     thread = threading.Thread(target=srv.serve_forever, daemon=True)
     thread.start()
 
-    providers = configure_telemetry(
-        OtelSettings(
-            service_name="platform-todo",
-            endpoint=f"http://127.0.0.1:{srv.server_port}",
-            environment="staging",
-            deployment_environment="staging",
-            resource_attributes={},
-        ),
+    providers = init_worker(
+        "platform-todo",
+        environ={
+            "ENVIRONMENT": "staging",
+            "OTEL_SERVICE_NAME": "platform-todo",
+            "OTEL_EXPORTER_OTLP_ENDPOINT": f"http://127.0.0.1:{srv.server_port}",
+        },
+        log_level=None,
         set_global=False,
-        capture_logs=False,
     )
+    assert providers is not None
     span_exporter = InMemorySpanExporter()
     tracer_provider = TracerProvider()
     tracer_provider.add_span_processor(SimpleSpanProcessor(span_exporter))
@@ -432,7 +433,7 @@ async def test_todo_summary_vcr_zai_non_stream(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("LLM_API_KEY", _AMBIENT_RECORD_API_KEY or "vcr-replay-placeholder")
 
     todo_mod = _load_todo_app()
-    with allow_vcr_model_requests():
+    with models.override_allow_model_requests(True):
         res = await todo_mod.summarize_recent_todos(
             limit=5,
             stream=False,
@@ -460,7 +461,7 @@ async def test_todo_summary_vcr_zai_stream(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("LLM_API_KEY", _AMBIENT_RECORD_API_KEY or "vcr-replay-placeholder")
 
     todo_mod = _load_todo_app()
-    with allow_vcr_model_requests():
+    with models.override_allow_model_requests(True):
         res = await todo_mod.summarize_recent_todos(
             limit=5,
             stream=True,

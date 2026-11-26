@@ -25,7 +25,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
-      - run: uv sync --frozen --extra dev
+      - run: uv sync --frozen --group dev
       - if: matrix.python-version == '3.12'
         run: uv run --no-sync ruff check .
       - if: matrix.python-version == '3.12'
@@ -89,7 +89,7 @@ jobs:
         with:
           python-version: "3.12"
           enable-cache: true
-      - run: uv sync --frozen --extra all --extra dev
+      - run: uv sync --frozen --extra all --group dev --group canary
       - name: Canary Todo tests
         run: uv run --no-sync pytest canary/todo/tests -q
       - uses: docker/setup-buildx-action@v3
