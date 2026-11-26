@@ -1,6 +1,6 @@
 # App integration contract
 
-This page states how an application integrates with `infra2-sdk` `v4.11.0` (`README.md` defines packages and exports; `src/infra2_sdk/data/shared_env.yaml` and `stages.yaml` are the runtime data contracts).
+This page states how an application integrates with `infra2-sdk` `v4.11.1` (`README.md` defines packages and exports; `src/infra2_sdk/data/shared_env.yaml` and `stages.yaml` are the runtime data contracts).
 
 1. **Pin one SDK release**: lock the release wheel URL + SHA-256 from GitHub Releases (`wangzitian0/infra2-sdk`).
 2. **Declare & validate config (`infra2_sdk.config`)**:

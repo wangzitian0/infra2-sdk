@@ -357,6 +357,8 @@ def resolve_check_cells(
     """Derive the ordered delivery cells in which a CheckRow should execute."""
     active_policies = _cell_policies()
     current_time = now or datetime.now(UTC)
+    if check.off is not None and check.off.is_active(current_time):
+        return ()
     needed = set(check.needs)
     resolved: set[str] = set()
 
