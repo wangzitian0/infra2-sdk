@@ -192,15 +192,10 @@ def shared_env_contract() -> Mapping[str, Any]:
 
 
 def check_shared_env(names: Iterable[str]) -> list[str]:
-    """Validate declared shared env names against ``shared_env.yaml``."""
-    contract = shared_env_contract()
-    all_known: dict[str, bool] = {}
-    for entries in contract["groups"].values():
-        for entry in entries:
-            all_known[str(entry["name"])] = bool(entry.get("sensitive", False))
+    """Validate declared shared env names against canonical rules."""
     issues: list[str] = []
     for raw in sorted({str(item).strip() for item in names if str(item).strip()}):
-        if raw.lower() in {"env", "app_env", "image_tag"}:
+        if raw.lower() in {"env", "app_env", "image_tag", "service_name"}:
             issues.append(f"{raw} is not a canonical shared environment variable")
     return issues
 

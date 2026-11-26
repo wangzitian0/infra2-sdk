@@ -4,6 +4,10 @@ Versions follow the compatibility rules in the [README](README.md#compatibility)
 steps are in [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Entries below 2.4.0 are a brief
 backfill from the merged pull requests.
 
+## 4.10.2 - 2026-11-26
+
+Restores `CheckRow.bootstrap` execution and `CheckRow.checkout_lineage` on `RuntimeHooksManifest`, retires dead `_core.is_loopback_host` and `config.check_shared_env` unused lookups, enforces `SERVICE_NAME` in `check_shared_env`, and aligns release docs with `v4.10.2`.
+
 ## 4.10.1 - 2026-11-25
 
 Hardens delivery cell resolution, hook environment scoping, and empty-permitted environment validation, and speeds up CI and release workflows.

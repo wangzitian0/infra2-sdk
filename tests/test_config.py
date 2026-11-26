@@ -63,8 +63,8 @@ def test_shared_env_contract_and_checks() -> None:
     names = {e["name"] for entries in contract["groups"].values() for e in entries}
     assert {"ENVIRONMENT", "DATABASE_URL", "REDIS_URL", "S3_BUCKET", "LLM_API_KEY"} <= names
     assert config.check_shared_env(["DATABASE_URL", "OTEL_SERVICE_NAME", "CUSTOM_APP_VAR"]) == []
-    violations = config.check_shared_env(["APP_ENV", "ENV", "IMAGE_TAG"])
-    assert len(violations) == 3
+    violations = config.check_shared_env(["APP_ENV", "ENV", "IMAGE_TAG", "SERVICE_NAME"])
+    assert len(violations) == 4
 
 
 def test_manifest_lifecycle_offline_checks_and_cli(

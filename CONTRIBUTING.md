@@ -1,6 +1,6 @@
 # Contributing
 
-The [README](README.md) defines the public 6-module contract; [`pyproject.toml`](pyproject.toml) defines the `4.10.0` version and minimal core dependency surface (`pydantic`, `pyyaml`).
+The [README](README.md) defines the public 6-module contract; [`pyproject.toml`](pyproject.toml) defines the `4.10.2` version and minimal core dependency surface (`pydantic`, `pyyaml`).
 
 ## Ownership
 

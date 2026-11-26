@@ -445,7 +445,7 @@ def test_todo_fastapi_endpoints_contract(monkeypatch) -> None:
 
     client = TestClient(todo_mod.fastapi_app)
 
-    # 1. Standard /livez probe from infra2_sdk.fastapi.init_service
+    # 1. Standard /livez probe from infra2_sdk.service.init_service
     resp_livez = client.get("/livez")
     assert resp_livez.status_code == 200
     assert resp_livez.json() == {"status": "alive", "service": "platform-todo"}

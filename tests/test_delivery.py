@@ -263,6 +263,60 @@ def test_resolve_check_cells_code_only_excludes_post_deploy_unless_overridden() 
     assert set(delivery.resolve_check_cells(code_check)) == expected_code_cells
     assert set(delivery.resolve_check_cells(recorded_check)) == expected_code_cells
 
+
+def test_run_cell_executes_bootstrap_and_preserves_checkout_lineage() -> None:
+    seen_commands: list[list[str]] = []
+
+    def ok_runner(argv, **_kwargs):
+        seen_commands.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, stdout="ok", stderr="")
+
+    manifest = delivery.RuntimeHooksManifest(
+        schema_version=delivery.HOOKS_SCHEMA_VERSION,
+        service="demo/svc",
+        checks=(
+            delivery.CheckRow(
+                id="smoke",
+                argv=("echo", "run"),
+                needs=("code", "running_service"),
+                bootstrap="echo prep",
+                checkout_lineage=True,
+            ),
+        ),
+    )
+    assert manifest.checks[0].checkout_lineage is True
+    ok_res = delivery.run_cell(manifest, "staging.operation", environ={}, runner=ok_runner)
+    assert ok_res.passed is True
+    assert seen_commands == [["sh", "-c", "echo prep"], ["echo", "run"]]
+
+    seen_commands.clear()
+
+    def failing_bootstrap_runner(argv, **_kwargs):
+        seen_commands.append(list(argv))
+        return subprocess.CompletedProcess(argv, 2, stdout="", stderr="pip install failed")
+
+    fail_res = delivery.run_cell(
+        manifest, "staging.operation", environ={}, runner=failing_bootstrap_runner
+    )
+    assert fail_res.passed is False
+    assert seen_commands == [["sh", "-c", "echo prep"]]
+    assert fail_res.verdicts[0].exit_code == 2
+    assert "bootstrap failed: pip install failed" in fail_res.verdicts[0].stderr
+
+    seen_commands.clear()
+
+    def timeout_runner(argv, **kwargs):
+        seen_commands.append(list(argv))
+        raise subprocess.TimeoutExpired(argv, kwargs["timeout"], output="partial")
+
+    timeout_res = delivery.run_cell(
+        manifest, "staging.operation", environ={}, runner=timeout_runner
+    )
+    assert timeout_res.passed is False
+    assert seen_commands == [["sh", "-c", "echo prep"]]
+    assert timeout_res.verdicts[0].exit_code == 124
+    assert "bootstrap timed out after" in timeout_res.verdicts[0].stderr
+
     overridden = delivery.CheckRow(
         id="unit-preview",
         argv=("pytest",),

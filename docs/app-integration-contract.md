@@ -1,6 +1,6 @@
 # App integration contract
 
-This page states how an application runs on the infra2 platform with `infra2-sdk` `v4.10.0`.
+This page states how an application runs on the infra2 platform with `infra2-sdk` `v4.10.2`.
 The generated tables below come from `data/shared_env.yaml` and `data/stages.yaml`. Regenerate them with `python scripts/render_app_contract.py`.
 
 ## 1. Pin one SDK release
