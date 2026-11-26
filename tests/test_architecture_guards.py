@@ -19,7 +19,7 @@ EXPECTED_MODULES = ("config", "telemetry", "service", "storage", "llm", "deliver
 def test_package_metadata_and_module_surface() -> None:
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     project = pyproject["project"]
-    assert project["version"] == "4.11.0"
+    assert project["version"] == "4.11.1"
     assert infra2_sdk.__all__ == EXPECTED_MODULES
 
     core_deps = {

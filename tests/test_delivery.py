@@ -355,3 +355,26 @@ def test_run_cell_executes_bootstrap_and_preserves_checkout_lineage() -> None:
     assert seen_commands == [["sh", "-c", "echo prep"]]
     assert timeout_res.verdicts[0].exit_code == 124
     assert "bootstrap timed out after" in timeout_res.verdicts[0].stderr
+
+
+def test_resolve_check_cells_respects_active_off_override() -> None:
+    check_off = delivery.CheckRow(
+        id="staging_gate",
+        argv=("echo", "gate"),
+        needs=("code", "running_service"),
+        off=delivery.OverrideReason(reason="paused", issue="wangzitian0/infra2#1823"),
+    )
+    assert delivery.resolve_check_cells(check_off) == ()
+
+    expired = delivery.CheckRow(
+        id="staging_gate",
+        argv=("echo", "gate"),
+        needs=("code", "running_service"),
+        off=delivery.OverrideReason(
+            reason="paused",
+            expires_at=datetime(2020, 1, 1, tzinfo=UTC),
+        ),
+    )
+    assert "staging.post" in delivery.resolve_check_cells(
+        expired, now=datetime(2026, 11, 26, tzinfo=UTC)
+    )

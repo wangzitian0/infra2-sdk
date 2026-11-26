@@ -1,6 +1,6 @@
 [project]
 name = "infra2-sdk"
-version = "4.11.0"
+version = "4.11.1"
 description = "Clean MECE environment contracts, telemetry, service, storage, LLM, and delivery SDK"
 readme = "README.md"
 requires-python = ">=3.11"

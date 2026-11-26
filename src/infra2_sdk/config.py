@@ -338,7 +338,12 @@ class EnvironmentManifest(ContractModel):
                 )
             if f.source in _COMPOSE_SOURCES and not f.injected:
                 errors.append(f"{f.env}: {f.source.value} value must be injected by the deployment")
-            if f.sensitive and f.source is FieldSource.CODE and not f.provided_by:
+            if (
+                f.sensitive
+                and f.source is FieldSource.CODE
+                and not f.provided_by
+                and not f.composed_from
+            ):
                 errors.append(f"{f.env}: a sensitive value cannot be a code default")
             if f.source is FieldSource.BOOTSTRAP:
                 errors.append(f"{f.env}: bootstrap values never enter an application manifest")

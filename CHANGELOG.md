@@ -2,6 +2,13 @@
 
 Versions follow `README.md`. Release steps are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## 4.11.1 - 2026-11-26
+
+### Fixed
+
+- `config`: allow `sensitive=True` on `source="code"` fields that declare `composed_from` from a declared or Vault-backed secret (`EnvironmentManifest.validate_offline()`).
+- `delivery`: return `()` from `resolve_check_cells(check)` while `check.off` is active.
+
 ## 4.11.0 - 2026-11-26
 
 Deep repository cleanup, internal helper consolidation, Canary Todo deduplication, and function-level hardening across all six modules.

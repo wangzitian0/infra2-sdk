@@ -240,3 +240,31 @@ def test_validate_env_allows_empty_string_for_empty_ok_injected_field() -> None:
     assert config.validate_env(
         manifest, {"OPT_ENDPOINT": "", "REQ_DSN": ""}, require_injected=True
     ).missing == ("REQ_DSN",)
+
+
+def test_validate_offline_allows_sensitive_code_field_with_composed_from() -> None:
+    pw = config.EnvironmentField(
+        field="app_pw",
+        env="APP_SERVICE_DB_PASSWORD",
+        source=config.FieldSource.RUNTIME,
+        sensitive=True,
+        empty_ok=True,
+    )
+    composed_dsn = config.EnvironmentField(
+        field="database_url",
+        env="DATABASE_URL",
+        source=config.FieldSource.CODE,
+        sensitive=True,
+        composed_from="postgresql://app:{APP_SERVICE_DB_PASSWORD}@db:5432/app",
+    )
+    bad_default = config.EnvironmentField(
+        field="api_key",
+        env="API_KEY",
+        source=config.FieldSource.CODE,
+        sensitive=True,
+    )
+    assert (
+        config.EnvironmentManifest(source="app", fields=(pw, composed_dsn)).validate_offline() == []
+    )
+    errs = config.EnvironmentManifest(source="app", fields=(bad_default,)).validate_offline()
+    assert errs == ["API_KEY: a sensitive value cannot be a code default"]
