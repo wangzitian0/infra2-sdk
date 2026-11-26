@@ -2,6 +2,17 @@
 
 Versions follow `README.md`. Release steps are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## 4.11.2 - 2026-11-26
+
+### Changed
+
+- `canary`: pin `uvicorn[standard]` in `[dependency-groups].canary`, install dependencies with locked `uv sync` before source copy in `canary/todo/Dockerfile`, and bump version to `4.11.2`.
+- `ci`: add branch/tag workflow concurrency controls in `.github/workflows/ci.yml` and `.github/workflows/release.yml`, and make release creation idempotent.
+
+### Fixed
+
+- `delivery`: normalize naive `now` timestamps in `OverrideReason.is_active()` and recompute remaining cumulative `budget_seconds` after `CheckRow.bootstrap` in `run_cell()`.
+
 ## 4.11.1 - 2026-11-26
 
 ### Fixed

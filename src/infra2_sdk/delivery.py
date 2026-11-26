@@ -212,6 +212,7 @@ class OverrideReason(ContractModel):
         if self.expires_at is None:
             return True
         current = now or datetime.now(UTC)
+        current = current.replace(tzinfo=UTC) if current.tzinfo is None else current.astimezone(UTC)
         return self.expires_at > current
 
 
@@ -463,6 +464,7 @@ def run_cell(
     cwd: str | Path | None = None,
     runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
     now: datetime | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> HookRunResult:
     """Execute all active manifest checks scheduled in a given delivery cell."""
     policies = _cell_policies()
@@ -496,7 +498,7 @@ def run_cell(
     exec_fn = subprocess.run if runner is None else runner
     source_env = os.environ if environ is None else environ
     bootstrap_cap = float(_load_stages_cached()[0]["bootstrap_cap_seconds"])
-    cell_deadline = time.monotonic() + policy.budget_seconds
+    cell_deadline = monotonic() + policy.budget_seconds
 
     def _exec_step(
         check_id: str,
@@ -559,7 +561,7 @@ def run_cell(
 
     verdicts: list[CheckVerdict] = []
     for check in selected:
-        remaining = cell_deadline - time.monotonic()
+        remaining = cell_deadline - monotonic()
         if remaining <= 0:
             verdicts.append(
                 CheckVerdict(
@@ -586,6 +588,19 @@ def run_cell(
                 if policy.stop_on_fail:
                     break
                 continue
+            remaining = cell_deadline - monotonic()
+            if remaining <= 0:
+                verdicts.append(
+                    CheckVerdict(
+                        id=check.id,
+                        cell=cell,
+                        passed=False,
+                        exit_code=124,
+                        duration_seconds=time.perf_counter() - started,
+                        stderr=f"cell {cell!r} exhausted {policy.budget_seconds}s budget",
+                    )
+                )
+                break
         timeout = min(float(check.timeout_seconds), remaining)
         verdict = _exec_step(check.id, list(check.argv), timeout=timeout, started=started)
         verdicts.append(verdict)
