@@ -41,6 +41,7 @@ from infra2_sdk.llm import (
     redact_llm_error,
     request_sha256,
     schema_sha256,
+    stream_text,
 )
 from infra2_sdk.service import (
     Dependency,
@@ -54,6 +55,8 @@ from infra2_sdk.service import (
     create_async_http_client,
     init_service,
     probe_http,
+    serve,
+    sse_stream_response,
 )
 from infra2_sdk.storage import (
     PostgresSettings,
@@ -79,8 +82,9 @@ except ImportError:
     from canary_settings import CanarySettings
     from ui import HTML_TEMPLATE
 
-LOGGER = logging.getLogger("platform-todo")
-SERVICE_TRACER_NAME = "platform-todo"
+_BOOT_CFG = CanarySettings.from_environ(os.environ)
+LOGGER = logging.getLogger(_BOOT_CFG.canary_service_name)
+SERVICE_TRACER_NAME = _BOOT_CFG.canary_service_name
 
 CHECK_DEADLINE_SECONDS = 8.0
 READINESS_TIMEOUT_SECONDS = CHECK_DEADLINE_SECONDS + 2.0
@@ -353,7 +357,12 @@ def _check_redis(raw_url: str) -> dict[str, Any]:
             started, "REDIS_URL has no password; the canary cannot prove an authenticated write"
         )
     return _to_outcome(
-        probe_redis(settings.url, key_prefix="canary:probe:", connect_timeout=2.0, write_probe=True)
+        probe_redis(
+            settings.url,
+            key_prefix=_settings().redis_key_prefix,
+            connect_timeout=2.0,
+            write_probe=True,
+        )
     )
 
 
@@ -383,7 +392,7 @@ def _check_s3(cfg: CanarySettings) -> dict[str, Any]:
         )
     except ValueError as exc:
         return _outcome(FAIL, str(exc), latency_ms=_elapsed_ms(started))
-    return _to_outcome(probe_s3(settings, key_prefix="canary/", round_trip=True))
+    return _to_outcome(probe_s3(settings, key_prefix=cfg.s3_key_prefix, round_trip=True))
 
 
 async def _check_http(label: str, url: str, *, with_retry: bool = False) -> dict[str, Any]:
@@ -514,8 +523,8 @@ def run_all_checks() -> dict[str, Any]:
         "ok": all_pass,
         "unconfigured": unconfigured,
         "failed": failed,
-        "service": "platform/todo",
-        "domain": "todo.zitian.party",
+        "service": cfg.canary_service_id,
+        "domain": cfg.canary_domain,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "gating": list(GATING_CHECKS),
         "informational": list(INFORMATIONAL_CHECKS),
@@ -585,7 +594,7 @@ def _todo_health_extra(verdict: Mapping[str, Any] | None = None) -> dict[str, An
     return {
         "ok": canary_ok,
         "request_id": current_request_id(),
-        "domain": "todo.zitian.party",
+        "domain": _settings().canary_domain,
         "environment": read_runtime_env(RuntimeEnvKey.ENVIRONMENT) or "unknown",
         "configuration_sha256": read_runtime_env(RuntimeEnvKey.CONFIGURATION_SHA256) or "unknown",
         "sdk_version": _SDK_VERSION,
@@ -628,7 +637,7 @@ fastapi_app.add_middleware(
 
 init_service(
     fastapi_app,
-    name="platform-todo",
+    name=_BOOT_CFG.canary_service_name,
     checks=[_CanaryDependencyCheck(name) for name in GATING_CHECKS],
     manifest=CANARY_DEPENDENCY_MANIFEST,
     enable_otel=True,
@@ -674,7 +683,7 @@ def fastapi_api_health() -> Response:
         content={
             **extra,
             "status": "healthy" if canary_ok else "unhealthy",
-            "service": "platform/todo",
+            "service": _settings().canary_service_id,
             "version": rel.get("version", "unknown"),
             "git_sha": rel.get("git_sha", "unknown"),
         },
@@ -903,6 +912,8 @@ async def fastapi_summarize_todos(
             },
         )
     req = payload or TodoSummaryRequest()
+    if req.stream:
+        return await _stream_todos_summary_sse(limit=req.limit)
     from pydantic_ai.exceptions import UsageLimitExceeded
 
     try:
@@ -921,6 +932,72 @@ async def fastapi_summarize_todos(
             status_code=502, content={"error": "LLM summary failed", "detail": str(scrubbed)}
         )
     return JSONResponse(status_code=200, content=res.model_dump(mode="json"))
+
+
+async def _stream_todos_summary_sse(
+    *,
+    limit: int = 20,
+    model_override: Any | None = None,
+    todos_loader: Callable[[int], list[dict[str, Any]]] | None = None,
+) -> Response:
+    settings = LlmSettings.from_env(os.environ)
+    if model_override is None and not (settings.api_key and settings.api_key.strip()):
+        return JSONResponse(
+            status_code=503,
+            content={"error": "LLM stream unavailable", "detail": "Missing LLM_API_KEY"},
+        )
+    bounded = max(1, min(int(limit), 50))
+    try:
+        items = (todos_loader or _list_todos_db)(bounded)[:bounded]
+    except Exception as exc:  # noqa: BLE001
+        if (db_resp := _db_unavailable_response(exc)) is not None:
+            return db_resp
+        raise
+    lines = [
+        f"- [{'done' if item.get('completed') else 'open'}] ({item.get('capability', 'general')}) {item.get('title', '')}"
+        for item in items
+    ]
+    prompt_text = "Recent todos:\n" + ("\n".join(lines) if lines else "(none)")
+    p_sha = prompt_sha256(prompt_text)
+    model_label = settings.role_model("small")
+    from pydantic_ai import UsageLimits
+
+    providers = getattr(fastapi_app.state, "telemetry_providers", None)
+    agent = create_llm_agent(
+        settings,
+        role="small",
+        model=model_override,
+        call_site=TODO_SUMMARY_CALL_SITE,
+        decoding=TODO_SUMMARY_DECODING,
+        instructions="Summarize recent infrastructure todo items concisely.",
+        usage_limits=UsageLimits(
+            request_limit=1,
+            output_tokens_limit=1024,
+            total_tokens_limit=4096,
+            cost_limit=Decimal("0.05"),
+        ),
+        max_attempts=3,
+        tracer_provider=getattr(providers, "tracer_provider", None),
+        meter_provider=getattr(providers, "meter_provider", None),
+    )
+    usage_out: dict[str, int] = {}
+    return await sse_stream_response(
+        stream_text(
+            agent,
+            prompt_text,
+            call_site=TODO_SUMMARY_CALL_SITE,
+            decoding_version=TODO_SUMMARY_DECODING.decoding_version,
+            prompt_sha256=p_sha,
+            usage_out=usage_out,
+        ),
+        meta={
+            "model": model_label,
+            "todo_count": len(items),
+            "decoding_version": TODO_SUMMARY_DECODING.decoding_version,
+            "prompt_sha256": p_sha,
+        },
+        usage_box=usage_out,
+    )
 
 
 @fastapi_app.get("/api/auth/me", tags=["Auth"], response_model=AuthMeResponse)
@@ -953,7 +1030,9 @@ def fastapi_ui_index(request: Request) -> HTMLResponse:
     resolved_sha = getattr(fastapi_app.state, "service_release", {}).get("git_sha", "unknown")
     sha = resolved_sha[:7] if resolved_sha != "unknown" else "unknown"
     return HTMLResponse(
-        content=HTML_TEMPLATE.replace("${GIT_COMMIT_SHA}", sha).replace("${AUTH_BADGE}", badge),
+        content=HTML_TEMPLATE.replace("${GIT_COMMIT_SHA}", sha)
+        .replace("${AUTH_BADGE}", badge)
+        .replace("${CANARY_DOMAIN}", _settings().canary_domain),
         status_code=200,
     )
 
@@ -973,10 +1052,8 @@ def validate_startup_environment(environ: Mapping[str, str] | None = None) -> No
 def main() -> None:
     validate_startup_environment()
     port = _settings().port
-    import uvicorn
-
     LOGGER.info("Canary Todo starting on port %d", port)
-    uvicorn.run(fastapi_app, host="0.0.0.0", port=port, log_config=None)
+    serve(fastapi_app, host="0.0.0.0", port=port)
 
 
 if __name__ == "__main__":  # pragma: no cover

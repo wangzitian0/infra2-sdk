@@ -230,3 +230,76 @@ def test_canary_worker_and_hooks(monkeypatch, capsys) -> None:
     )
     assert cli_proc.returncode == 0
     assert "staging.operation" in json.loads(cli_proc.stdout)["checks"]["smoke"]
+
+
+def test_canary_slot_parameterization_and_sse_streaming(monkeypatch) -> None:
+    monkeypatch.setenv("CANARY_SERVICE_ID", "platform/todo-v4-13")
+    monkeypatch.setenv("CANARY_SERVICE_NAME", "platform-todo-v4-13")
+    monkeypatch.setenv("CANARY_DOMAIN", "todo-v4-13.zitian.party")
+    monkeypatch.setenv("REDIS_KEY_PREFIX", "canary:v4-13:probe:")
+    monkeypatch.setenv("S3_KEY_PREFIX", "canary/v4-13/")
+
+    todo_mod = load_todo_module("todo_app_slot_v413")
+    wire_fake_todo_pg(monkeypatch)
+    seen_prefixes: list[str] = []
+    monkeypatch.setattr(
+        todo_mod,
+        "probe_redis",
+        lambda _u, **kw: (
+            seen_prefixes.append(str(kw.get("key_prefix"))),
+            ProbeResult(
+                name="redis", status=DependencyStatus.PRESENT, detail="ok", duration_ms=1.0
+            ),
+        )[1],
+    )
+    monkeypatch.setattr(
+        todo_mod,
+        "probe_s3",
+        lambda _s, **kw: (
+            seen_prefixes.append(str(kw.get("key_prefix"))),
+            ProbeResult(name="s3", status=DependencyStatus.PRESENT, detail="ok", duration_ms=1.0),
+        )[1],
+    )
+    monkeypatch.setattr(
+        todo_mod,
+        "_check_postgres",
+        lambda _u: {"status": "pass", "latency_ms": 1.0, "detail": "ok"},
+    )
+
+    async def _fake_probe_http(url: str, **_k: Any) -> ProbeResult:
+        return ProbeResult(
+            name="http", status=DependencyStatus.PRESENT, detail="HTTP 200", duration_ms=1.0
+        )
+
+    monkeypatch.setattr(todo_mod, "probe_http", _fake_probe_http)
+    monkeypatch.setenv("REDIS_URL", "redis://:secret@redis:6379/0")
+    monkeypatch.setenv("S3_ENDPOINT", "http://s3:9000")
+    monkeypatch.setenv("S3_BUCKET", "canary")
+    monkeypatch.setenv("S3_ACCESS_KEY", "ak")
+    monkeypatch.setenv("S3_SECRET_KEY", "sk")
+
+    client = TestClient(todo_mod.fastapi_app)
+    status_body = client.get("/api/canary/status").json()
+    assert status_body["service"] == "platform/todo-v4-13"
+    assert status_body["domain"] == "todo-v4-13.zitian.party"
+    assert "canary:v4-13:probe:" in seen_prefixes and "canary/v4-13/" in seen_prefixes
+    assert "todo-v4-13.zitian.party" in client.get("/").text
+
+    # Streaming fails closed before headers (503 JSON) when LLM_API_KEY is missing.
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    err_stream = client.post("/api/todos/summary", json={"limit": 3, "stream": True})
+    assert err_stream.status_code == 503
+    assert err_stream.json()["detail"] == "Missing LLM_API_KEY"
+
+    # Real SSE streaming emits meta, delta, and done frames.
+    async def _fake_chunks(*_a: Any, **_k: Any):
+        for piece in ("open ", "summary"):
+            yield piece
+
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setattr(todo_mod, "stream_text", _fake_chunks)
+    sse = client.post("/api/todos/summary", json={"limit": 3, "stream": True})
+    assert sse.status_code == 200
+    assert sse.headers["content-type"].startswith("text/event-stream")
+    assert "event: meta" in sse.text and "event: delta" in sse.text and "event: done" in sse.text
+    assert "open " in sse.text and "summary" in sse.text

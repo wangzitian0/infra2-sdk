@@ -9,6 +9,7 @@ from email.utils import format_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from types import SimpleNamespace
+from typing import Any
 
 import httpx
 import pytest
@@ -324,3 +325,70 @@ def test_http_clients_retry_probe_and_rate_limit() -> None:
     now[0] = 10.5
     assert win.acquire() == (True, 0.0)
     assert win.acquire()[0] is False
+
+
+def test_sse_stream_response_and_serve(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    app = FastAPI()
+
+    @app.get("/sse-ok")
+    async def _sse_ok():
+        async def _gen():
+            yield "hello "
+            yield "world"
+
+        return await service.sse_stream_response(
+            _gen(),
+            meta={"model": "glm-5.3-flash"},
+            usage_box={"output_tokens": 2},
+        )
+
+    @app.get("/sse-pre-fail")
+    async def _sse_pre_fail():
+        async def _gen():
+            raise RuntimeError("upstream secret Bearer sk-leak-123456")
+            yield "never"  # pragma: no cover
+
+        return await service.sse_stream_response(
+            _gen(),
+            scrub_error=lambda _exc: RuntimeError("scrubbed error"),
+        )
+
+    @app.get("/sse-mid-fail")
+    async def _sse_mid_fail():
+        async def _gen():
+            yield "chunk1"
+            raise RuntimeError("midstream boom")
+
+        return await service.sse_stream_response(
+            _gen(),
+            scrub_error=lambda _exc: RuntimeError("midstream scrubbed"),
+        )
+
+    with TestClient(app) as client:
+        ok = client.get("/sse-ok")
+        assert ok.status_code == 200
+        assert ok.headers["content-type"].startswith("text/event-stream")
+        assert ok.headers["x-accel-buffering"] == "no"
+        assert 'event: meta\ndata: {"model": "glm-5.3-flash"}' in ok.text
+        assert 'event: delta\ndata: {"text": "hello "}' in ok.text
+        assert 'event: delta\ndata: {"text": "world"}' in ok.text
+        assert 'event: done\ndata: {"output_tokens": 2}' in ok.text
+
+        pre = client.get("/sse-pre-fail")
+        assert pre.status_code == 503
+        assert pre.json() == {"error": "LLM stream unavailable", "detail": "scrubbed error"}
+
+        mid = client.get("/sse-mid-fail")
+        assert mid.status_code == 200
+        assert 'event: delta\ndata: {"text": "chunk1"}' in mid.text
+        assert 'event: error\ndata: {"error": "midstream scrubbed"}' in mid.text
+
+    seen_serve: list[dict[str, Any]] = []
+    fake_uvicorn = SimpleNamespace(run=lambda a, **kw: seen_serve.append({"app": a, **kw}))
+    monkeypatch.setitem(sys.modules, "uvicorn", fake_uvicorn)
+    service.serve(app, host="127.0.0.1", port=9123, log_level="warning")
+    assert seen_serve == [
+        {"app": app, "host": "127.0.0.1", "port": 9123, "log_config": None, "log_level": "warning"}
+    ]

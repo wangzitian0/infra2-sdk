@@ -68,7 +68,7 @@ SECRET_LOG_KEY_RE = re.compile(
     re.I,
 )
 
-PROBE_PATHS: frozenset[str] = frozenset({"/livez", "/readyz", "/health"})
+PROBE_PATHS: frozenset[str] = frozenset({"/livez", "/readyz", "/health", "/api/health"})
 _REQUIRED_IDENTITY_ATTRIBUTES: tuple[str, ...] = (
     "deployment.environment.name",
     "infra.service.id",

@@ -406,7 +406,7 @@ class _RespReader:
 def probe_redis(
     url: str,
     *,
-    key_prefix: str = "canary:probe:",
+    key_prefix: str = "sdk:probe:",
     connect_timeout: float = _DEFAULT_TIMEOUT_SECONDS,
     tls_verify: bool = True,
     write_probe: bool = True,
@@ -572,8 +572,13 @@ def _check_alembic_pending(
 ) -> bool:
     if not alembic_config_path and not alembic_script_location:
         return False
-    alembic_cfg_mod = require_optional("alembic.config", extra="postgres")
-    alembic_script_mod = require_optional("alembic.script", extra="postgres")
+    try:
+        alembic_cfg_mod = require_optional("alembic.config", extra="postgres")
+        alembic_script_mod = require_optional("alembic.script", extra="postgres")
+    except RuntimeError:
+        raise RuntimeError(
+            "alembic is required in the application environment to evaluate pending migrations"
+        ) from None
 
     if alembic_config_path:
         cfg = alembic_cfg_mod.Config(alembic_config_path)
@@ -974,6 +979,7 @@ class S3Settings(ContractModel):
     secret_access_key: str = Field(repr=False)
     region: str = "us-east-1"
     use_path_style: bool = True
+    public_endpoint_url: str | None = None
     connect_timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS
     read_timeout_seconds: float = 10.0
 
@@ -982,6 +988,19 @@ class S3Settings(ContractModel):
     def _validate_endpoint(cls, value: str) -> str:
         text = value.strip()
         validate_http_url(text, label="S3 endpoint_url")
+        return text
+
+    @field_validator("public_endpoint_url", mode="before")
+    @classmethod
+    def _validate_public_endpoint(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise TypeError("S3 public_endpoint_url must be a string")
+        text = value.strip()
+        if not text:
+            return None
+        validate_http_url(text, label="S3 public_endpoint_url")
         return text
 
     @field_validator("bucket", "access_key_id", "secret_access_key", "region")
@@ -1016,6 +1035,7 @@ class S3Settings(ContractModel):
             secret_access_key=env.get("S3_SECRET_KEY", ""),
             region=env.get("S3_REGION", "").strip() or "us-east-1",
             use_path_style=style_raw not in {"0", "false", "no"},
+            public_endpoint_url=env.get("S3_PUBLIC_ENDPOINT", "").strip() or None,
         )
 
 
@@ -1101,10 +1121,65 @@ def redact_presigned_url(url: str) -> str:
     return redact_url(url)
 
 
+def presign_get_url(
+    settings: S3Settings,
+    key: str,
+    *,
+    bucket: str | None = None,
+    expires_in: int = 3600,
+    public: bool = True,
+    response_content_disposition: str | None = None,
+    response_content_type: str | None = None,
+    client: Any | None = None,
+) -> str:
+    """Generate a presigned GET URL using the public endpoint when configured and enabled."""
+    cleaned_key = key.strip()
+    if not cleaned_key:
+        raise ValueError("key must not be empty")
+    if (
+        isinstance(expires_in, bool)
+        or not isinstance(expires_in, int)
+        or not (1 <= expires_in <= 604800)
+    ):
+        raise ValueError("expires_in must be an integer between 1 and 604800")
+
+    target_endpoint = (
+        settings.public_endpoint_url
+        if public and settings.public_endpoint_url
+        else settings.endpoint_url
+    )
+    target_bucket = (bucket or settings.bucket).strip()
+    if not target_bucket:
+        raise ValueError("bucket must not be empty")
+
+    params: dict[str, Any] = {"Bucket": target_bucket, "Key": cleaned_key}
+    if response_content_disposition is not None:
+        params["ResponseContentDisposition"] = response_content_disposition
+    if response_content_type is not None:
+        params["ResponseContentType"] = response_content_type
+
+    owned = client is None
+    s3_client = client or create_s3_client(
+        settings.model_copy(update={"endpoint_url": target_endpoint})
+    )
+    try:
+        return str(
+            s3_client.generate_presigned_url(
+                "get_object",
+                Params=params,
+                ExpiresIn=expires_in,
+            )
+        )
+    finally:
+        if owned and hasattr(s3_client, "close") and callable(s3_client.close):
+            with contextlib.suppress(Exception):
+                s3_client.close()
+
+
 def probe_s3(
     settings: S3Settings,
     *,
-    key_prefix: str = "canary/probe/",
+    key_prefix: str = "sdk/probe/",
     name: str = "s3",
     round_trip: bool = False,
     client: Any | None = None,
@@ -1223,6 +1298,7 @@ __all__ = (
     "create_s3_client",
     "ensure_bucket",
     "is_not_found",
+    "presign_get_url",
     "probe_postgres",
     "probe_redis",
     "probe_s3",

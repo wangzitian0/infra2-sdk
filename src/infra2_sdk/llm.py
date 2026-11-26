@@ -157,6 +157,9 @@ def _extract_provider_code(exc: BaseException) -> str | None:
     if direct is not None:
         return _safe_token(direct)
     body = getattr(exc, "body", None)
+    if isinstance(body, str):
+        with contextlib.suppress(ValueError):
+            body = json.loads(body)
     if isinstance(body, Mapping):
         if (code := body.get("code")) is not None:
             return _safe_token(code)
@@ -292,6 +295,33 @@ def _resolve_call_attrs(
     return attrs, str(resolved_site), str(dec_ver), code_attrs, should_warn
 
 
+def _is_upstream_llm_error(exc: Exception, pa_exc: Any) -> bool:
+    model_api_err = getattr(pa_exc, "ModelAPIError", None) if pa_exc is not None else None
+    if model_api_err is not None and isinstance(exc, model_api_err):
+        return True
+    return type(exc).__module__.startswith(("httpx", "httpcore", "openai"))
+
+
+def is_retryable_llm_error(exc: BaseException) -> bool:
+    """Return True for transient HTTP statuses, network faults, or retryable provider codes."""
+    raw_status = getattr(exc, "status_code", None)
+    if type(raw_status) is int and raw_status in {429, 502, 503, 504}:
+        return True
+    if _extract_provider_code(exc) in {"1302", "1305"}:
+        return True
+    pa_exc = sys.modules.get("pydantic_ai.exceptions")
+    for name in ("ModelRequestTimeout", "ModelConnectionError"):
+        cls = getattr(pa_exc, name, None) if pa_exc is not None else None
+        if cls is not None and isinstance(exc, cls):
+            return True
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+    mod = type(exc).__module__
+    return mod.startswith(("httpx", "httpcore")) and type(exc).__name__.endswith(
+        ("TimeoutException", "ConnectError", "TransportError", "RemoteProtocolError")
+    )
+
+
 def _is_passthrough_exception(exc: Exception, pa_exc: Any) -> bool:
     if type(exc).__module__.startswith("vcr."):
         return True
@@ -332,6 +362,10 @@ def _build_provider_model(
     if prov == "zai":
         zai_mod = require_optional("pydantic_ai.models.zai", extra="llm")
         zai_prov = require_optional("pydantic_ai.providers.zai", extra="llm")
+        if raw_ms and "max_tokens" in raw_ms:
+            eb = dict(raw_ms.get("extra_body") or {})
+            eb.setdefault("max_tokens", raw_ms["max_tokens"])
+            raw_ms["extra_body"] = eb
         client = openai_mod.AsyncOpenAI(api_key=api_key, base_url=base_url, max_retries=0)
         provider: Any = zai_prov.ZaiProvider(openai_client=client)
         model_cls: Any = zai_mod.ZaiModel
@@ -672,10 +706,14 @@ def _guarded_model_class() -> type[Any]:
                 try:
                     yield
                 except BaseException as exc:
-                    if caller_active and caller_active[0]:
+                    if not isinstance(exc, Exception) or _is_passthrough_exception(exc, pa_exc):
                         error_type = type(exc).__name__
                         raise
-                    if not isinstance(exc, Exception) or _is_passthrough_exception(exc, pa_exc):
+                    if (
+                        caller_active
+                        and caller_active[0]
+                        and not _is_upstream_llm_error(exc, pa_exc)
+                    ):
                         error_type = type(exc).__name__
                         raise
                     scrubbed = redact_llm_error(exc)
@@ -995,6 +1033,77 @@ def create_llm_agent(
     )
 
 
+async def stream_text(
+    agent: Any,
+    user_prompt: Any,
+    *,
+    call_site: str | None = None,
+    decoding_version: str | None = None,
+    domain_run_id: str | None = None,
+    prompt_sha256: str | None = None,
+    artifact_dependency_digest: str | None = None,
+    usage_limits: Any | None = None,
+    usage_out: dict[str, int] | None = None,
+    **run_kwargs: Any,
+) -> AsyncIterator[str]:
+    """Stream text deltas from an agent via a bounded single-producer queue with safe cancel."""
+    import asyncio
+
+    queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue(maxsize=1)
+    pa_exc = sys.modules.get("pydantic_ai.exceptions")
+
+    async def _produce() -> None:
+        try:
+            ctx_kw = {
+                k: v
+                for k, v in (
+                    ("call_site", call_site),
+                    ("decoding_version", decoding_version),
+                    ("domain_run_id", domain_run_id),
+                    ("prompt_sha256", prompt_sha256),
+                    ("artifact_dependency_digest", artifact_dependency_digest),
+                )
+                if v is not None
+            }
+            ctx_cm = llm_call_context(**ctx_kw) if ctx_kw else contextlib.nullcontext()
+            stream_kw = dict(run_kwargs)
+            if usage_limits is not None:
+                stream_kw["usage_limits"] = usage_limits
+            with ctx_cm:
+                async with agent.run_stream(user_prompt, **stream_kw) as result:
+                    async for delta in result.stream_text(delta=True):
+                        if delta:
+                            await queue.put(("delta", str(delta)))
+                    if usage_out is not None:
+                        raw_usage = result.usage
+                        usage_out["input_tokens"] = int(getattr(raw_usage, "input_tokens", 0) or 0)
+                        usage_out["output_tokens"] = int(
+                            getattr(raw_usage, "output_tokens", 0) or 0
+                        )
+            await queue.put(("done", None))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            out_exc = exc if _is_passthrough_exception(exc, pa_exc) else redact_llm_error(exc)
+            await queue.put(("error", out_exc))
+
+    producer = asyncio.create_task(_produce())
+    try:
+        while True:
+            kind, payload = await queue.get()
+            if kind == "delta":
+                yield str(payload)
+            elif kind == "done":
+                return
+            elif kind == "error":
+                raise payload
+    finally:
+        if not producer.done():
+            producer.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await producer
+
+
 def __dir__() -> list[str]:
     return sorted(__all__)
 
@@ -1003,9 +1112,11 @@ __all__ = (
     "DecodingSpec",
     "LlmSettings",
     "create_llm_agent",
+    "is_retryable_llm_error",
     "llm_call_context",
     "prompt_sha256",
     "redact_llm_error",
     "request_sha256",
     "schema_sha256",
+    "stream_text",
 )

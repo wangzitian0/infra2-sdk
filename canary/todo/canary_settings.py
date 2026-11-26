@@ -92,6 +92,21 @@ class CanarySettings(BaseModel):
         group="frontend_telemetry",
     )
 
+    # Parameterized service identity and storage prefixes for multi-slot canary deployments.
+    canary_service_id: str = _field(
+        "platform/todo", "Logical service identifier returned by health endpoints.", group="canary"
+    )
+    canary_service_name: str = _field(
+        "platform-todo", "Telemetry service name and logger identifier.", group="canary"
+    )
+    canary_domain: str = _field(
+        "todo.zitian.party", "Public hostname of this canary slot.", group="canary"
+    )
+    redis_key_prefix: str = _field(
+        "canary:probe:", "Redis key prefix isolated per canary slot.", group="redis"
+    )
+    s3_key_prefix: str = _field("canary/", "S3 object prefix isolated per canary slot.", group="s3")
+
     # Read by the SDK, not by app.py: runtime identity, telemetry and the LLM client.
     status_cache_ttl_seconds: float = _field(
         30.0,

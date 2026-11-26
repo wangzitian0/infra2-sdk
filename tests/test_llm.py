@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from decimal import Decimal
 
@@ -190,3 +191,92 @@ def test_redact_errors_passthrough_and_streaming(caplog: pytest.LogCaptureFixtur
     with caplog.at_level(logging.WARNING, logger="infra2_sdk.llm"):
         assert anon_agent.run_sync("hi").output == "hi"
     assert any("missing explicit call_site" in rec.message for rec in caplog.records)
+
+
+def test_stream_text_zai_extra_body_retryable_and_midstream_redaction() -> None:
+    dec = llm.DecodingSpec(decoding_version="stream.v1", max_tokens=256)
+    cfg = llm.LlmSettings(provider="zai", api_key="test-key", small_model="glm-5.3-flash")
+    zai_agent = llm.create_llm_agent(cfg, decoding=dec, call_site="unit.zai")
+    assert zai_agent.model.wrapped.settings["extra_body"]["max_tokens"] == 256
+
+    assert llm.is_retryable_llm_error(ModelHTTPError(429, "m", body="rate limited")) is True
+    assert llm.is_retryable_llm_error(ModelHTTPError(400, "m", body='{"code": "1302"}')) is True
+    assert (
+        llm.is_retryable_llm_error(
+            ModelHTTPError(400, "m", body={"error": {"code": "1305", "message": "busy"}})
+        )
+        is True
+    )
+    assert llm.is_retryable_llm_error(ModelHTTPError(400, "m", body="bad input")) is False
+    assert llm.is_retryable_llm_error(ValueError("bad")) is False
+
+    async def _run_stream_checks() -> None:
+        # Upstream HTTP fault occurring while caller consumes stream must still be scrubbed.
+        class _FailMidStreamModel(TestModel):
+            @contextlib.asynccontextmanager  # type: ignore[misc]
+            async def request_stream(self, *args, **kwargs):
+                class _BadStream:
+                    model_name = "glm-5.3-flash"
+
+                    async def __aiter__(self):
+                        raise ModelHTTPError(
+                            401,
+                            "glm-5.3-flash",
+                            body={"error": {"message": "Bearer sk-midstream-999"}},
+                        )
+                        yield  # pragma: no cover
+
+                yield _BadStream()
+
+        gm = llm.create_llm_agent(
+            cfg, model=_FailMidStreamModel(), call_site="unit.midstream"
+        ).model
+        with pytest.raises(ModelHTTPError) as exc_info:
+            async with gm.request_stream([], None, ModelRequestParameters()) as s:
+                async for _ in s:
+                    pass
+        assert "sk-midstream-999" not in str(exc_info.value)
+
+        # Bounded stream_text yields chunks, records usage, and supports early aclose cancellation.
+        agent = llm.create_llm_agent(
+            cfg,
+            model=TestModel(custom_output_text="alpha beta gamma"),
+            call_site="unit.stream_text",
+            decoding=dec,
+        )
+        usage_out: dict[str, int] = {}
+        chunks = [
+            chunk
+            async for chunk in llm.stream_text(
+                agent, "hello", call_site="unit.stream_text", usage_out=usage_out
+            )
+        ]
+        assert "".join(chunks) == "alpha beta gamma"
+        assert usage_out["output_tokens"] > 0
+
+        cancelled = False
+
+        class _SlowStreamAgent:
+            @contextlib.asynccontextmanager
+            async def run_stream(self, _prompt: str, **_kw):
+                class _Res:
+                    usage = RequestUsage()
+
+                    async def stream_text(self, *, delta: bool = True):
+                        try:
+                            yield "first-"
+                            await asyncio.sleep(10)
+                            yield "never"
+                        except asyncio.CancelledError:
+                            nonlocal cancelled
+                            cancelled = True
+                            raise
+
+                yield _Res()
+
+        it = llm.stream_text(_SlowStreamAgent(), "hi")
+        assert await anext(it) == "first-"
+        await it.aclose()
+        assert cancelled is True
+
+    asyncio.run(_run_stream_checks())
