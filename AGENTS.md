@@ -1,11 +1,11 @@
-<!-- WS_STATIC_START adapter=rules-v2 inputs=9e7f770bd9049ad1a11cda164354b6e78596ac8caa999a53a4079a2575b3f73d -->
+<!-- WS_STATIC_START adapter=rules-v2 inputs=0fb8ded80b04c3492ec5fd3d28ecaec2ca8f9f7878dd694ff063553de2ab8940 -->
 <!-- Generated file: do not edit by hand. These rules are maintained in the owner's rule source and re-rendered here. -->
 
 ## Engineering discipline
 
 - **Measure the physical system first.** Inspect the system with read-only probes (`time cmd`, process chains, file locks) before proposing architecture. Never combine validation and mutation in one command. Measure, read the result, then decide.
 - **Green does not prove truth.** The tested system writes its own unit tests, CI, and issue states. Cross-check critical conclusions against two external sources not written by this repository.
-- **Tests must be falsifiable.** Never hide assertions inside `if` branches or accept tautologies. Source-text `indexOf` matches against prose are not integration tests. Avoid duplicate test function names that shadow earlier tests. Make every new test fail under a relevant mutation; fake tests are CRITICAL merge blockers.
+- **Classify checks (`Gate -> Dependency -> Fact -> None`).** Keep falsifiable tests for security or release gates; report drift and metrics on the Fact Board. Never hide assertions inside `if` branches, match prose with `indexOf`, or shadow test names.
 - **Falsifiable documentation and assertions:** State test requirements, error messages, and specifications in concrete ASD-STE100 terms without vague qualifiers.
 - **One source of truth:** Keep one authoritative definition per core fact. Repeated hardcoding and scattered configuration invite drift.
 - **Clean up during migration:** After the new mechanism is live and equivalence is proved, remove its predecessor, obsolete files, and dead code in the same change. Define contracts first and derive CI from them.
@@ -48,11 +48,11 @@ The single definition of the production reservation. Other tiers, skills and gat
 
 The `infra2-sdk` repository owns the public code contract between `infra2` and downstream applications (`finance_report`, `truealpha`).
 
-1. **Contract and open-protocol adapter boundary (P1):** Own pure data contracts, offline validators, and explicitly invoked open-protocol adapters (`boto3`, `psycopg`, `httpx`, `opentelemetry`). Never add import-time I/O, network calls, or global provider configuration (`tests/test_exports.py`). Applications must run and pass CI with plain environment variables and zero `infra2` runtime dependency.
-2. **One source per fact and Manifest v2 supply chain (P2):** Every environment field declares one `source` class (`bootstrap`, `human`, `runtime`, `release`, `decision`, `code`). Cross-repository generic libraries (the modules that `init.md` §2 lists) live here so applications do not duplicate infrastructure logic. `LlmSettings` in `src/infra2_sdk/runtime/llm.py` owns default `large`, `small`, and `multimodal` model chains.
-3. **100% consumer-reachable public surface (P3):** Every public symbol must have at least one production caller across `infra2`, `finance_report`, or `truealpha`, or an explicit standalone entry in `tests/surface.json`. Package public attributes must equal `__all__` (`tests/test_exports.py`). Prefix internal helpers with `_`.
-4. **Locked environment reads and bidirectional guards (P4):** `tests/test_source_environment_reads.py` locks every environment variable read in `src/infra2_sdk/` to `RuntimeEnvKey` plus `FIXED_READS`. Retired aliases (`ENV`, `APP_ENV`, `IMAGE_TAG`, `SERVICE_NAME`) are forbidden and guarded in `REMOVED_ENV_NAMES`. Keep `README.md` examples and module tables executable under `tests/test_readme_claims.py` and `tests/test_release_hygiene.py`.
-5. **Pragmatic compatibility and release hygiene (P5):** Add new runtime dataclass fields as `kw_only=True`. Do not add compatibility shims for symbols with zero callers in the cross-repository usage census (`sdk_usage_census`). A change under `src/infra2_sdk/` does not need a release. A release PR updates `pyproject.toml`, `CHANGELOG.md`, and the `README.md` install pins together (`tests/test_release_hygiene.py`).
+1. **Contract and open-protocol adapter boundary (P1):** Own pure data contracts, offline validators, and explicitly invoked open-protocol adapters (`boto3`, `psycopg`, `httpx`, `opentelemetry`). Never add import-time I/O, network calls, or global provider configuration (`tests/test_architecture_guards.py`). Applications must run and pass CI with plain environment variables and zero `infra2` runtime dependency.
+2. **One source per fact and Manifest v2 supply chain (P2):** Every environment field declares one `source` class (`bootstrap`, `human`, `runtime`, `release`, `decision`, `code`). Cross-repository generic libraries (the modules that `init.md` §2 lists) live here so applications do not duplicate infrastructure logic. `LlmSettings` in `src/infra2_sdk/llm.py` owns default `large`, `small`, and `multimodal` model chains.
+3. **100% consumer-reachable public surface (P3):** Every public symbol has a production caller across `infra2`, `finance_report`, or `truealpha`. Package public attributes match `__all__` under `tests/test_architecture_guards.py`. Prefix internal helpers with `_`.
+4. **Locked environment reads and bidirectional guards (P4):** `tests/test_architecture_guards.py` and `tests/test_config.py` guard environment reads and retired aliases (`ENV`, `APP_ENV`, `IMAGE_TAG`, `SERVICE_NAME`). Keep `README.md` examples and module tables accurate.
+5. **Pragmatic compatibility and release hygiene (P5):** Add new runtime dataclass fields as `kw_only=True`. Do not add compatibility shims for unused symbols. A change under `src/infra2_sdk/` does not need a release. A release PR updates `pyproject.toml`, `CHANGELOG.md`, and `README.md` together (`CONTRIBUTING.md`).
 
 ## Merge gate and release lifecycle
 
@@ -67,5 +67,5 @@ The `infra2-sdk` repository owns the public code contract between `infra2` and d
 | Read architectural charter and evolution principles (P1–P5) | [`init.md`](init.md) |
 | Check module table, runtime extras, and usage examples | [`README.md`](README.md) |
 | Follow development, census, and release procedures | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
-| Verify public surface and environment-read locks | `tests/surface.json`, `tests/test_exports.py`, `tests/test_source_environment_reads.py` |
+| Verify package layout and architecture guards | [`tests/test_architecture_guards.py`](tests/test_architecture_guards.py) |
 <!-- WS_STATIC_END -->
