@@ -135,11 +135,6 @@ def validate_http_url(
         raise ValueError(f"{label} must not contain a fragment")
 
 
-def is_loopback_host(hostname: str) -> bool:
-    """Return True when ``hostname`` names a local loopback address."""
-    return hostname.strip("[]").lower() in _LOOPBACK_HOSTS
-
-
 def redact_secrets(text: str, environ: Mapping[str, str] | None = None) -> str:
     """Scrub secret environment values, tokens, embedded passwords, and emails from text."""
     env = os.environ if environ is None else environ

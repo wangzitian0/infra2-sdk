@@ -1,4 +1,4 @@
-"""Positive architecture and package hygiene guards for infra2-sdk v4.10.1."""
+"""Positive architecture and package hygiene guards for infra2-sdk v4.10.2."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ EXPECTED_MODULES = ("config", "telemetry", "service", "storage", "llm", "deliver
 def test_package_metadata_and_module_surface() -> None:
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     project = pyproject["project"]
-    assert project["version"] == "4.10.1"
+    assert project["version"] == "4.10.2"
     assert infra2_sdk.__all__ == EXPECTED_MODULES
 
     core_deps = {

@@ -1,4 +1,4 @@
-# infra2-sdk (`v4.10.0`)
+# infra2-sdk (`v4.10.2`)
 
 Standalone cross-repository runtime contracts and explicit open-protocol adapters for `infra2`, consumer applications, and `canary/todo`.
 
@@ -6,20 +6,20 @@ Standalone cross-repository runtime contracts and explicit open-protocol adapter
 
 - **Six flat public modules (`infra2_sdk.*`)**, lazy-loaded with zero I/O or global provider registration on import: `config`, `telemetry`, `service`, `storage`, `llm`, `delivery`.
 - **Two core dependencies only** (`pydantic>=2.7,<3`, `pyyaml>=6.0,<7`). Every wire/manifest/settings contract inherits `ContractModel(pydantic.BaseModel)` (`frozen=True`, `extra="forbid"`, `populate_by_name=True`). No `pydantic-settings` dependency is required.
-- **No legacy compatibility shims in v4.10.0**: consumers pin exact released versions and migrate forward cleanly; retired variable names (`ENV`, `APP_ENV`, `IMAGE_TAG`, `S3_ENDPOINT_URL`, etc.) and control-plane-only helpers are removed.
+- **No legacy compatibility shims in v4.10.x**: consumers pin exact released versions and migrate forward cleanly; retired variable names (`ENV`, `APP_ENV`, `IMAGE_TAG`, `S3_ENDPOINT_URL`, etc.) and control-plane-only helpers are removed.
 
 ## 2. Installation Extras
 
 | Install Spec | Packages Added | Modules Unlocked |
 |---|---|---|
-| `infra2-sdk==4.10.0` | `pydantic`, `pyyaml` | All 6 modules (core contracts, RESP Redis probe, stdlib health poll, hooks CLI) |
-| `infra2-sdk[telemetry]==4.10.0` | `opentelemetry-api/sdk/exporter-otlp-proto-http/instrumentation-logging` | `telemetry.configure_telemetry`, `telemetry.init_worker` |
-| `infra2-sdk[http]==4.10.0` | `httpx` | `service.create_http_client`, `service.create_async_http_client`, `service.request_with_retry`, `service.probe_http` |
-| `infra2-sdk[fastapi]==4.10.0` | `fastapi`, `telemetry` extra, `http` extra | `service.init_service` (`/livez`, `/readyz`, `/health`, OTel lifespan, `X-Request-ID`) |
-| `infra2-sdk[postgres]==4.10.0` | `psycopg` | `storage.probe_postgres`, `storage.check_schema`, `python -m infra2_sdk.storage check-schema` |
-| `infra2-sdk[s3]==4.10.0` | `boto3` | `storage.create_s3_client`, `storage.ensure_bucket`, `storage.probe_s3`, `storage.put_object_bytes`, `storage.read_object_bytes` |
-| `infra2-sdk[llm]==4.10.0` | `pydantic-ai-slim[openai]`, `openai`, `http` extra, `telemetry` extra | `llm.create_llm_model`, `llm.create_llm_agent`, `llm.GuardedLlmModel` |
-| `infra2-sdk[all]==4.10.0` | All optional extras | Full SDK runtime surface |
+| `infra2-sdk==4.10.2` | `pydantic`, `pyyaml` | All 6 modules (core contracts, RESP Redis probe, stdlib health poll, hooks CLI) |
+| `infra2-sdk[telemetry]==4.10.2` | `opentelemetry-api/sdk/exporter-otlp-proto-http/instrumentation-logging` | `telemetry.configure_telemetry`, `telemetry.init_worker` |
+| `infra2-sdk[http]==4.10.2` | `httpx` | `service.create_http_client`, `service.create_async_http_client`, `service.request_with_retry`, `service.probe_http` |
+| `infra2-sdk[fastapi]==4.10.2` | `fastapi`, `telemetry` extra, `http` extra | `service.init_service` (`/livez`, `/readyz`, `/health`, OTel lifespan, `X-Request-ID`) |
+| `infra2-sdk[postgres]==4.10.2` | `psycopg` | `storage.probe_postgres`, `storage.check_schema`, `python -m infra2_sdk.storage check-schema` |
+| `infra2-sdk[s3]==4.10.2` | `boto3` | `storage.create_s3_client`, `storage.ensure_bucket`, `storage.probe_s3`, `storage.put_object_bytes`, `storage.read_object_bytes` |
+| `infra2-sdk[llm]==4.10.2` | `pydantic-ai-slim[zai]`, `http` extra, `telemetry` extra | `llm.create_llm_model`, `llm.create_llm_agent`, `llm.GuardedLlmModel` |
+| `infra2-sdk[all]==4.10.2` | All optional extras | Full SDK runtime surface |
 
 ## 3. Public Module Surface (MECE 6-Module Contract)
 

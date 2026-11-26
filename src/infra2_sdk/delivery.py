@@ -175,6 +175,8 @@ class CheckRow(ContractModel):
     timeout_seconds: int = 60
     required_env: tuple[str, ...] = ()
     optional_env: tuple[str, ...] = ()
+    bootstrap: str = ""
+    checkout_lineage: bool = False
     overrides: dict[str, OverrideReason] = Field(default_factory=dict)
 
     @field_validator("id")
@@ -386,8 +388,55 @@ def run_cell(
 
     verdicts: list[CheckVerdict] = []
     for check in selected:
-        timeout = min(check.timeout_seconds, policy.budget_seconds)
         started = time.perf_counter()
+        if check.bootstrap.strip():
+            bootstrap_timeout = min(BOOTSTRAP_CAP_SECONDS, policy.budget_seconds)
+            try:
+                boot_proc = exec_fn(
+                    ["sh", "-c", check.bootstrap],
+                    cwd=str(cwd) if cwd is not None else None,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=bootstrap_timeout,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                out_raw = exc.stdout if isinstance(exc.stdout, str) else ""
+                verdict = CheckVerdict(
+                    id=check.id,
+                    cell=cell,
+                    passed=False,
+                    exit_code=124,
+                    duration_seconds=time.perf_counter() - started,
+                    stdout=redact_secrets(out_raw, source_env),
+                    stderr=f"bootstrap timed out after {bootstrap_timeout}s",
+                )
+                verdicts.append(verdict)
+                if policy.stop_on_fail:
+                    break
+                continue
+            if int(boot_proc.returncode) != 0:
+                boot_err = redact_secrets(boot_proc.stderr or "", source_env).strip()
+                verdict = CheckVerdict(
+                    id=check.id,
+                    cell=cell,
+                    passed=False,
+                    exit_code=int(boot_proc.returncode),
+                    duration_seconds=time.perf_counter() - started,
+                    stdout=redact_secrets(boot_proc.stdout or "", source_env),
+                    stderr=(
+                        f"bootstrap failed: {boot_err}"
+                        if boot_err
+                        else f"bootstrap failed with exit code {int(boot_proc.returncode)}"
+                    ),
+                )
+                verdicts.append(verdict)
+                if policy.stop_on_fail:
+                    break
+                continue
+
+        timeout = min(check.timeout_seconds, policy.budget_seconds)
         try:
             proc = exec_fn(
                 list(check.argv),
