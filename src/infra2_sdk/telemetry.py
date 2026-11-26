@@ -171,6 +171,71 @@ def init_worker(
     return providers
 
 
+@contextmanager
+def worker_run(
+    name: str,
+    *,
+    environ: Mapping[str, str] | None = None,
+    strict: bool = False,
+    require_issued_identity: bool = False,
+    log_level: int | None = logging.INFO,
+    set_global: bool = True,
+    clear_root_handlers: bool = False,
+    on_sigterm: Any | None = None,
+) -> Iterator[TelemetryProviders | None]:
+    """Run a background worker task with unique instance ID, SIGTERM handling, and forced flush."""
+    import os
+    import signal
+    import threading
+    import uuid
+
+    from infra2_sdk.config import RuntimeEnvKey
+
+    if clear_root_handlers:
+        root = logging.getLogger()
+        for handler in list(root.handlers):
+            root.removeHandler(handler)
+
+    merged_env = dict(os.environ if environ is None else environ)
+    raw_attrs = merged_env.get(RuntimeEnvKey.OTEL_RESOURCE_ATTRIBUTES.value, "").strip()
+    if "service.instance.id=" not in raw_attrs:
+        instance_attr = f"service.instance.id={uuid.uuid4()}"
+        merged_env[RuntimeEnvKey.OTEL_RESOURCE_ATTRIBUTES.value] = (
+            f"{raw_attrs},{instance_attr}" if raw_attrs else instance_attr
+        )
+
+    prev_sigterm: Any = None
+    installed_sigterm = False
+    if threading.current_thread() is threading.main_thread():
+        prev_sigterm = signal.getsignal(signal.SIGTERM)
+
+        def _handle_sigterm(signum: int, _frame: Any) -> None:
+            if callable(on_sigterm):
+                on_sigterm()
+            raise SystemExit(128 + signum)
+
+        signal.signal(signal.SIGTERM, _handle_sigterm)
+        installed_sigterm = True
+
+    providers = init_worker(
+        name,
+        environ=merged_env,
+        strict=strict,
+        require_issued_identity=require_issued_identity,
+        log_level=log_level,
+        set_global=set_global,
+    )
+    try:
+        yield providers
+    finally:
+        if providers is not None:
+            with contextlib.suppress(Exception):
+                providers.force_flush()
+            providers.shutdown()
+        if installed_sigterm:
+            signal.signal(signal.SIGTERM, prev_sigterm)
+
+
 def __dir__() -> list[str]:
     return sorted(__all__)
 
@@ -182,4 +247,5 @@ __all__ = (
     "get_meter",
     "get_tracer",
     "init_worker",
+    "worker_run",
 )

@@ -820,6 +820,98 @@ def __dir__() -> list[str]:
     return sorted(__all__)
 
 
+async def sse_stream_response(
+    text_stream: Any,
+    *,
+    meta: Mapping[str, Any] | None = None,
+    usage_box: Mapping[str, Any] | Callable[[], Mapping[str, Any]] | None = None,
+    scrub_error: Callable[[BaseException], Exception] | None = None,
+) -> Any:
+    """Turn an async text-delta iterator into a fail-before-headers SSE ``StreamingResponse``."""
+    import json
+
+    responses = require_optional("fastapi.responses", extra="fastapi")
+
+    def _scrub(exc: BaseException) -> Exception:
+        if scrub_error is not None:
+            return scrub_error(exc)
+        try:
+            from infra2_sdk.llm import redact_llm_error
+
+            return redact_llm_error(exc)
+        except Exception:  # noqa: BLE001
+            return RuntimeError(redact_url_credentials(str(exc), ""))
+
+    async def _close_stream() -> None:
+        aclose = getattr(text_stream, "aclose", None)
+        if callable(aclose):
+            with suppress(Exception):
+                await aclose()
+
+    def _sse_frame(event: str, payload: Mapping[str, Any]) -> bytes:
+        return f"event: {event}\ndata: {json.dumps(dict(payload), ensure_ascii=False)}\n\n".encode()
+
+    aiter_obj = text_stream.__aiter__()
+    sentinel = object()
+    first_chunk: Any = sentinel
+    try:
+        first_chunk = await anext(aiter_obj, sentinel)
+    except Exception as exc:  # noqa: BLE001
+        await _close_stream()
+        if type(exc).__name__ == "UsageLimitExceeded":
+            return responses.JSONResponse(
+                status_code=429,
+                content={"error": "LLM usage limit exceeded", "detail": type(exc).__name__},
+            )
+        scrubbed = _scrub(exc)
+        return responses.JSONResponse(
+            status_code=503,
+            content={"error": "LLM stream unavailable", "detail": str(scrubbed)},
+        )
+
+    async def _generate() -> Any:
+        try:
+            yield _sse_frame("meta", dict(meta) if meta is not None else {})
+            if first_chunk is not sentinel:
+                yield _sse_frame("delta", {"text": str(first_chunk)})
+            async for chunk in aiter_obj:
+                yield _sse_frame("delta", {"text": str(chunk)})
+            usage_payload = (
+                dict(usage_box()) if callable(usage_box) else dict(usage_box) if usage_box else {}
+            )
+            yield _sse_frame("done", usage_payload)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            scrubbed = _scrub(exc)
+            yield _sse_frame("error", {"error": str(scrubbed)})
+        finally:
+            await _close_stream()
+
+    return responses.StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def serve(
+    app: Any,
+    *,
+    host: str = "0.0.0.0",
+    port: int = 8000,
+    log_level: str | None = None,
+    **kwargs: Any,
+) -> None:
+    """Serve a FastAPI/ASGI application via uvicorn keeping SDK JSON logging intact."""
+    uvicorn = require_optional("uvicorn", extra="fastapi")
+    run_kwargs = dict(kwargs)
+    run_kwargs.setdefault("log_config", None)
+    if log_level is not None:
+        run_kwargs["log_level"] = log_level
+    uvicorn.run(app, host=host, port=port, **run_kwargs)
+
+
 __all__ = (
     "CallableCheck",
     "Dependency",
@@ -835,4 +927,6 @@ __all__ = (
     "init_service",
     "probe_http",
     "request_with_retry",
+    "serve",
+    "sse_stream_response",
 )

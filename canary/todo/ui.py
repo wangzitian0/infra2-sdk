@@ -5,7 +5,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Canary Todo — todo.zitian.party</title>
+  <title>Canary Todo — ${CANARY_DOMAIN}</title>
   <style>
     body { font-family: system-ui, sans-serif; background: #0b0f19; color: #e2e8f0; margin: 2rem auto; max-width: 780px; padding: 0 1rem; }
     .card { background: #111827; border: 1px solid #1f2937; border-radius: 10px; padding: 1rem; margin-bottom: 1rem; }
@@ -18,7 +18,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
   <div class="card">
     <div class="row">
-      <strong>Canary Todo (todo.zitian.party)</strong>
+      <strong>Canary Todo (${CANARY_DOMAIN})</strong>
       <div>${AUTH_BADGE}</div>
     </div>
     <button id="probeBtn" onclick="runInfraProbe()">Run Probes</button>
@@ -36,7 +36,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </form>
     <div id="todoList"></div>
   </div>
-  <div style="font-size:12px;color:#64748b">infra2 canary • ${GIT_COMMIT_SHA} • https://todo.zitian.party</div>
+  <div style="font-size:12px;color:#64748b">infra2 canary • ${GIT_COMMIT_SHA} • https://${CANARY_DOMAIN}</div>
   <script>
     const esc = (s) => s.replace(/[&<>"']/g, (m) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
     async function loadTodos() {

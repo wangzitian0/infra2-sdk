@@ -300,3 +300,44 @@ def test_init_worker_sampler_otlp_request_id_and_shutdown() -> None:
         assert "foo" not in fake_cv._data
     finally:
         sys.modules.pop("structlog", None)
+
+
+def test_probe_paths_and_worker_run_sigterm_and_flush(monkeypatch: pytest.MonkeyPatch) -> None:
+    import signal
+
+    assert "/api/health" in _core.PROBE_PATHS
+
+    captured_env: list[str] = []
+    flushed = [False]
+    shut_down = [False]
+    sigterm_cb_fired = [False]
+
+    class _FakeProviders:
+        def force_flush(self) -> bool:
+            flushed[0] = True
+            return True
+
+        def shutdown(self) -> None:
+            shut_down[0] = True
+
+    def _fake_init_worker(name: str, *, environ=None, **_kw):
+        captured_env.append(str((environ or {}).get("OTEL_RESOURCE_ATTRIBUTES", "")))
+        return _FakeProviders()
+
+    monkeypatch.setattr(telemetry, "init_worker", _fake_init_worker)
+    orig_handler = signal.getsignal(signal.SIGTERM)
+    with telemetry.worker_run(
+        "demo-worker",
+        environ={"OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=staging"},
+        on_sigterm=lambda: sigterm_cb_fired.__setitem__(0, True),
+    ):
+        assert "service.instance.id=" in captured_env[0]
+        active_handler = signal.getsignal(signal.SIGTERM)
+        assert callable(active_handler)
+        with pytest.raises(SystemExit) as sys_exit:
+            active_handler(signal.SIGTERM, None)
+        assert sys_exit.value.code == 128 + signal.SIGTERM
+    assert signal.getsignal(signal.SIGTERM) is orig_handler
+    assert sigterm_cb_fired[0] is True
+    assert flushed[0] is True
+    assert shut_down[0] is True

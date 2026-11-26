@@ -2,6 +2,16 @@
 
 Versions follow `README.md`. Release steps are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## 4.13.0 - 2026-11-26
+
+### Added
+
+- `llm`: add bounded single-producer `stream_text()`, `is_retryable_llm_error()` (HTTP 429/502/503/504 + ZAI provider codes `1302`/`1305`), automatic ZAI `extra_body["max_tokens"]` injection, JSON body parsing in `_extract_provider_code()`, and mid-stream upstream error redaction inside `_guarded_span()`.
+- `service`: add fail-before-headers `sse_stream_response()` (`meta`/`delta`/`done`/`error` SSE frames) and `serve()`.
+- `telemetry`: add `worker_run()` lifecycle context manager (unique `service.instance.id`, `SIGTERM` handler restore, forced flush and shutdown) and include `/api/health` in `_core.PROBE_PATHS`.
+- `storage`: add optional `S3Settings.public_endpoint_url` (`S3_PUBLIC_ENDPOINT`), `presign_get_url()`, neutral `"sdk:probe:"` / `"sdk/probe/"` probe prefixes, and clearer missing-`alembic` application error messaging.
+- `canary`: parameterize service identity, domain, Redis prefix, and S3 prefix on `CanarySettings` for multi-version `todo-vX-Y` slots, wire real SSE streaming on `/api/todos/summary`, and switch to `serve()` + `worker_run()`.
+
 ## 4.12.0 - 2026-11-26
 
 ### Removed

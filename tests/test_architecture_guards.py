@@ -32,6 +32,7 @@ EXPECTED_EXPORTS: dict[str, tuple[str, ...]] = {
         "get_meter",
         "get_tracer",
         "init_worker",
+        "worker_run",
     ),
     "service": (
         "CallableCheck",
@@ -48,6 +49,8 @@ EXPECTED_EXPORTS: dict[str, tuple[str, ...]] = {
         "init_service",
         "probe_http",
         "request_with_retry",
+        "serve",
+        "sse_stream_response",
     ),
     "storage": (
         "PostgresSettings",
@@ -56,6 +59,7 @@ EXPECTED_EXPORTS: dict[str, tuple[str, ...]] = {
         "create_s3_client",
         "ensure_bucket",
         "is_not_found",
+        "presign_get_url",
         "probe_postgres",
         "probe_redis",
         "probe_s3",
@@ -69,11 +73,13 @@ EXPECTED_EXPORTS: dict[str, tuple[str, ...]] = {
         "DecodingSpec",
         "LlmSettings",
         "create_llm_agent",
+        "is_retryable_llm_error",
         "llm_call_context",
         "prompt_sha256",
         "redact_llm_error",
         "request_sha256",
         "schema_sha256",
+        "stream_text",
     ),
     "delivery": (
         "CELL_POLICIES",
@@ -88,7 +94,7 @@ EXPECTED_EXPORTS: dict[str, tuple[str, ...]] = {
 def test_package_metadata_and_module_surface() -> None:
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     project = pyproject["project"]
-    assert project["version"] == "4.12.0"
+    assert project["version"] == "4.13.0"
     assert infra2_sdk.__all__ == EXPECTED_MODULES
     assert [n for n in dir(infra2_sdk) if not n.startswith("_")] == sorted(infra2_sdk.__all__)
 
@@ -130,7 +136,7 @@ def test_package_metadata_and_module_surface() -> None:
         for sym in exports:
             assert hasattr(mod, sym), f"{mod_name}.__all__ lists missing symbol {sym!r}"
         total += len(exports)
-    assert total == 54
+    assert total == 60
 
 
 def test_no_unexported_public_defs_cross_private_imports_or_eager_io() -> None:
@@ -177,7 +183,7 @@ def test_no_unexported_public_defs_cross_private_imports_or_eager_io() -> None:
         "im.version = lambda n: (ver_calls.append(n), orig_ver(n))[1]; "
         "import infra2_sdk; "
         "assert opened == [] and ver_calls == [], (opened, ver_calls); "
-        "assert infra2_sdk.__version__ == '4.12.0'; "
+        "assert infra2_sdk.__version__ == '4.13.0'; "
         "assert len(ver_calls) == 1"
     )
     proc_root = subprocess.run(
@@ -209,8 +215,8 @@ def test_no_unexported_public_defs_cross_private_imports_or_eager_io() -> None:
 
 def test_readme_version_and_module_surface_table_parity() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "v4.12.0" in readme and "4.12.0" in readme
-    assert "4.11." not in readme and "4.10." not in readme
+    assert "v4.13.0" in readme and "4.13.0" in readme
+    assert "4.12." not in readme and "4.11." not in readme and "4.10." not in readme
 
     table_rows = re.findall(r"^\|\s*`infra2_sdk\.([a-z]+)`\s*\|[^|]+\|\s*([^|]+)\|", readme, re.M)
     by_mod = {mod: cols for mod, cols in table_rows}

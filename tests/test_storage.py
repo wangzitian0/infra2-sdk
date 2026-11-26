@@ -13,6 +13,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from threading import Thread
+from typing import Any
 
 import pytest
 
@@ -425,7 +426,7 @@ def test_s3_helpers_cleanup_and_redaction() -> None:
     assert failed.status is service.DependencyStatus.ABSENT
     assert failed.detail.startswith("RuntimeError:")
     assert "s3pass" not in failed.detail and "sig123" not in failed.detail
-    assert [k for k in store if k.startswith("canary/probe/")] == []
+    assert [k for k in store if k.startswith("sdk/probe/")] == []
 
 
 def _free_port() -> int:
@@ -553,3 +554,56 @@ def test_probe_and_check_schema_live(
         ["check-schema", "--database-url", url, "--metadata", "canary_schema:METADATA", "--json"]
     )
     assert rc in {storage._EXIT_OK, storage._EXIT_BLOCKED}
+
+
+def test_s3_public_endpoint_presign_and_alembic_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = storage.S3Settings.from_env(
+        {
+            "S3_ENDPOINT": "http://platform-s3:9000",
+            "S3_PUBLIC_ENDPOINT": "https://s3.zitian.party",
+            "S3_BUCKET": "bucket-1",
+            "S3_ACCESS_KEY": "ak",
+            "S3_SECRET_KEY": "sk",
+        }
+    )
+    assert cfg.public_endpoint_url == "https://s3.zitian.party"
+
+    created_endpoints: list[str] = []
+
+    class _FakePresignClient:
+        def __init__(self, endpoint: str) -> None:
+            self._endpoint = endpoint
+            self.closed = False
+
+        def generate_presigned_url(
+            self,
+            op: str,
+            *,
+            Params: dict[str, Any],
+            ExpiresIn: int,  # noqa: N803
+        ) -> str:
+            assert op == "get_object"
+            assert ExpiresIn == 120
+            return f"{self._endpoint}/{Params['Bucket']}/{Params['Key']}?sig=1"
+
+        def close(self) -> None:
+            self.closed = True
+
+    def _fake_create(s: storage.S3Settings) -> _FakePresignClient:
+        created_endpoints.append(s.endpoint_url)
+        return _FakePresignClient(s.endpoint_url)
+
+    monkeypatch.setattr(storage, "create_s3_client", _fake_create)
+    pub_url = storage.presign_get_url(cfg, "reports/a.pdf", expires_in=120, public=True)
+    priv_url = storage.presign_get_url(cfg, "reports/a.pdf", expires_in=120, public=False)
+    assert pub_url.startswith("https://s3.zitian.party/bucket-1/reports/a.pdf")
+    assert priv_url.startswith("http://platform-s3:9000/bucket-1/reports/a.pdf")
+    assert created_endpoints == ["https://s3.zitian.party", "http://platform-s3:9000"]
+
+    monkeypatch.setattr(
+        storage,
+        "require_optional",
+        lambda mod, *, extra: (_ for _ in ()).throw(RuntimeError(f"missing {mod} [{extra}]")),
+    )
+    with pytest.raises(RuntimeError, match="application environment"):
+        storage._check_alembic_pending(None, alembic_config_path="alembic.ini")
