@@ -1012,7 +1012,7 @@ class S3Settings(ContractModel):
         *,
         bucket_env: str = "S3_BUCKET",
     ) -> S3Settings:
-        """Build S3Settings from canonical shared_env.yaml environment variables."""
+        """Build S3Settings from shared_env.yaml S3 variables and optional S3_USE_PATH_STYLE."""
         env = os.environ if environ is None else environ
         style_raw = env.get("S3_USE_PATH_STYLE", "true").strip().lower()
         return cls(

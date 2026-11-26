@@ -1,4 +1,4 @@
-# infra2-sdk (`v4.11.0`)
+# infra2-sdk (`v4.11.2`)
 
 Standalone cross-repository runtime contracts and explicit open-protocol adapters for `infra2`, consumer applications, and `canary/todo`.
 
@@ -7,19 +7,20 @@ Standalone cross-repository runtime contracts and explicit open-protocol adapter
 - **Six flat public modules (`infra2_sdk.*`)**, lazy-loaded with zero I/O or global provider registration on import: `config`, `telemetry`, `service`, `storage`, `llm`, `delivery`.
 - **Single internal base (`infra2_sdk._core`)**: `ContractModel(pydantic.BaseModel)` (`frozen=True`, `extra="forbid"`, `populate_by_name=True`), shared URL/log redaction, and `require_optional`. Core depends only on `pydantic>=2.7,<3` and `pyyaml>=6.0,<7`.
 - **Clean versioned releases**: consumers pin exact released wheels and migrate forward; retired aliases and control-plane-only helpers stay out of the SDK.
+- **Boundary & Canary ownership**: `infra2-sdk` owns the canonical `shared_env.yaml` key list and guarantees `canary/todo` runs end-to-end; each consumer app implements its own startup `assert_env` self-check, and `infra2` hosts temporary version bridges during rollout.
 
 ## 2. Installation Extras
 
 | Install Spec | Packages Added | Modules Unlocked |
 |---|---|---|
-| `infra2-sdk==4.11.0` | `pydantic`, `pyyaml` | All 6 modules (core contracts, RESP Redis probe, stdlib health poll, hooks CLI) |
-| `infra2-sdk[telemetry]==4.11.0` | `opentelemetry-api/sdk/exporter-otlp-proto-http/instrumentation-logging` | `telemetry.configure_telemetry`, `telemetry.init_worker`, `telemetry.get_tracer`, `telemetry.get_meter` |
-| `infra2-sdk[http]==4.11.0` | `httpx` | `service.create_http_client`, `service.create_async_http_client`, `service.request_with_retry`, `service.async_request_with_retry`, `service.probe_http` |
-| `infra2-sdk[fastapi]==4.11.0` | `fastapi`, `telemetry` extra, `http` extra | `service.init_service` (`/livez`, `/readyz`, `/health`, OTel lifespan, probe exclusion, `X-Request-ID`) |
-| `infra2-sdk[postgres]==4.11.0` | `psycopg[binary]` | `storage.probe_postgres`, `storage.check_schema`, `python -m infra2_sdk.storage check-schema` |
-| `infra2-sdk[s3]==4.11.0` | `boto3` | `storage.create_s3_client`, `storage.ensure_bucket`, `storage.probe_s3`, `storage.put_object_bytes`, `storage.read_object_bytes` |
-| `infra2-sdk[llm]==4.11.0` | `pydantic-ai-slim[zai]`, `http` extra, `telemetry` extra | `llm.create_llm_model`, `llm.create_llm_agent`, `llm.GuardedLlmModel` |
-| `infra2-sdk[all]==4.11.0` | All optional extras | Full SDK runtime surface |
+| `infra2-sdk==4.11.2` | `pydantic`, `pyyaml` | All 6 modules (core contracts, RESP Redis probe, stdlib health poll, hooks CLI) |
+| `infra2-sdk[telemetry]==4.11.2` | `opentelemetry-api/sdk/exporter-otlp-proto-http/instrumentation-logging` | `telemetry.configure_telemetry`, `telemetry.init_worker`, `telemetry.get_tracer`, `telemetry.get_meter` |
+| `infra2-sdk[http]==4.11.2` | `httpx` | `service.create_http_client`, `service.create_async_http_client`, `service.request_with_retry`, `service.async_request_with_retry`, `service.probe_http` |
+| `infra2-sdk[fastapi]==4.11.2` | `fastapi`, `telemetry` extra, `http` extra | `service.init_service` (`/livez`, `/readyz`, `/health`, OTel lifespan, probe exclusion, `X-Request-ID`) |
+| `infra2-sdk[postgres]==4.11.2` | `psycopg[binary]` | `storage.probe_postgres`, `storage.check_schema`, `python -m infra2_sdk.storage check-schema` |
+| `infra2-sdk[s3]==4.11.2` | `boto3` | `storage.create_s3_client`, `storage.ensure_bucket`, `storage.probe_s3`, `storage.put_object_bytes`, `storage.read_object_bytes` |
+| `infra2-sdk[llm]==4.11.2` | `pydantic-ai-slim[zai]`, `http` extra, `telemetry` extra | `llm.create_llm_model`, `llm.create_llm_agent`, `llm.GuardedLlmModel` |
+| `infra2-sdk[all]==4.11.2` | All optional extras | Full SDK runtime surface |
 
 ## 3. Public Module Surface (MECE 6-Module Contract)
 
