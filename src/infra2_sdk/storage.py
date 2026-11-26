@@ -7,32 +7,26 @@ import contextlib
 import json
 import math
 import os
+import re
 import secrets
 import socket
 import ssl
 import sys
 import time
-from collections.abc import Collection, Mapping, Sequence
-from typing import Any, Literal
-from urllib.parse import urlsplit, urlunsplit
+from collections.abc import Collection, Iterator, Mapping, Sequence
+from typing import Any, ClassVar, Literal, Self
+from urllib.parse import unquote, urlsplit
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 
 from infra2_sdk._core import (
     ContractModel,
+    load_dotted_symbol,
     redact_secrets,
     redact_url,
     redact_url_credentials,
     require_optional,
     validate_http_url,
-)
-from infra2_sdk._schema_gate import (
-    check_alembic_pending,
-    fetch_db_columns,
-    fetch_db_enum_tables,
-    fetch_db_enums,
-    normalize_expected_tables,
-    run_preconditions,
 )
 from infra2_sdk.service import DependencyStatus, ProbeResult
 
@@ -44,24 +38,122 @@ ROLLBACK_CLASS_A = "A"
 ROLLBACK_CLASS_C = "C"
 
 _DEFAULT_TIMEOUT_SECONDS = 5.0
-_MAX_PORT = 65535
 _RESP_CRLF = b"\r\n"
+_RESP_MAX_LINE_BYTES = 65_536
+
+_DB_ENUMS_SQL = """
+SELECT n.nspname AS schema_name,
+       t.typname AS enum_name,
+       e.enumlabel AS enum_label
+FROM pg_type t
+JOIN pg_namespace n ON n.oid = t.typnamespace
+JOIN pg_enum e ON e.enumtypid = t.oid
+WHERE t.typtype = 'e'
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+ORDER BY n.nspname, t.typname, e.enumsortorder;
+"""
+
+_DB_TABLES_SQL = """
+SELECT n.nspname AS table_schema,
+       c.relname AS table_name,
+       a.attname AS column_name,
+       format_type(a.atttypid, a.atttypmod) AS udt_name
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_attribute a ON a.attrelid = c.oid
+WHERE c.relkind IN ('r', 'p')
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND c.relname <> 'alembic_version'
+  AND a.attnum > 0
+  AND NOT a.attisdropped
+ORDER BY n.nspname, c.relname, a.attnum;
+"""
+
+_DB_ENUM_TABLES_SQL = """
+WITH RECURSIVE type_closure(base_enum_oid, type_oid, visited) AS (
+    SELECT t.oid, t.oid, ARRAY[t.oid]
+    FROM pg_type t
+    JOIN pg_namespace n ON n.oid = t.typnamespace
+    WHERE t.typtype = 'e'
+      AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+
+    UNION ALL
+
+    SELECT tc.base_enum_oid, next_oid, tc.visited || next_oid
+    FROM type_closure tc
+    CROSS JOIN LATERAL (
+        SELECT arr.oid AS next_oid
+        FROM pg_type arr
+        WHERE arr.typelem = tc.type_oid
+          AND arr.typtype = 'b'
+          AND NOT (arr.oid = ANY(tc.visited))
+        UNION
+        SELECT dom.oid AS next_oid
+        FROM pg_type dom
+        WHERE dom.typtype = 'd'
+          AND dom.typbasetype = tc.type_oid
+          AND NOT (dom.oid = ANY(tc.visited))
+        UNION
+        SELECT rng.rngtypid AS next_oid
+        FROM pg_range rng
+        WHERE rng.rngsubtype = tc.type_oid
+          AND NOT (rng.rngtypid = ANY(tc.visited))
+        UNION
+        SELECT mrng.rngmultitypid AS next_oid
+        FROM pg_range mrng
+        WHERE (mrng.rngsubtype = tc.type_oid OR mrng.rngtypid = tc.type_oid)
+          AND mrng.rngmultitypid <> 0
+          AND NOT (mrng.rngmultitypid = ANY(tc.visited))
+        UNION
+        SELECT comp.oid AS next_oid
+        FROM pg_attribute ca
+        JOIN pg_class cc ON cc.oid = ca.attrelid
+        JOIN pg_type comp ON comp.oid = cc.reltype
+        WHERE cc.relkind IN ('c', 'r', 'p')
+          AND ca.attnum > 0
+          AND NOT ca.attisdropped
+          AND ca.atttypid = tc.type_oid
+          AND NOT (comp.oid = ANY(tc.visited))
+    ) sub
+)
+SELECT DISTINCT en.nspname AS enum_schema,
+                et.typname AS enum_name,
+                tn.nspname AS table_schema,
+                c.relname AS table_name
+FROM type_closure tc
+JOIN pg_type et ON et.oid = tc.base_enum_oid
+JOIN pg_namespace en ON en.oid = et.typnamespace
+JOIN pg_attribute a ON a.atttypid = tc.type_oid
+JOIN pg_class c ON c.oid = a.attrelid
+JOIN pg_namespace tn ON tn.oid = c.relnamespace
+WHERE a.attnum > 0
+  AND NOT a.attisdropped
+  AND c.relkind IN ('r', 'p')
+  AND tn.nspname NOT IN ('pg_catalog', 'information_schema')
+ORDER BY en.nspname, et.typname, tn.nspname, c.relname;
+"""
+
+_DISALLOWED_SQL_RE = re.compile(
+    r"\b(?:INSERT|UPDATE|DELETE|MERGE|UPSERT|CREATE|ALTER|DROP|TRUNCATE|GRANT|REVOKE|"
+    r"COPY|CALL|DO|EXECUTE|PREPARE|LOCK|VACUUM|ANALYZE|REINDEX|CLUSTER|COMMENT|"
+    r"SET|RESET|BEGIN|COMMIT|ROLLBACK|SAVEPOINT|NEXTVAL|SETVAL|"
+    r"PG_TERMINATE_BACKEND|PG_CANCEL_BACKEND|SET_CONFIG)\b",
+    re.IGNORECASE,
+)
+_LINE_COMMENT_RE = re.compile(r"--[^\n]*")
+_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+_STRING_LITERAL_RE = re.compile(r"'(?:''|[^'])*'")
+_FALSY_SCALAR_STRINGS = frozenset({"false", "f", "0", "no", "none", ""})
 
 
 class GateNotEvaluated(RuntimeError):
     """Raised when the schema gate cannot evaluate database or migration state."""
 
 
-class PostgresSettings(ContractModel):
-    """PostgreSQL connection configuration."""
-
-    url: str
+class _UrlConnectionSettings(ContractModel):
+    _DEFAULT_ENV_VAR: ClassVar[str]
+    url: str = Field(repr=False)
     connect_timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS
-
-    @field_validator("url")
-    @classmethod
-    def _validate_url(cls, value: str) -> str:
-        return normalize_postgres_dsn(value)
 
     @field_validator("connect_timeout_seconds")
     @classmethod
@@ -75,15 +167,27 @@ class PostgresSettings(ContractModel):
         cls,
         environ: Mapping[str, str] | None = None,
         *,
-        url_env_var: str = "DATABASE_URL",
+        url_env_var: str | None = None,
         timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
-    ) -> PostgresSettings:
-        """Build PostgresSettings from an environment mapping."""
+    ) -> Self:
+        """Build connection settings from an environment mapping."""
         env = os.environ if environ is None else environ
-        raw = env.get(url_env_var, "").strip()
+        key = url_env_var or cls._DEFAULT_ENV_VAR
+        raw = env.get(key, "").strip()
         if not raw:
-            raise ValueError(f"{url_env_var} is required")
+            raise ValueError(f"{key} is required")
         return cls(url=raw, connect_timeout_seconds=timeout_seconds)
+
+
+class PostgresSettings(_UrlConnectionSettings):
+    """PostgreSQL connection configuration."""
+
+    _DEFAULT_ENV_VAR: ClassVar[str] = "DATABASE_URL"
+
+    @field_validator("url")
+    @classmethod
+    def _validate_url(cls, value: str) -> str:
+        return normalize_postgres_dsn(value)
 
 
 def normalize_postgres_dsn(dsn: str) -> str:
@@ -96,11 +200,22 @@ def normalize_postgres_dsn(dsn: str) -> str:
     base = scheme.split("+", 1)[0]
     if base not in {"postgresql", "postgres"}:
         raise ValueError(f"unsupported PostgreSQL DSN scheme {parsed.scheme!r}")
-    if not parsed.hostname:
+    try:
+        _ = parsed.port
+    except ValueError:
+        raise ValueError("PostgreSQL DSN port must be between 1 and 65535") from None
+    has_unix_host = any(
+        k.lower() == "host" and v.strip()
+        for k, v in (pair.partition("=")[::2] for pair in parsed.query.split("&") if "=" in pair)
+    )
+    if not parsed.hostname and not has_unix_host:
         raise ValueError("PostgreSQL DSN must include a hostname")
-    if parsed.port is not None and not 1 <= parsed.port <= _MAX_PORT:
-        raise ValueError("PostgreSQL DSN port must be between 1 and 65535")
-    return urlunsplit(("postgresql", parsed.netloc, parsed.path, parsed.query, parsed.fragment))
+    rebuilt = f"postgresql://{parsed.netloc}{parsed.path}"
+    if parsed.query:
+        rebuilt += f"?{parsed.query}"
+    if parsed.fragment:
+        rebuilt += f"#{parsed.fragment}"
+    return rebuilt
 
 
 def redact_postgres_error(exc: BaseException, dsn: str | None = None) -> str:
@@ -116,8 +231,9 @@ def probe_postgres(
     *,
     connect_timeout: float = _DEFAULT_TIMEOUT_SECONDS,
     name: str = "postgres",
+    verify_write: bool = False,
 ) -> ProbeResult:
-    """Verify PostgreSQL connectivity and query execution with SELECT 1."""
+    """Verify PostgreSQL connectivity (`SELECT 1`) and optional temp-table write round-trip."""
     if not math.isfinite(connect_timeout) or connect_timeout <= 0:
         raise ValueError("connect_timeout must be positive")
     psycopg = require_optional("psycopg", extra="postgres")
@@ -125,20 +241,48 @@ def probe_postgres(
     try:
         dsn = normalize_postgres_dsn(url)
         timeout_arg = max(1, int(math.ceil(connect_timeout)))
-        with psycopg.connect(dsn, connect_timeout=timeout_arg) as conn, conn.cursor() as cur:
+        timeout_ms = timeout_arg * 1000
+        with (
+            psycopg.connect(
+                dsn,
+                connect_timeout=timeout_arg,
+                options=f"-c statement_timeout={timeout_ms}",
+            ) as conn,
+            conn.cursor() as cur,
+        ):
             cur.execute("SELECT 1")
             row = cur.fetchone()
-        if not row or row[0] != 1:
-            return ProbeResult(
-                name=name,
-                status=DependencyStatus.ABSENT,
-                detail="SELECT 1 returned unexpected result",
-                duration_ms=(time.perf_counter() - started) * 1000,
-            )
+            if not row or row[0] != 1:
+                return ProbeResult(
+                    name=name,
+                    status=DependencyStatus.ABSENT,
+                    detail="SELECT 1 returned unexpected result",
+                    duration_ms=(time.perf_counter() - started) * 1000,
+                )
+            if verify_write:
+                cur.execute("SET LOCAL transaction_read_only = off")
+                cur.execute(
+                    "CREATE TEMP TABLE IF NOT EXISTS canary_todo_probe "
+                    "(id TEXT PRIMARY KEY, title TEXT NOT NULL)"
+                )
+                cur.execute(
+                    "INSERT INTO canary_todo_probe (id, title) VALUES ('probe-1', 'ok') "
+                    "ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title"
+                )
+                cur.execute("SELECT title FROM canary_todo_probe WHERE id = 'probe-1'")
+                w_row = cur.fetchone()
+                cur.execute("DELETE FROM canary_todo_probe WHERE id = 'probe-1'")
+                if not w_row or w_row[0] != "ok":
+                    return ProbeResult(
+                        name=name,
+                        status=DependencyStatus.ABSENT,
+                        detail=f"temp-table round-trip returned {w_row!r}",
+                        duration_ms=(time.perf_counter() - started) * 1000,
+                    )
         return ProbeResult(
             name=name,
             status=DependencyStatus.PRESENT,
-            detail="ok",
+            detail="ok (write verified)" if verify_write else "ok",
             duration_ms=(time.perf_counter() - started) * 1000,
         )
     except Exception as exc:  # noqa: BLE001
@@ -160,9 +304,10 @@ def _validate_redis_url(value: str) -> tuple[str, int, str, str, int, bool]:
         raise ValueError(f"unsupported Redis URL scheme {parsed.scheme!r}")
     if not parsed.hostname:
         raise ValueError("Redis URL must include a hostname")
-    port = parsed.port if parsed.port is not None else 6379
-    if not 1 <= port <= _MAX_PORT:
-        raise ValueError("Redis URL port must be between 1 and 65535")
+    try:
+        port = parsed.port if parsed.port is not None else 6379
+    except ValueError:
+        raise ValueError("Redis URL port must be between 1 and 65535") from None
     db_raw = parsed.path.lstrip("/")
     db_index = 0
     if db_raw:
@@ -172,18 +317,17 @@ def _validate_redis_url(value: str) -> tuple[str, int, str, str, int, bool]:
     return (
         parsed.hostname,
         port,
-        parsed.username or "",
-        parsed.password or "",
+        unquote(parsed.username or ""),
+        unquote(parsed.password or ""),
         db_index,
         scheme == "rediss",
     )
 
 
-class RedisSettings(ContractModel):
+class RedisSettings(_UrlConnectionSettings):
     """Redis connection configuration."""
 
-    url: str
-    connect_timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS
+    _DEFAULT_ENV_VAR: ClassVar[str] = "REDIS_URL"
     tls_verify: bool = True
 
     @field_validator("url")
@@ -191,28 +335,6 @@ class RedisSettings(ContractModel):
     def _validate_url(cls, value: str) -> str:
         _validate_redis_url(value)
         return value.strip()
-
-    @field_validator("connect_timeout_seconds")
-    @classmethod
-    def _validate_timeout(cls, value: float) -> float:
-        if not math.isfinite(value) or value <= 0:
-            raise ValueError("connect_timeout_seconds must be positive")
-        return float(value)
-
-    @classmethod
-    def from_env(
-        cls,
-        environ: Mapping[str, str] | None = None,
-        *,
-        url_env_var: str = "REDIS_URL",
-        timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
-    ) -> RedisSettings:
-        """Build RedisSettings from an environment mapping."""
-        env = os.environ if environ is None else environ
-        raw = env.get(url_env_var, "").strip()
-        if not raw:
-            raise ValueError(f"{url_env_var} is required")
-        return cls(url=raw, connect_timeout_seconds=timeout_seconds)
 
 
 def redact_redis_error(exc: BaseException, url: str | None = None) -> str:
@@ -243,6 +365,8 @@ class _RespReader:
                 line = bytes(self._buf[:idx])
                 del self._buf[: idx + 2]
                 return line
+            if len(self._buf) > _RESP_MAX_LINE_BYTES:
+                raise ValueError("RESP reply line exceeded maximum length")
             chunk = self._sock.recv(4096)
             if not chunk:
                 raise ConnectionError("unexpected EOF from Redis")
@@ -279,12 +403,15 @@ def probe_redis(
     key_prefix: str = "canary:probe:",
     connect_timeout: float = _DEFAULT_TIMEOUT_SECONDS,
     tls_verify: bool = True,
+    write_probe: bool = True,
     name: str = "redis",
 ) -> ProbeResult:
-    """Verify Redis connectivity with PING plus ephemeral SETEX/GET/DEL round-trip."""
+    """Verify Redis connectivity with PING and optional ephemeral SETEX/GET/DEL round-trip."""
     if not math.isfinite(connect_timeout) or connect_timeout <= 0:
         raise ValueError("connect_timeout must be positive")
     started = time.perf_counter()
+    deadline = started + connect_timeout
+    raw_sock: socket.socket | None = None
     sock: socket.socket | None = None
     try:
         host, port, username, password, db_index, use_tls = _validate_redis_url(url)
@@ -295,15 +422,19 @@ def probe_redis(
                 ctx.check_hostname = False
                 ctx.verify_mode = ssl.CERT_NONE
             sock = ctx.wrap_socket(raw_sock, server_hostname=host)
-            sock.settimeout(connect_timeout)
+            raw_sock = None
         else:
             sock = raw_sock
-            sock.settimeout(connect_timeout)
+            raw_sock = None
 
         reader = _RespReader(sock)
 
         def cmd(*args: str) -> Any:
             assert sock is not None
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Redis probe exceeded timeout budget")
+            sock.settimeout(remaining)
             sock.sendall(_encode_resp(*args))
             return reader.read_reply()
 
@@ -320,13 +451,18 @@ def probe_redis(
         if cmd("PING") != "PONG":
             raise RuntimeError("Redis PING did not return PONG")
 
-        key = f"{key_prefix}{secrets.token_hex(8)}"
-        token = secrets.token_hex(12)
-        cmd("SETEX", key, "30", token)
-        fetched = cmd("GET", key)
-        cmd("DEL", key)
-        if fetched != token:
-            raise RuntimeError(f"Redis GET returned {fetched!r}, expected {token!r}")
+        if write_probe:
+            key = f"{key_prefix}{secrets.token_hex(8)}"
+            token = secrets.token_hex(12)
+            cmd("SETEX", key, "30", token)
+            try:
+                fetched = cmd("GET", key)
+                if fetched != token:
+                    raise RuntimeError(f"Redis GET returned {fetched!r}, expected {token!r}")
+            finally:
+                with contextlib.suppress(Exception):
+                    cmd("DEL", key)
+
         return ProbeResult(
             name=name,
             status=DependencyStatus.PRESENT,
@@ -341,9 +477,176 @@ def probe_redis(
             duration_ms=(time.perf_counter() - started) * 1000,
         )
     finally:
-        if sock is not None:
-            with contextlib.suppress(OSError):
-                sock.close()
+        for handle in (sock, raw_sock):
+            if handle is not None:
+                with contextlib.suppress(OSError):
+                    handle.close()
+
+
+def _validate_readonly_sql(sql: str) -> str:
+    """Validate that a precondition statement is a single read-only SELECT/WITH query."""
+    if "$$" in sql:
+        raise ValueError("precondition SQL forbids dollar-quoted blocks")
+    placeholder_tokens: list[str] = []
+
+    def _stash_literal(match: re.Match[str]) -> str:
+        placeholder_tokens.append(match.group(0))
+        return f"__SQL_LIT_{len(placeholder_tokens) - 1}__"
+
+    stashed = _STRING_LITERAL_RE.sub(_stash_literal, sql)
+    stripped = _BLOCK_COMMENT_RE.sub(" ", _LINE_COMMENT_RE.sub(" ", stashed)).strip()
+    if stripped.endswith(";"):
+        stripped = stripped[:-1].strip()
+    if not stripped:
+        raise ValueError("precondition SQL must not be empty")
+    if ";" in stripped:
+        raise ValueError("precondition SQL must contain a single statement")
+    upper = stripped.lstrip().upper()
+    if not (upper.startswith("SELECT ") or upper.startswith("WITH ")):
+        raise ValueError("precondition SQL must begin with SELECT or WITH")
+    if match := _DISALLOWED_SQL_RE.search(stripped):
+        raise ValueError(f"precondition SQL forbids keyword {match.group(0).upper()!r}")
+    restored = stripped
+    for idx, literal in enumerate(placeholder_tokens):
+        restored = restored.replace(f"__SQL_LIT_{idx}__", literal, 1)
+    return restored
+
+
+def _fetch_db_enums(cur: Any) -> dict[tuple[str, str], tuple[str, ...]]:
+    cur.execute(_DB_ENUMS_SQL)
+    grouped: dict[tuple[str, str], list[str]] = {}
+    for schema_name, enum_name, enum_label in cur.fetchall():
+        grouped.setdefault((str(schema_name), str(enum_name)), []).append(str(enum_label))
+    return {k: tuple(v) for k, v in grouped.items()}
+
+
+def _fetch_db_columns(cur: Any) -> dict[tuple[str, str], dict[str, str]]:
+    cur.execute(_DB_TABLES_SQL)
+    tables: dict[tuple[str, str], dict[str, str]] = {}
+    for schema_name, table_name, column_name, udt_name in cur.fetchall():
+        tables.setdefault((str(schema_name), str(table_name)), {})[str(column_name)] = str(udt_name)
+    return tables
+
+
+def _fetch_db_enum_tables(cur: Any) -> dict[tuple[str, str], frozenset[tuple[str, str]]]:
+    cur.execute(_DB_ENUM_TABLES_SQL)
+    mapping: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    for enum_schema, enum_name, table_schema, table_name in cur.fetchall():
+        mapping.setdefault((str(enum_schema), str(enum_name)), set()).add(
+            (str(table_schema), str(table_name))
+        )
+    return {k: frozenset(v) for k, v in mapping.items()}
+
+
+def _run_preconditions(cur: Any, queries: Sequence[str]) -> tuple[bool, list[str]]:
+    failures: list[str] = []
+    for raw in queries:
+        stmt = _validate_readonly_sql(raw)
+        cur.execute(stmt)
+        rows = cur.fetchall()
+        if not rows:
+            failures.append(f"precondition returned 0 rows: {stmt}")
+            continue
+        if len(rows) == 1 and len(rows[0]) == 1:
+            scalar = rows[0][0]
+            if (
+                scalar is None
+                or scalar is False
+                or str(scalar).strip().lower() in _FALSY_SCALAR_STRINGS
+            ):
+                failures.append(f"precondition evaluated false ({scalar!r}): {stmt}")
+    return (not failures, failures)
+
+
+def _check_alembic_pending(
+    cur: Any,
+    *,
+    alembic_config_path: str | None = None,
+    alembic_script_location: str | None = None,
+) -> bool:
+    if not alembic_config_path and not alembic_script_location:
+        return False
+    alembic_cfg_mod = require_optional("alembic.config", extra="postgres")
+    alembic_script_mod = require_optional("alembic.script", extra="postgres")
+
+    if alembic_config_path:
+        cfg = alembic_cfg_mod.Config(alembic_config_path)
+        if alembic_script_location:
+            cfg.set_main_option("script_location", alembic_script_location)
+        script = alembic_script_mod.ScriptDirectory.from_config(cfg)
+    else:
+        script = alembic_script_mod.ScriptDirectory(alembic_script_location)
+
+    expected_heads = tuple(sorted(script.get_heads()))
+    cur.execute("SELECT to_regclass('public.alembic_version')")
+    reg = cur.fetchone()
+    if not reg or reg[0] is None:
+        return bool(expected_heads)
+    cur.execute("SELECT version_num FROM public.alembic_version")
+    current_heads = tuple(sorted(str(row[0]) for row in cur.fetchall() if row and row[0]))
+    return expected_heads != current_heads
+
+
+def _unwrap_native_enum(column_type: Any) -> Any | None:
+    """Unwrap Enum, ARRAY(Enum), or TypeDecorator(Enum) when backed by PostgreSQL native ENUM."""
+    for candidate in (
+        column_type,
+        getattr(column_type, "item_type", None),
+        getattr(column_type, "impl_instance", None),
+    ):
+        if candidate is None:
+            continue
+        enums = getattr(candidate, "enums", None)
+        enum_name = getattr(candidate, "name", None)
+        if (
+            isinstance(enums, (list, tuple))
+            and enums
+            and enum_name
+            and getattr(candidate, "native_enum", True)
+        ):
+            return candidate
+    return None
+
+
+def _iter_metadata_enum_columns(
+    metadata: Any, *, default_schema: str = "public"
+) -> Iterator[tuple[str, str, str, str, tuple[str, ...]]]:
+    if metadata is None or not hasattr(metadata, "tables"):
+        raise ValueError("metadata with a .tables mapping is required")
+    for table_key, table in metadata.tables.items():
+        table_schema = str(getattr(table, "schema", None) or default_schema)
+        table_name = str(getattr(table, "name", None) or str(table_key).rsplit(".", 1)[-1])
+        for col in table.columns:
+            enum_type = _unwrap_native_enum(col.type)
+            if enum_type is None:
+                continue
+            enum_schema = str(getattr(enum_type, "schema", None) or table_schema)
+            labels = tuple(str(label) for label in enum_type.enums)
+            yield table_schema, table_name, enum_schema, str(enum_type.name), labels
+
+
+def _normalize_expected_tables(
+    expected_tables: Mapping[tuple[str, str], Mapping[str, str]] | None,
+    metadata: Any = None,
+    *,
+    default_schema: str = "public",
+) -> dict[tuple[str, str], dict[str, str]]:
+    out: dict[tuple[str, str], dict[str, str]] = {}
+    if metadata is not None and hasattr(metadata, "tables"):
+        for table_key, table in metadata.tables.items():
+            schema_name = str(getattr(table, "schema", None) or default_schema)
+            table_name = str(getattr(table, "name", None) or str(table_key).rsplit(".", 1)[-1])
+            out[(schema_name, table_name)] = {
+                str(getattr(col, "name", None) or str(col)): str(
+                    getattr(col.type, "name", None) or type(col.type).__name__
+                )
+                for col in table.columns
+            }
+    if expected_tables:
+        for table_key, cols in expected_tables.items():
+            schema_name, table_name = str(table_key[0]), str(table_key[1])
+            out[(schema_name, table_name)] = {str(k): str(v) for k, v in cols.items()}
+    return out
 
 
 class EnumSchemaSpec(ContractModel):
@@ -371,12 +674,21 @@ class EnumSchemaSpec(ContractModel):
         return value
 
 
+EnumDiscrepancyKind = Literal[
+    "missing_type",
+    "extra_type",
+    "additive_labels",
+    "destructive_labels",
+    "order_mismatch",
+]
+
+
 class EnumDiscrepancy(ContractModel):
     """Difference between expected and live PostgreSQL enum definitions."""
 
     schema_name: str = "public"
     name: str
-    kind: Literal["missing_type", "additive_labels", "destructive_labels", "order_mismatch"]
+    kind: EnumDiscrepancyKind
     expected: tuple[str, ...] = ()
     actual: tuple[str, ...] = ()
     missing_in_db: tuple[str, ...] = ()
@@ -409,45 +721,49 @@ class SchemaDiffReport(ContractModel):
     def is_blocking(self) -> bool:
         return (
             self.rollback_class == ROLLBACK_CLASS_C
-            or self.migrations_pending
             or not self.preconditions_passed
+            or (not self.migrations_pending and bool(self.enum_discrepancies))
         )
 
 
 def enums_from_metadata(
     metadata: Any, *, default_schema: str = "public"
 ) -> tuple[EnumSchemaSpec, ...]:
-    """Extract EnumSchemaSpec definitions from SQLAlchemy MetaData."""
-    if metadata is None or not hasattr(metadata, "tables"):
-        raise ValueError("metadata with a .tables mapping is required")
+    """Extract EnumSchemaSpec definitions (including ARRAY/TypeDecorator enums) from MetaData."""
     specs: dict[tuple[str, str], tuple[str, ...]] = {}
-    for table in metadata.tables.values():
-        table_schema = str(getattr(table, "schema", None) or default_schema)
-        for col in table.columns:
-            col_type = col.type
-            enums = getattr(col_type, "enums", None)
-            enum_name = getattr(col_type, "name", None)
-            if not enums or not enum_name:
-                continue
-            schema_name = str(getattr(col_type, "schema", None) or table_schema)
-            key = (schema_name, str(enum_name))
-            labels = tuple(str(label) for label in enums)
-            if key in specs and specs[key] != labels:
-                raise ValueError(f"conflicting enum definitions for {schema_name}.{enum_name}")
-            specs[key] = labels
+    for _t_schema, _t_name, enum_schema, enum_name, labels in _iter_metadata_enum_columns(
+        metadata, default_schema=default_schema
+    ):
+        key = (enum_schema, enum_name)
+        if key in specs and set(specs[key]) != set(labels):
+            raise ValueError(f"conflicting enum definitions for {enum_schema}.{enum_name}")
+        specs.setdefault(key, labels)
     return tuple(
         EnumSchemaSpec(schema_name=k[0], name=k[1], labels=v) for k, v in sorted(specs.items())
     )
+
+
+def _enum_tables_from_metadata(
+    metadata: Any, *, default_schema: str = "public"
+) -> dict[tuple[str, str], frozenset[tuple[str, str]]]:
+    refs: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    for t_schema, t_name, enum_schema, enum_name, _labels in _iter_metadata_enum_columns(
+        metadata, default_schema=default_schema
+    ):
+        refs.setdefault((enum_schema, enum_name), set()).add((t_schema, t_name))
+    return {k: frozenset(v) for k, v in refs.items()}
 
 
 def check_enums(
     expected: Sequence[EnumSchemaSpec],
     actual: Mapping[tuple[str, str], Sequence[str]],
 ) -> tuple[EnumDiscrepancy, ...]:
-    """Compare expected EnumSchemaSpec objects against live database enum labels."""
+    """Compare expected EnumSchemaSpec objects bidirectionally against live PostgreSQL enums."""
     out: list[EnumDiscrepancy] = []
+    expected_keys: set[tuple[str, str]] = set()
     for spec in expected:
         key = (spec.schema_name, spec.name)
+        expected_keys.add(key)
         if key not in actual:
             out.append(
                 EnumDiscrepancy(
@@ -471,9 +787,7 @@ def check_enums(
         if not missing_in_code and [label for label in spec.labels if label in live_set] == list(
             live
         ):
-            kind: Literal[
-                "missing_type", "additive_labels", "destructive_labels", "order_mismatch"
-            ] = "additive_labels"
+            kind: EnumDiscrepancyKind = "additive_labels"
         elif not missing_in_code and not missing_in_db:
             kind = "order_mismatch"
         else:
@@ -489,6 +803,19 @@ def check_enums(
                 missing_in_code=missing_in_code,
             )
         )
+    for key in sorted(set(actual) - expected_keys):
+        live = tuple(str(item) for item in actual[key])
+        out.append(
+            EnumDiscrepancy(
+                schema_name=key[0],
+                name=key[1],
+                kind="extra_type",
+                expected=(),
+                actual=live,
+                missing_in_db=(),
+                missing_in_code=live,
+            )
+        )
     return tuple(out)
 
 
@@ -499,10 +826,13 @@ def classify_rollback(
     dropped_tables: Collection[tuple[str, str]] = (),
     enum_discrepancies: Sequence[EnumDiscrepancy] = (),
     enum_tables: Mapping[tuple[str, str], Collection[tuple[str, str]]] | None = None,
+    code_tables: Collection[tuple[str, str]] | None = None,
+    migrations_pending: bool = False,
 ) -> Literal["A", "C"]:
     """Classify migration rollback safety as A (online-reversible) or C (exclusive/unsafe)."""
     dropped_table_set = {(str(s), str(t)) for s, t in dropped_tables}
     new_table_set = {(str(s), str(t)) for s, t in new_tables}
+    code_table_set = {(str(s), str(t)) for s, t in code_tables} if code_tables is not None else None
     if dropped_table_set:
         return ROLLBACK_CLASS_C
     for col in dropped_columns:
@@ -514,7 +844,15 @@ def classify_rollback(
             continue
         refs = {(str(s), str(t)) for s, t in enum_ref_map.get((diff.schema_name, diff.name), ())}
         if diff.kind == "missing_type":
-            if not refs or refs <= new_table_set:
+            if (refs and refs <= new_table_set) or (not refs and new_table_set):
+                continue
+            return ROLLBACK_CLASS_C
+        if diff.kind == "extra_type":
+            if not migrations_pending or not refs:
+                return ROLLBACK_CLASS_C
+            if code_table_set is not None and not (refs & code_table_set):
+                continue
+            if refs <= dropped_table_set:
                 continue
             return ROLLBACK_CLASS_C
         if refs and refs <= dropped_table_set:
@@ -535,38 +873,41 @@ def check_schema(
     default_schema: str = "public",
     connect_timeout: float = _DEFAULT_TIMEOUT_SECONDS,
 ) -> SchemaDiffReport:
-    """Evaluate database schema compatibility and preconditions on one PostgreSQL connection."""
+    """Evaluate database schema compatibility and preconditions on one read-only connection."""
     psycopg = require_optional("psycopg", extra="postgres")
     dsn = normalize_postgres_dsn(database_url)
-    target_tables = (
-        normalize_expected_tables(expected_tables, default_schema=default_schema)
-        if expected_tables is not None
-        else {}
+    target_tables = _normalize_expected_tables(
+        expected_tables, metadata=metadata, default_schema=default_schema
     )
     merged_enums = list(expected_enums)
+    code_enum_tables: dict[tuple[str, str], frozenset[tuple[str, str]]] = {}
     if metadata is not None:
         by_key = {(e.schema_name, e.name): e for e in merged_enums}
         for spec in enums_from_metadata(metadata, default_schema=default_schema):
             by_key.setdefault((spec.schema_name, spec.name), spec)
         merged_enums = list(by_key.values())
+        code_enum_tables = _enum_tables_from_metadata(metadata, default_schema=default_schema)
 
     timeout_arg = max(1, int(math.ceil(connect_timeout)))
+    opts = f"-c statement_timeout={timeout_arg * 1000} -c default_transaction_read_only=on"
     try:
-        conn = psycopg.connect(dsn, connect_timeout=timeout_arg)
+        conn = psycopg.connect(dsn, connect_timeout=timeout_arg, options=opts)
     except Exception as exc:  # noqa: BLE001
         raise GateNotEvaluated(redact_postgres_error(exc, database_url)) from exc
 
-    with conn:
-        with conn.cursor() as cur:
-            live_enums = fetch_db_enums(cur)
-            live_tables = fetch_db_columns(cur)
-            enum_tables = fetch_db_enum_tables(cur)
-            pre_ok, pre_failures = run_preconditions(cur, preconditions)
-        pending, _, _ = check_alembic_pending(
-            conn,
-            alembic_config_path=alembic_config_path,
-            alembic_script_location=alembic_script_location,
-        )
+    try:
+        with conn, conn.cursor() as cur:
+            live_enums = _fetch_db_enums(cur)
+            live_tables = _fetch_db_columns(cur)
+            db_enum_tables = _fetch_db_enum_tables(cur)
+            pre_ok, pre_failures = _run_preconditions(cur, preconditions)
+            pending = _check_alembic_pending(
+                cur,
+                alembic_config_path=alembic_config_path,
+                alembic_script_location=alembic_script_location,
+            )
+    except Exception as exc:  # noqa: BLE001
+        raise GateNotEvaluated(redact_postgres_error(exc, database_url)) from exc
 
     additive_cols: list[TableColumn] = []
     dropped_cols: list[TableColumn] = []
@@ -598,13 +939,24 @@ def check_schema(
                     )
                 )
 
-    enum_diffs = check_enums(merged_enums, live_enums)
+    enum_diffs: tuple[EnumDiscrepancy, ...] = ()
+    if merged_enums or metadata is not None:
+        enum_diffs = check_enums(merged_enums, live_enums)
+
+    combined_enum_tables: dict[tuple[str, str], set[tuple[str, str]]] = {
+        k: set(v) for k, v in db_enum_tables.items()
+    }
+    for key, tables in code_enum_tables.items():
+        combined_enum_tables.setdefault(key, set()).update(tables)
+
     rollback_class = classify_rollback(
         dropped_columns=dropped_cols,
         new_tables=new_tables,
         dropped_tables=dropped_tables,
         enum_discrepancies=enum_diffs,
-        enum_tables=enum_tables,
+        enum_tables=combined_enum_tables,
+        code_tables=set(target_tables) if target_tables else None,
+        migrations_pending=pending,
     )
     return SchemaDiffReport(
         additive_columns=tuple(additive_cols),
@@ -625,7 +977,7 @@ class S3Settings(ContractModel):
     endpoint_url: str
     bucket: str
     access_key_id: str
-    secret_access_key: str
+    secret_access_key: str = Field(repr=False)
     region: str = "us-east-1"
     use_path_style: bool = True
     connect_timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS
@@ -738,9 +1090,16 @@ def put_object_bytes(
 
 
 def read_object_bytes(client: Any, bucket: str, key: str) -> bytes:
-    """Download an S3 object body as bytes."""
+    """Download an S3 object body as bytes and close its stream."""
     resp = client.get_object(Bucket=bucket, Key=key)
-    return bytes(resp["Body"].read())
+    body = resp["Body"]
+    try:
+        return bytes(body.read())
+    finally:
+        close_fn = getattr(body, "close", None)
+        if callable(close_fn):
+            with contextlib.suppress(Exception):
+                close_fn()
 
 
 def redact_presigned_url(url: str) -> str:
@@ -758,15 +1117,21 @@ def probe_s3(
 ) -> ProbeResult:
     """Verify S3 bucket reachability and optional write/read/delete round-trip."""
     started = time.perf_counter()
+    owned = client is None
+    s3_client: Any | None = client
     try:
-        s3_client = client if client is not None else create_s3_client(settings)
+        if s3_client is None:
+            s3_client = create_s3_client(settings)
         s3_client.head_bucket(Bucket=settings.bucket)
         if round_trip:
             key = f"{key_prefix}{secrets.token_hex(8)}.txt"
             payload = secrets.token_hex(8).encode("utf-8")
             put_object_bytes(s3_client, settings.bucket, key, payload, content_type="text/plain")
-            got = read_object_bytes(s3_client, settings.bucket, key)
-            s3_client.delete_object(Bucket=settings.bucket, Key=key)
+            try:
+                got = read_object_bytes(s3_client, settings.bucket, key)
+            finally:
+                with contextlib.suppress(Exception):
+                    s3_client.delete_object(Bucket=settings.bucket, Key=key)
             if got != payload:
                 raise RuntimeError("S3 round-trip content mismatch")
         return ProbeResult(
@@ -783,26 +1148,19 @@ def probe_s3(
         return ProbeResult(
             name=name,
             status=DependencyStatus.ABSENT,
-            detail=detail,
+            detail=redact_presigned_url(detail),
             duration_ms=(time.perf_counter() - started) * 1000,
         )
+    finally:
+        if owned and s3_client is not None:
+            close_fn = getattr(s3_client, "close", None)
+            if callable(close_fn):
+                with contextlib.suppress(Exception):
+                    close_fn()
 
 
-def _load_symbol(spec: str) -> Any:
-    import importlib
-
-    module_name, sep, attr_path = spec.partition(":")
-    if not sep or not module_name or not attr_path:
-        raise ValueError(f"invalid dotted symbol {spec!r}; expected module:attr")
-    if "" not in sys.path:
-        sys.path.insert(0, "")
-    obj: Any = importlib.import_module(module_name)
-    for part in attr_path.split("."):
-        obj = getattr(obj, part)
-    return obj
-
-
-def _cli(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entrypoint: ``python -m infra2_sdk.storage check-schema ...``."""
     parser = argparse.ArgumentParser(prog="python -m infra2_sdk.storage")
     sub = parser.add_subparsers(dest="command", required=True)
     gate = sub.add_parser("check-schema", help="Run the PostgreSQL schema & migration gate.")
@@ -820,40 +1178,32 @@ def _cli(argv: Sequence[str] | None = None) -> int:
     gate.add_argument("--json", action="store_true", dest="as_json")
 
     args = parser.parse_args(list(argv) if argv is not None else None)
-    if args.command == "check-schema":
-        if not args.database_url:
-            print("DATABASE_URL is required", file=sys.stderr)
-            return EXIT_NOT_EVALUATED
-        metadata = _load_symbol(args.metadata) if args.metadata else None
-        try:
-            report = check_schema(
-                args.database_url,
-                metadata=metadata,
-                alembic_config_path=args.alembic_config,
-                alembic_script_location=args.alembic_script_location,
-                preconditions=args.precondition,
-            )
-        except GateNotEvaluated as exc:
-            print(str(exc), file=sys.stderr)
-            return EXIT_NOT_EVALUATED
-        payload = report.to_dict()
-        if args.label:
-            payload["label"] = args.label
-        if args.as_json:
-            print(json.dumps(payload, sort_keys=True))
-        else:
-            prefix = f"[{args.label}] " if args.label else ""
-            print(
-                f"{prefix}ROLLBACK_CLASS: {report.rollback_class} "
-                f"pending={report.migrations_pending}"
-            )
-        return EXIT_BLOCKED if report.is_blocking else EXIT_OK
-    return EXIT_NOT_EVALUATED
-
-
-def main(argv: Sequence[str] | None = None) -> int:
-    """CLI entrypoint for schema gate inspection."""
-    return _cli(argv)
+    if not args.database_url:
+        print("DATABASE_URL is required", file=sys.stderr)
+        return EXIT_NOT_EVALUATED
+    try:
+        metadata = load_dotted_symbol(args.metadata) if args.metadata else None
+        report = check_schema(
+            args.database_url,
+            metadata=metadata,
+            alembic_config_path=args.alembic_config,
+            alembic_script_location=args.alembic_script_location,
+            preconditions=args.precondition,
+        )
+    except (GateNotEvaluated, ValueError, ImportError, AttributeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_NOT_EVALUATED
+    payload = report.to_dict()
+    if args.label:
+        payload["label"] = args.label
+    if args.as_json:
+        print(json.dumps(payload, sort_keys=True))
+    else:
+        prefix = f"[{args.label}] " if args.label else ""
+        print(
+            f"{prefix}ROLLBACK_CLASS: {report.rollback_class} pending={report.migrations_pending}"
+        )
+    return EXIT_BLOCKED if report.is_blocking else EXIT_OK
 
 
 __all__ = (
@@ -861,6 +1211,7 @@ __all__ = (
     "EXIT_NOT_EVALUATED",
     "EXIT_OK",
     "EnumDiscrepancy",
+    "EnumDiscrepancyKind",
     "EnumSchemaSpec",
     "GateNotEvaluated",
     "PostgresSettings",

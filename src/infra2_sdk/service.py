@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import math
+import sys
 import threading
 import time
 from collections import deque
@@ -23,7 +25,12 @@ from pydantic import ConfigDict, Field, field_serializer, field_validator, model
 
 import infra2_sdk.telemetry as _telemetry
 from infra2_sdk import __version__
-from infra2_sdk._core import ContractModel, require_contract_version, require_optional
+from infra2_sdk._core import (
+    ContractModel,
+    redact_url_credentials,
+    require_contract_version,
+    require_optional,
+)
 from infra2_sdk.config import (
     PLATFORM_OWNED_TIERS,
     EnvironmentTier,
@@ -36,11 +43,13 @@ from infra2_sdk.telemetry import (
     OtelSettings,
     bind_request_id,
     configure_logging,
+    current_request_id,
 )
 
 _DEPENDENCY_MANIFEST_VERSION = 1
 _HTTP_OK, _HTTP_UNAVAILABLE = 200, 503
 _DEFAULT_RETRY_STATUSES: frozenset[int] = frozenset({429, 502, 503, 504})
+_IDEMPOTENT_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "PUT", "DELETE", "OPTIONS"})
 _LOGGER = logging.getLogger("infra2_sdk.service")
 _INITIALIZED_ATTR = "infra2_service_name"
 
@@ -53,7 +62,6 @@ class DependencyKind(StrEnum):
 class DependencyStatus(StrEnum):
     PRESENT = "present"
     ABSENT = "absent"
-    SKIPPED = "skipped"
 
 
 class HealthStatus(StrEnum):
@@ -72,6 +80,8 @@ class Dependency(ContractModel):
     @field_validator("required_in", mode="before")
     @classmethod
     def _coerce_tiers(cls, value: Any) -> frozenset[EnvironmentTier]:
+        if isinstance(value, str) or not isinstance(value, Collection | Sequence):
+            raise TypeError("required_in must be a collection of EnvironmentTier values")
         return frozenset(resolve_tier(v) for v in value)
 
     @model_validator(mode="after")
@@ -147,13 +157,9 @@ class ProbeResult(ContractModel):
     def _validate_probe(self) -> ProbeResult:
         if not self.name:
             raise ValueError("probe name is required")
-        if self.duration_ms < 0:
-            raise ValueError("duration_ms must be non-negative")
+        if not math.isfinite(self.duration_ms) or self.duration_ms < 0:
+            raise ValueError("duration_ms must be finite and non-negative")
         return self
-
-    @property
-    def present(self) -> bool:
-        return self.status is DependencyStatus.PRESENT
 
 
 @runtime_checkable
@@ -176,6 +182,10 @@ class CallableCheck:
     ) -> None:
         self.name = name
         self.fn = fn
+
+    @property
+    def is_async(self) -> bool:
+        return inspect.iscoroutinefunction(self.fn)
 
     def probe(self) -> ProbeResult | Awaitable[ProbeResult]:
         started = time.perf_counter()
@@ -217,34 +227,43 @@ def _sync_semaphore() -> asyncio.Semaphore:
 async def _run_sync_probe(probe: Callable[[], Any], *, name: str) -> Any:
     loop = asyncio.get_running_loop()
     fut = loop.create_future()
+    sem = _sync_semaphore()
     ctx = copy_context()
 
     def publish(*, result: Any = None, error: BaseException | None = None) -> None:
         if not fut.done():
             fut.set_exception(error) if error is not None else fut.set_result(result)
 
+    await sem.acquire()
+
     def worker() -> None:
         try:
             cb = partial(publish, result=ctx.run(probe))
         except BaseException as exc:  # noqa: BLE001
             cb = partial(publish, error=exc)
+        finally:
+            with suppress(RuntimeError):
+                loop.call_soon_threadsafe(sem.release)
         with suppress(RuntimeError):
             loop.call_soon_threadsafe(cb)
 
-    async with _sync_semaphore():
+    try:
         Thread(target=worker, name=f"infra2-probe-{name}", daemon=True).start()
-        try:
-            return await fut
-        finally:
-            if not fut.done():
-                fut.cancel()
+    except BaseException:
+        sem.release()
+        raise
+    try:
+        return await fut
+    finally:
+        if not fut.done():
+            fut.cancel()
 
 
 async def run_probes(
     checks: Sequence[DependencyCheck], *, timeout_seconds: float = 10.0
 ) -> tuple[ProbeResult, ...]:
     """Run dependency probes concurrently with bounded per-check timeouts."""
-    if timeout_seconds <= 0:
+    if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be positive")
     vals = tuple(checks)
     if len(vals) != len({c.name for c in vals}):
@@ -254,8 +273,9 @@ async def run_probes(
         started = time.perf_counter()
         try:
             res = (
-                await check.probe()
+                check.probe()
                 if inspect.iscoroutinefunction(check.probe)
+                or (isinstance(check, CallableCheck) and check.is_async)
                 else await _run_sync_probe(check.probe, name=check.name)
             )
             if inspect.isawaitable(res):
@@ -364,12 +384,6 @@ class HealthResponse(ContractModel):
     reasons: list[str]
 
 
-class ErrorResponse(ContractModel):
-    error_id: str
-    detail: str
-    request_id: str | None = None
-
-
 async def _rid_middleware(inner: Any, scope: Any, receive: Any, send: Any) -> None:
     if scope["type"] != "http":
         await inner(scope, receive, send)
@@ -377,6 +391,10 @@ async def _rid_middleware(inner: Any, scope: Any, receive: Any, send: Any) -> No
     raw = next((v for k, v in scope.get("headers") or () if k.lower() == b"x-request-id"), b"")
     with bind_request_id(raw.decode("latin1").strip() or None) as rid:
         scope.setdefault("state", {})["request_id"] = rid
+        if (ot := sys.modules.get("opentelemetry.trace")) is not None:
+            span = ot.get_current_span()
+            if span is not None and span.is_recording():
+                span.set_attribute("request_id", rid)
         hdr = (b"x-request-id", rid.encode("latin1"))
 
         async def _send(msg: Any) -> None:
@@ -392,6 +410,10 @@ def _attach_telemetry(app: Any, settings: OtelSettings, *, strict: bool) -> None
     try:
         providers = _telemetry.configure_telemetry(settings, set_global=True)
         app.state.telemetry_providers = providers
+        if isinstance(tel := getattr(app, "_telemetry", None), dict):
+            tel["tracer_provider"] = providers.tracer_provider
+            tel["meter_provider"] = providers.meter_provider
+            tel["logger_provider"] = providers.logger_provider
         original = app.router.lifespan_context
 
         @asynccontextmanager
@@ -432,7 +454,7 @@ def init_service(
         raise RuntimeError("init_service was already called for this app")
     if not isinstance(name, str) or not name.strip():
         raise ValueError("name must not be blank")
-    if check_timeout_seconds <= 0:
+    if not math.isfinite(check_timeout_seconds) or check_timeout_seconds <= 0:
         raise ValueError("check_timeout_seconds must be positive")
 
     relax_hint = "pass strict_otel=False to log the problem and start"
@@ -483,6 +505,12 @@ def init_service(
         service_version=release_ver,
         suppress_probes=suppress_probe_telemetry,
     )
+    if suppress_probe_telemetry and isinstance(tel := getattr(app, "_telemetry", None), dict):
+        prev_exclude = tel.get("exclude")
+        tel["exclude"] = lambda scope, p=prev_exclude: (
+            (scope.get("path") in _telemetry.PROBE_PATHS) or bool(p and p(scope))
+        )
+
     app.state.service_release = release_info
     setattr(app.state, _INITIALIZED_ATTR, name)
 
@@ -530,7 +558,14 @@ def init_service(
     )
     async def health():
         code, body = await report()
-        extra = dict(health_extra()) if health_extra else {}
+        if health_extra is not None:
+            try:
+                extra = dict(health_extra())
+            except Exception as exc:  # noqa: BLE001
+                extra = {"health_extra_error": type(exc).__name__}
+                code = _HTTP_UNAVAILABLE
+        else:
+            extra = {}
         return JSONResponse({**extra, **body, "service": name, **release_info}, status_code=code)
 
     if active_settings is not None:
@@ -552,6 +587,13 @@ class HttpClientSettings(ContractModel):
         return self
 
 
+def _inject_correlation_headers(headers: Any) -> None:
+    if "X-Request-ID" not in headers and (rid := current_request_id()):
+        headers["X-Request-ID"] = rid
+    if (prop := sys.modules.get("opentelemetry.propagate")) is not None:
+        prop.inject(headers)
+
+
 def _build_httpx_client(
     settings: HttpClientSettings | None,
     *,
@@ -566,22 +608,33 @@ def _build_httpx_client(
     timeout = httpx.Timeout(cfg.timeout_seconds, connect=cfg.connect_timeout_seconds)
     transport_cls = httpx.AsyncHTTPTransport if async_client else httpx.HTTPTransport
     client_cls = httpx.AsyncClient if async_client else httpx.Client
+
+    if async_client:
+
+        async def _hook(request: Any) -> None:
+            _inject_correlation_headers(request.headers)
+    else:
+
+        def _hook(request: Any) -> None:
+            _inject_correlation_headers(request.headers)
+
     ua = cfg.user_agent or f"infra2-sdk/{__version__}"
     return client_cls(
         timeout=timeout,
         transport=transport_cls(limits=limits),
         headers={"User-Agent": ua},
         follow_redirects=cfg.follow_redirects,
+        event_hooks={"request": [_hook]},
     )
 
 
 def create_http_client(settings: HttpClientSettings | None = None) -> Any:
-    """Create a configured synchronous ``httpx.Client``."""
+    """Create a configured synchronous ``httpx.Client`` with correlation header propagation."""
     return _build_httpx_client(settings, async_client=False)
 
 
 def create_async_http_client(settings: HttpClientSettings | None = None) -> Any:
-    """Create a configured asynchronous ``httpx.AsyncClient``."""
+    """Create a configured async ``httpx.AsyncClient`` with correlation header propagation."""
     return _build_httpx_client(settings, async_client=True)
 
 
@@ -611,6 +664,24 @@ def _retry_delay(
     return min(max_backoff, backoff_base * (2**attempt))
 
 
+def _validate_retry_args(
+    method: str,
+    max_attempts: int,
+    backoff_base: float,
+    max_backoff: float,
+    retry_non_idempotent: bool,
+) -> int:
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be at least 1")
+    if not math.isfinite(backoff_base) or backoff_base < 0:
+        raise ValueError("backoff_base must be non-negative")
+    if not math.isfinite(max_backoff) or max_backoff < 0:
+        raise ValueError("max_backoff must be non-negative")
+    if not retry_non_idempotent and method.strip().upper() not in _IDEMPOTENT_METHODS:
+        return 1
+    return max_attempts
+
+
 def request_with_retry(
     client: Any,
     method: str,
@@ -620,24 +691,62 @@ def request_with_retry(
     retry_statuses: Collection[int] = _DEFAULT_RETRY_STATUSES,
     backoff_base: float = 0.5,
     max_backoff: float = 30.0,
+    retry_non_idempotent: bool = False,
     sleep: Callable[[float], None] = time.sleep,
     **kwargs: Any,
 ) -> Any:
     """Execute a synchronous httpx request honoring Retry-After and exponential backoff."""
-    if max_attempts < 1:
-        raise ValueError("max_attempts must be at least 1")
+    eff_attempts = _validate_retry_args(
+        method, max_attempts, backoff_base, max_backoff, retry_non_idempotent
+    )
     httpx = require_optional("httpx", extra="http")
-    for attempt in range(max_attempts):
+    for attempt in range(eff_attempts):
         try:
             resp = client.request(method, url, **kwargs)
         except (httpx.TransportError, OSError):
-            if attempt + 1 >= max_attempts:
+            if attempt + 1 >= eff_attempts:
                 raise
             sleep(_retry_delay(None, attempt, backoff_base=backoff_base, max_backoff=max_backoff))
             continue
-        if int(resp.status_code) not in retry_statuses or attempt + 1 >= max_attempts:
+        if int(resp.status_code) not in retry_statuses or attempt + 1 >= eff_attempts:
             return resp
         sleep(
+            _retry_delay(resp.headers, attempt, backoff_base=backoff_base, max_backoff=max_backoff)
+        )
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+async def async_request_with_retry(
+    client: Any,
+    method: str,
+    url: str,
+    *,
+    max_attempts: int = 3,
+    retry_statuses: Collection[int] = _DEFAULT_RETRY_STATUSES,
+    backoff_base: float = 0.5,
+    max_backoff: float = 30.0,
+    retry_non_idempotent: bool = False,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    **kwargs: Any,
+) -> Any:
+    """Execute an asynchronous httpx request honoring Retry-After and exponential backoff."""
+    eff_attempts = _validate_retry_args(
+        method, max_attempts, backoff_base, max_backoff, retry_non_idempotent
+    )
+    httpx = require_optional("httpx", extra="http")
+    for attempt in range(eff_attempts):
+        try:
+            resp = await client.request(method, url, **kwargs)
+        except (httpx.TransportError, OSError):
+            if attempt + 1 >= eff_attempts:
+                raise
+            await sleep(
+                _retry_delay(None, attempt, backoff_base=backoff_base, max_backoff=max_backoff)
+            )
+            continue
+        if int(resp.status_code) not in retry_statuses or attempt + 1 >= eff_attempts:
+            return resp
+        await sleep(
             _retry_delay(resp.headers, attempt, backoff_base=backoff_base, max_backoff=max_backoff)
         )
     raise AssertionError("unreachable")  # pragma: no cover
@@ -666,10 +775,11 @@ async def probe_http(
             duration_ms=(time.perf_counter() - started) * 1000,
         )
     except Exception as exc:  # noqa: BLE001
+        detail = redact_url_credentials(f"{type(exc).__name__}: {exc}", url, placeholder="<url>")
         return ProbeResult(
             name=name,
             status=DependencyStatus.ABSENT,
-            detail=f"{type(exc).__name__}: {exc}",
+            detail=detail,
             duration_ms=(time.perf_counter() - started) * 1000,
         )
     finally:
@@ -722,11 +832,6 @@ class RateLimitWindow:
                     break
             return False, max(0.0, wait_until - now)
 
-    def used(self) -> int:
-        with self._lock:
-            self._evict(self._clock())
-            return self._used
-
 
 __all__ = (
     "DependencyKind",
@@ -742,12 +847,12 @@ __all__ = (
     "evaluate_health",
     "ProbeResponse",
     "HealthResponse",
-    "ErrorResponse",
     "init_service",
     "HttpClientSettings",
     "create_http_client",
     "create_async_http_client",
     "request_with_retry",
+    "async_request_with_retry",
     "probe_http",
     "RateLimitWindow",
 )

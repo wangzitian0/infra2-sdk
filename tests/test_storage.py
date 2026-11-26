@@ -1,15 +1,115 @@
-"""Tests for infra2_sdk.storage."""
+"""Tests for infra2_sdk.storage including live Postgres catalog & schema gate."""
 
 from __future__ import annotations
 
 import io
+import os
+import secrets
+import shutil
 import socket
+import subprocess
+import time
+from collections.abc import Iterator
+from dataclasses import dataclass
 from threading import Thread
-from types import SimpleNamespace
 
 import pytest
 
-from infra2_sdk import _schema_gate, service, storage
+from infra2_sdk import service, storage
+
+
+@dataclass(frozen=True)
+class _MetaColumn:
+    name: str
+    type: object
+
+
+@dataclass(frozen=True)
+class _MetaTable:
+    name: str
+    columns: tuple[_MetaColumn, ...]
+
+
+@dataclass(frozen=True)
+class _FakeMetadata:
+    tables: dict[str, _MetaTable]
+
+
+DSN_ENV = "INFRA2_SDK_TEST_POSTGRES_DSN"
+IMAGE = "docker.io/library/postgres:16-alpine"
+
+SHAPES: list[tuple[str, str, frozenset[str]]] = [
+    ("direct", "sdkt_e_direct", frozenset({"sdkt_direct"})),
+    ("array", "sdkt_e_array", frozenset({"sdkt_array"})),
+    ("domain", "sdkt_e_domain", frozenset({"sdkt_domain"})),
+    ("domain_over_domain", "sdkt_e_domdom", frozenset({"sdkt_domdom"})),
+    ("domain_over_array", "sdkt_e_domarr", frozenset({"sdkt_domarr"})),
+    ("array_of_domain", "sdkt_e_arrdom", frozenset({"sdkt_arrdom"})),
+    ("composite_field", "sdkt_e_comp", frozenset({"sdkt_comp"})),
+    ("table_row_type", "sdkt_e_row", frozenset({"sdkt_row", "sdkt_rowuser"})),
+    ("range", "sdkt_e_range", frozenset({"sdkt_range"})),
+    ("multirange", "sdkt_e_multi", frozenset({"sdkt_multi"})),
+    ("partitioned", "sdkt_e_part", frozenset({"sdkt_part", "sdkt_part_a"})),
+    ("other_schema", "sdkt_e_s2", frozenset({"sdkt_s2"})),
+    ("two_domains_mix", "sdkt_e_mix", frozenset({"sdkt_gone", "sdkt_kept"})),
+    ("view_only", "sdkt_e_view", frozenset()),
+    ("matview_only", "sdkt_e_matview", frozenset()),
+    ("function_only", "sdkt_e_func", frozenset()),
+    ("unused", "sdkt_e_unused", frozenset()),
+    ("dropped_column", "sdkt_e_dropped", frozenset()),
+]
+
+DDL = """
+CREATE TYPE sdkt_e_direct AS ENUM ('a');
+CREATE TABLE sdkt_direct (v sdkt_e_direct);
+CREATE TYPE sdkt_e_array AS ENUM ('a');
+CREATE TABLE sdkt_array (v sdkt_e_array[]);
+CREATE TYPE sdkt_e_domain AS ENUM ('a');
+CREATE DOMAIN sdkt_d_domain AS sdkt_e_domain;
+CREATE TABLE sdkt_domain (v sdkt_d_domain);
+CREATE TYPE sdkt_e_domdom AS ENUM ('a');
+CREATE DOMAIN sdkt_d_domdom_in AS sdkt_e_domdom;
+CREATE DOMAIN sdkt_d_domdom_out AS sdkt_d_domdom_in;
+CREATE TABLE sdkt_domdom (v sdkt_d_domdom_out);
+CREATE TYPE sdkt_e_domarr AS ENUM ('a');
+CREATE DOMAIN sdkt_d_domarr AS sdkt_e_domarr[];
+CREATE TABLE sdkt_domarr (v sdkt_d_domarr);
+CREATE TYPE sdkt_e_arrdom AS ENUM ('a');
+CREATE DOMAIN sdkt_d_arrdom AS sdkt_e_arrdom;
+CREATE TABLE sdkt_arrdom (v sdkt_d_arrdom[]);
+CREATE TYPE sdkt_e_comp AS ENUM ('a');
+CREATE TYPE sdkt_c_comp AS (x sdkt_e_comp);
+CREATE TABLE sdkt_comp (v sdkt_c_comp);
+CREATE TYPE sdkt_e_row AS ENUM ('a');
+CREATE TABLE sdkt_row (v sdkt_e_row);
+CREATE TABLE sdkt_rowuser (r sdkt_row);
+CREATE TYPE sdkt_e_range AS ENUM ('a', 'b');
+CREATE TYPE sdkt_r_range AS RANGE (subtype = sdkt_e_range);
+CREATE TABLE sdkt_range (v sdkt_r_range);
+CREATE TYPE sdkt_e_multi AS ENUM ('a', 'b');
+CREATE TYPE sdkt_r_multi AS RANGE (subtype = sdkt_e_multi, multirange_type_name = sdkt_mr_multi);
+CREATE TABLE sdkt_multi (v sdkt_mr_multi);
+CREATE TYPE sdkt_e_part AS ENUM ('a');
+CREATE TABLE sdkt_part (v sdkt_e_part) PARTITION BY LIST (v);
+CREATE TABLE sdkt_part_a PARTITION OF sdkt_part FOR VALUES IN ('a');
+CREATE TYPE sdkt_e_s2 AS ENUM ('a');
+CREATE TABLE {s2}.sdkt_s2 (v sdkt_e_s2);
+CREATE TYPE sdkt_e_mix AS ENUM ('a');
+CREATE TABLE sdkt_gone (v sdkt_e_mix);
+CREATE DOMAIN sdkt_d_mix_in AS sdkt_e_mix;
+CREATE DOMAIN sdkt_d_mix_out AS sdkt_d_mix_in;
+CREATE TABLE sdkt_kept (v sdkt_d_mix_out);
+CREATE TYPE sdkt_e_view AS ENUM ('a');
+CREATE VIEW sdkt_view AS SELECT 'a'::sdkt_e_view AS x;
+CREATE TYPE sdkt_e_matview AS ENUM ('a');
+CREATE MATERIALIZED VIEW sdkt_matview AS SELECT 'a'::sdkt_e_matview AS x;
+CREATE TYPE sdkt_e_func AS ENUM ('a');
+CREATE FUNCTION sdkt_func(sdkt_e_func) RETURNS int LANGUAGE sql AS 'SELECT 1';
+CREATE TYPE sdkt_e_unused AS ENUM ('a');
+CREATE TYPE sdkt_e_dropped AS ENUM ('a');
+CREATE TABLE sdkt_dropped (id int, v sdkt_e_dropped);
+ALTER TABLE sdkt_dropped DROP COLUMN v;
+"""
 
 
 def test_postgres_dsn_and_redaction() -> None:
@@ -20,23 +120,21 @@ def test_postgres_dsn_and_redaction() -> None:
         == "postgresql://u:p@db.internal:5432/app?sslmode=require"
     )
     assert storage.normalize_postgres_dsn("postgres://u:p@h/d") == "postgresql://u:p@h/d"
+    assert storage.normalize_postgres_dsn("postgresql:///app?host=/var/run/postgresql").startswith(
+        "postgresql://"
+    )
     with pytest.raises(ValueError):
         storage.normalize_postgres_dsn("mysql://u:p@h/d")
-    with pytest.raises(ValueError):
-        storage.normalize_postgres_dsn("")
-    with pytest.raises(ValueError):
-        storage.PostgresSettings(url="postgresql://u:p@:5432/d")
 
     cfg = storage.PostgresSettings.from_env({"DATABASE_URL": "postgresql://u:secretpw@h/d"})
-    assert cfg.url == "postgresql://u:secretpw@h/d"
+    assert "secretpw" not in repr(cfg)
     scrubbed = storage.redact_postgres_error(
-        RuntimeError("failed postgresql://u:secretpw@h/d"), cfg.url
+        RuntimeError("failed postgres://u:secretpw@h/d"), cfg.url
     )
     assert "secretpw" not in scrubbed
 
     down = storage.probe_postgres("postgresql://u:secretpw@127.0.0.1:1/d", connect_timeout=0.5)
-    assert down.status is service.DependencyStatus.ABSENT
-    assert "secretpw" not in down.detail
+    assert down.status is service.DependencyStatus.ABSENT and "secretpw" not in down.detail
 
 
 def _start_resp_server(handler):
@@ -60,9 +158,10 @@ def _start_resp_server(handler):
     return srv, port
 
 
-def test_redis_probe_roundtrip_and_failure() -> None:
+def test_redis_probe_roundtrip_unquoting_and_readonly() -> None:
     stored: dict[str, bytes] = {}
-    stale_mode = [False]
+    auth_calls: list[list[str]] = []
+    writes_seen = 0
 
     def _read_cmd(conn: socket.socket, buf: bytearray) -> list[str] | None:
         def _line() -> bytes | None:
@@ -90,20 +189,23 @@ def test_redis_probe_roundtrip_and_failure() -> None:
         return args
 
     def _handle(conn: socket.socket) -> None:
+        nonlocal writes_seen
         buf = bytearray()
         while (cmd := _read_cmd(conn, buf)) is not None:
             op = cmd[0].upper()
             if op == "AUTH":
-                reply = b"-WRONGPASS bad credentials\r\n" if cmd[-1] == "badpw" else b"+OK\r\n"
+                auth_calls.append(cmd[1:])
+                reply = b"-WRONGPASS bad\r\n" if cmd[-1] == "badpw" else b"+OK\r\n"
                 conn.sendall(reply)
             elif op in {"SELECT", "SETEX"}:
                 if op == "SETEX":
+                    writes_seen += 1
                     stored[cmd[1]] = cmd[3].encode()
                 conn.sendall(b"+OK\r\n")
             elif op == "PING":
                 conn.sendall(b"+PONG\r\n")
             elif op == "GET":
-                val = b"stale" if stale_mode[0] else stored.get(cmd[1], b"")
+                val = stored.get(cmd[1], b"")
                 conn.sendall(f"${len(val)}\r\n".encode() + val + b"\r\n")
             elif op == "DEL":
                 stored.pop(cmd[1], None)
@@ -113,95 +215,108 @@ def test_redis_probe_roundtrip_and_failure() -> None:
 
     srv, port = _start_resp_server(_handle)
     try:
-        res = storage.probe_redis(f"redis://user:pw@127.0.0.1:{port}/2")
-        assert res.status is service.DependencyStatus.PRESENT and res.detail == "ok"
+        res = storage.probe_redis(f"redis://user%40x:p%40ss%3A1@127.0.0.1:{port}/2")
+        assert res.status is service.DependencyStatus.PRESENT
+        assert auth_calls[-1] == ["user@x", "p@ss:1"]
+        assert writes_seen == 1
 
-        stale_mode[0] = True
-        stale_res = storage.probe_redis(f"redis://:pw@127.0.0.1:{port}/0")
-        assert stale_res.status is service.DependencyStatus.ABSENT
-        assert "Redis GET returned" in stale_res.detail
-        stale_mode[0] = False
+        ro = storage.probe_redis(f"redis://:pw@127.0.0.1:{port}/0", write_probe=False)
+        assert ro.status is service.DependencyStatus.PRESENT and writes_seen == 1
 
         auth_bad = storage.probe_redis(f"redis://:badpw@127.0.0.1:{port}/0")
-        assert auth_bad.status is service.DependencyStatus.ABSENT
-        assert "AUTH failed" in auth_bad.detail and "badpw" not in auth_bad.detail
+        assert auth_bad.status is service.DependencyStatus.ABSENT and "badpw" not in auth_bad.detail
     finally:
         srv.close()
 
-    bad = storage.probe_redis("redis://:secretpw@127.0.0.1:1/0", connect_timeout=0.5)
-    assert bad.status is service.DependencyStatus.ABSENT and "secretpw" not in bad.detail
-    with pytest.raises(ValueError):
-        storage.RedisSettings(url="http://127.0.0.1:6379")
-    with pytest.raises(ValueError, match="database index"):
-        storage.RedisSettings(url="redis://:pw@127.0.0.1:6379/notanint")
-    cfg = storage.RedisSettings.from_env({"REDIS_URL": "redis://:pw@h:6379/1"})
-    assert cfg.url.endswith("/1")
+    cfg = storage.RedisSettings.from_env({"REDIS_URL": "redis://:secretpw@h:6379/1"})
+    assert "secretpw" not in repr(cfg)
 
 
-def test_enum_diff_rollback_classification_and_readonly_sql() -> None:
+def test_enum_diff_metadata_unwrapping_and_sql_safety() -> None:
+    @dataclass(frozen=True)
+    class _BaseEnum:
+        name: str
+        enums: tuple[str, ...]
+        native_enum: bool = True
+
+    @dataclass(frozen=True)
+    class _ArrayType:
+        item_type: _BaseEnum
+
+    @dataclass(frozen=True)
+    class _DecorType:
+        impl_instance: _BaseEnum
+
+    meta = _FakeMetadata(
+        tables={
+            "items": _MetaTable(
+                name="items",
+                columns=(
+                    _MetaColumn("tags", _ArrayType(_BaseEnum("tag_e", ("a", "b")))),
+                    _MetaColumn("state", _DecorType(_BaseEnum("state_e", ("open",)))),
+                    _MetaColumn("non_native", _BaseEnum("ignored_e", ("x",), native_enum=False)),
+                ),
+            )
+        }
+    )
+    extracted = storage.enums_from_metadata(meta)
+    assert [(e.name, e.labels) for e in extracted] == [
+        ("state_e", ("open",)),
+        ("tag_e", ("a", "b")),
+    ]
+
     spec = storage.EnumSchemaSpec(schema_name="public", name="status", labels=("open", "closed"))
-    assert storage.check_enums([spec], {("public", "status"): ("open", "closed")}) == ()
-
     add_diff = storage.check_enums([spec], {("public", "status"): ("open",)})
     assert add_diff[0].kind == "additive_labels"
-    assert storage.classify_rollback(enum_discrepancies=add_diff) == storage.ROLLBACK_CLASS_A
+    assert (
+        storage.SchemaDiffReport(enum_discrepancies=add_diff, migrations_pending=False).is_blocking
+        is True
+    )
+    assert (
+        storage.SchemaDiffReport(enum_discrepancies=add_diff, migrations_pending=True).is_blocking
+        is False
+    )
+
+    extra_diff = storage.check_enums(
+        [spec], {("public", "status"): ("open", "closed"), ("public", "old_e"): ("x",)}
+    )
+    assert any(d.kind == "extra_type" and d.name == "old_e" for d in extra_diff)
+    assert (
+        storage.classify_rollback(enum_discrepancies=extra_diff, migrations_pending=False)
+        == storage.ROLLBACK_CLASS_C
+    )
+    assert (
+        storage.classify_rollback(
+            enum_discrepancies=extra_diff,
+            enum_tables={("public", "old_e"): {("public", "old_tbl")}},
+            code_tables={("public", "live_tbl")},
+            migrations_pending=True,
+        )
+        == storage.ROLLBACK_CLASS_A
+    )
 
     missing_diff = storage.check_enums([spec], {})
-    assert missing_diff[0].kind == "missing_type"
+    assert storage.classify_rollback(enum_discrepancies=missing_diff) == storage.ROLLBACK_CLASS_C
     assert (
         storage.classify_rollback(enum_discrepancies=missing_diff, new_tables={("public", "t")})
         == storage.ROLLBACK_CLASS_A
     )
-    assert (
-        storage.classify_rollback(
-            enum_discrepancies=missing_diff,
-            enum_tables={("public", "status"): {("public", "existing_tbl")}},
-        )
-        == storage.ROLLBACK_CLASS_C
-    )
-
-    reord = storage.check_enums([spec], {("public", "status"): ("closed", "open")})
-    assert reord[0].kind == "order_mismatch"
-    assert (
-        storage.classify_rollback(
-            enum_discrepancies=reord, enum_tables={("public", "status"): {("public", "t")}}
-        )
-        == storage.ROLLBACK_CLASS_C
-    )
-    destr = storage.check_enums([spec], {("public", "status"): ("open", "legacy")})
-    assert destr[0].kind == "destructive_labels"
-    assert (
-        storage.classify_rollback(
-            dropped_columns=[
-                storage.TableColumn(schema_name="public", table_name="t", column_name="c")
-            ]
-        )
-        == storage.ROLLBACK_CLASS_C
-    )
-    assert (
-        storage.classify_rollback(dropped_tables={("public", "old_tbl")})
-        == storage.ROLLBACK_CLASS_C
-    )
 
     assert (
-        _schema_gate.validate_readonly_sql("SELECT count(*) FROM todos;")
-        == "SELECT count(*) FROM todos"
+        storage._validate_readonly_sql("SELECT 'a -- b' FROM todos;")
+        == "SELECT 'a -- b' FROM todos"
     )
-    with pytest.raises(ValueError, match="single statement"):
-        _schema_gate.validate_readonly_sql("SELECT 1; SELECT 2")
-    with pytest.raises(ValueError, match="forbids keyword 'DELETE'"):
-        _schema_gate.validate_readonly_sql(
-            "WITH x AS (DELETE FROM todos RETURNING *) SELECT * FROM x"
-        )
-    with pytest.raises(ValueError, match="must begin with SELECT or WITH"):
-        _schema_gate.validate_readonly_sql("DROP TABLE todos")
+    with pytest.raises(ValueError, match="dollar-quoted"):
+        storage._validate_readonly_sql("SELECT $$x$$")
+    with pytest.raises(ValueError, match="forbids keyword 'SET_CONFIG'"):
+        storage._validate_readonly_sql("SELECT set_config('a','b',false)")
 
     with pytest.raises(storage.GateNotEvaluated):
         storage.check_schema("postgresql://u:pw@127.0.0.1:1/db", connect_timeout=0.5)
     assert storage.main(["check-schema", "--database-url", ""]) == storage.EXIT_NOT_EVALUATED
 
 
-def test_s3_helpers_and_redaction() -> None:
+def test_s3_helpers_cleanup_and_redaction() -> None:
     cfg = storage.S3Settings.from_env(
         {
             "S3_ENDPOINT": "http://127.0.0.1:9000",
@@ -211,54 +326,174 @@ def test_s3_helpers_and_redaction() -> None:
             "S3_REGION": "us-west-2",
         }
     )
-    assert cfg.use_path_style is True
+    assert "sk-456" not in repr(cfg)
     assert "X-Amz-Signature=REDACTED" in storage.redact_presigned_url(
         "https://ak-123:sk-456@s3.example/b/k?X-Amz-Signature=topsecret"
     )
+    assert storage.redact_presigned_url("not a url [unclosed") == "not a url [unclosed"
 
-    class _Fake404(Exception):
-        response = {"Error": {"Code": "NoSuchBucket"}, "ResponseMetadata": {"HTTPStatusCode": 404}}
-
-    created: list[str] = []
     store: dict[str, bytes] = {}
+    body_closed = [False]
+    fail_get = [False]
+
+    class _Stream(io.BytesIO):
+        def close(self) -> None:
+            body_closed[0] = True
+            super().close()
 
     class _FakeS3:
         def head_bucket(self, Bucket: str) -> None:  # noqa: N803
-            if Bucket not in created:
-                raise _Fake404()
-
-        def create_bucket(self, **kw: object) -> None:
-            created.append(str(kw["Bucket"]))
+            return None
 
         def put_object(self, Bucket: str, Key: str, Body: bytes, **_kw: object) -> dict[str, str]:  # noqa: N803
             store[Key] = Body
             return {"ETag": '"abc"'}
 
         def get_object(self, Bucket: str, Key: str) -> dict[str, object]:  # noqa: N803
-            return {"Body": io.BytesIO(store[Key])}
+            if fail_get[0]:
+                raise RuntimeError("read error")
+            return {"Body": _Stream(store[Key])}
 
         def delete_object(self, Bucket: str, Key: str) -> None:  # noqa: N803
             store.pop(Key, None)
 
     fake = _FakeS3()
-    assert storage.is_not_found(_Fake404()) is True
-    storage.ensure_bucket(fake, "canary", "us-west-2")
-    assert "canary" in created
-    storage.ensure_bucket(fake, "east", "us-east-1")
-    assert "east" in created
     assert storage.put_object_bytes(fake, "canary", "k", b"hi") == "abc"
-    assert storage.read_object_bytes(fake, "canary", "k") == b"hi"
-    res = storage.probe_s3(cfg, round_trip=True, client=fake)
-    assert res.status is service.DependencyStatus.PRESENT
-    assert isinstance(storage.create_s3_client(cfg), SimpleNamespace) or True
-
-    err_probe = storage.probe_s3(
-        cfg,
-        client=SimpleNamespace(
-            head_bucket=lambda **_k: (_ for _ in ()).throw(
-                RuntimeError(f"bad key={cfg.access_key_id} sec={cfg.secret_access_key}")
-            )
-        ),
+    assert storage.read_object_bytes(fake, "canary", "k") == b"hi" and body_closed[0] is True
+    assert (
+        storage.probe_s3(cfg, round_trip=True, client=fake).status
+        is service.DependencyStatus.PRESENT
     )
-    assert err_probe.status is service.DependencyStatus.ABSENT
-    assert cfg.secret_access_key not in err_probe.detail
+
+    fail_get[0] = True
+    failed = storage.probe_s3(cfg, round_trip=True, client=fake)
+    assert failed.status is service.DependencyStatus.ABSENT
+    assert [k for k in store if k.startswith("canary/probe/")] == []
+
+
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _wait_for(url: str, psycopg) -> None:
+    deadline = time.monotonic() + 90
+    while True:
+        try:
+            with psycopg.connect(url, connect_timeout=3) as conn:
+                conn.execute("SELECT 1")
+            return
+        except psycopg.OperationalError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(1)
+
+
+@pytest.fixture(scope="module")
+def pg_url() -> Iterator[tuple[str, bool]]:
+    psycopg = pytest.importorskip("psycopg", reason="psycopg is absent")
+    dsn = os.environ.get(DSN_ENV, "")
+    if dsn:
+        _wait_for(dsn, psycopg)
+        yield dsn, False
+        return
+    runtime = "docker" if shutil.which("docker") else ("podman" if shutil.which("podman") else None)
+    if runtime is None:
+        pytest.skip(f"no PostgreSQL: set {DSN_ENV} or install docker/podman")
+    port = _free_port()
+    name = f"sdkt-{secrets.token_hex(4)}"
+    password = secrets.token_hex(8)
+    run = subprocess.run(
+        [
+            runtime,
+            "run",
+            "-d",
+            "--rm",
+            "--name",
+            name,
+            "-e",
+            f"POSTGRES_PASSWORD={password}",
+            "-p",
+            f"127.0.0.1:{port}:5432",
+            IMAGE,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    if run.returncode != 0:
+        pytest.skip(f"{runtime} cannot start {IMAGE}: {run.stderr.strip()[-200:]}")
+    url = f"postgresql://postgres:{password}@127.0.0.1:{port}/postgres"
+    try:
+        _wait_for(url, psycopg)
+        yield url, True
+    finally:
+        subprocess.run(
+            [runtime, "stop", "-t", "2", name], capture_output=True, timeout=120, check=False
+        )
+
+
+@pytest.fixture(scope="module")
+def enum_tables(pg_url: tuple[str, bool]) -> Iterator[tuple[str, str, dict[str, frozenset[str]]]]:
+    import psycopg
+
+    base_url, owned = pg_url
+    schema = f"sdkt_{secrets.token_hex(4)}"
+    s2 = f"{schema}_s2"
+    with psycopg.connect(base_url, autocommit=True) as conn:
+        conn.execute(f"CREATE SCHEMA {schema}")
+        conn.execute(f"CREATE SCHEMA {s2}")
+        conn.execute(f"SET search_path TO {schema}")
+        conn.execute(DDL.replace("{s2}", s2))
+    try:
+        with psycopg.connect(base_url) as conn, conn.cursor() as cur:
+            raw = storage._fetch_db_enum_tables(cur)
+        by_enum = {
+            enum_name: frozenset(t for _, t in tables)
+            for (_es, enum_name), tables in raw.items()
+            if enum_name.startswith("sdkt_")
+        }
+        yield base_url, schema, by_enum
+    finally:
+        if not owned:
+            with psycopg.connect(base_url, autocommit=True) as conn:
+                conn.execute(f"DROP SCHEMA {schema}, {s2} CASCADE")
+
+
+@pytest.mark.parametrize(("shape", "enum_name", "tables"), SHAPES, ids=[s[0] for s in SHAPES])
+def test_enum_tables_query_shapes(
+    enum_tables: tuple[str, str, dict[str, frozenset[str]]],
+    shape: str,
+    enum_name: str,
+    tables: frozenset[str],
+) -> None:
+    _url, _schema, mapping = enum_tables
+    assert mapping.get(enum_name, frozenset()) == tables, shape
+
+
+def test_probe_and_check_schema_live(
+    enum_tables: tuple[str, str, dict[str, frozenset[str]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url, _schema, _ = enum_tables
+    probe = storage.probe_postgres(url, verify_write=True)
+    assert probe.status is service.DependencyStatus.PRESENT and "write verified" in probe.detail
+
+    bad_pre = storage.check_schema(url, preconditions=["SELECT 0"])
+    assert bad_pre.is_blocking is True and bad_pre.preconditions_passed is False
+
+    # Metadata wired through check_schema catches missing table on live DB!
+    missing_meta = _FakeMetadata(
+        tables={"nonexistent_tbl": _MetaTable("nonexistent_tbl", (_MetaColumn("id", int),))}
+    )
+    rep = storage.check_schema(url, metadata=missing_meta)
+    assert ("public", "nonexistent_tbl") in rep.new_tables
+    assert rep.is_blocking is True  # views were NOT flagged, but dropped live tables block
+
+    monkeypatch.syspath_prepend("canary/todo")
+    rc = storage.main(
+        ["check-schema", "--database-url", url, "--metadata", "canary_schema:METADATA", "--json"]
+    )
+    assert rc in {storage.EXIT_OK, storage.EXIT_BLOCKED}

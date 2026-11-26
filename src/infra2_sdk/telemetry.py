@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import atexit
+import contextlib
 import json
 import logging
 import math
@@ -13,7 +14,7 @@ import threading
 import time
 import uuid
 from collections.abc import Collection, Iterator, Mapping
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -24,8 +25,9 @@ from warnings import warn
 from pydantic import Field, field_validator, model_validator
 
 from infra2_sdk._core import (
+    SECRET_LOG_KEY_RE,
     ContractModel,
-    is_sensitive_header,
+    canonicalize_preview_name,
     redact_secrets,
     require_optional,
     validate_http_url,
@@ -52,6 +54,7 @@ REQUIRED_IDENTITY_ATTRIBUTES: Final[tuple[str, ...]] = (
 _INTERVAL_MESSAGE = "export_interval_millis must be positive"
 _INVALID_PERCENT_RE = re.compile(r"%(?![0-9a-fA-F]{2})")
 _OTLP_KEY_RE = re.compile(r"(?:infra\.llm\.|code\.|request_id$)")
+_REQUEST_ID_SAFE_RE = re.compile(r"^[A-Za-z0-9._:/@-]{1,128}$")
 _RATIO_SAMPLERS = frozenset({"traceidratio", "parentbased_traceidratio"})
 _TRACES_SAMPLER_NAMES = (
     "always_on",
@@ -76,6 +79,58 @@ _STD_LOG_ATTRS = frozenset(logging.makeLogRecord({}).__dict__) | {
 }
 
 
+class _NoopSpan:
+    def __enter__(self) -> _NoopSpan:
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        return False
+
+    def set_attribute(self, key: str, value: Any) -> None:
+        return None
+
+
+class _NoopTracer:
+    def start_as_current_span(self, name: str, **_kwargs: Any) -> _NoopSpan:
+        return _NoopSpan()
+
+
+class _NoopMetric:
+    def record(self, value: float, attributes: Mapping[str, Any] | None = None) -> None:
+        return None
+
+    def add(self, amount: int | float, attributes: Mapping[str, Any] | None = None) -> None:
+        return None
+
+
+class _NoopMeter:
+    def create_histogram(self, *_args: Any, **_kwargs: Any) -> _NoopMetric:
+        return _NoopMetric()
+
+    def create_counter(self, *_args: Any, **_kwargs: Any) -> _NoopMetric:
+        return _NoopMetric()
+
+
+def get_tracer(name: str, tracer_provider: Any | None = None) -> Any:
+    """Return an OpenTelemetry tracer when installed, else a lightweight no-op tracer."""
+    try:
+        from opentelemetry import trace as otel_trace
+    except ImportError:
+        return _NoopTracer()
+    provider = tracer_provider or otel_trace.get_tracer_provider()
+    return provider.get_tracer(name)
+
+
+def get_meter(name: str, meter_provider: Any | None = None) -> Any:
+    """Return an OpenTelemetry meter when installed, else a lightweight no-op meter."""
+    try:
+        from opentelemetry import metrics as otel_metrics
+    except ImportError:
+        return _NoopMeter()
+    provider = meter_provider or otel_metrics.get_meter_provider()
+    return provider.get_meter(name)
+
+
 def _structlog_cvars() -> Any:
     return getattr(sys.modules.get("structlog"), "contextvars", None)
 
@@ -86,8 +141,10 @@ def current_request_id() -> str | None:
 
 
 @contextmanager
-def _bind_request_id_cm(request_id: str | None = None) -> Iterator[str]:
-    rid = (request_id or "").strip() or str(uuid.uuid4())
+def bind_request_id(request_id: str | None = None) -> Iterator[str]:
+    """Bind ``request_id`` (or generate a safe UUID4) across logs and contextvars."""
+    cleaned = (request_id or "").strip()
+    rid = cleaned if cleaned and _REQUEST_ID_SAFE_RE.fullmatch(cleaned) else str(uuid.uuid4())
     sl = _structlog_cvars()
     prev_sl = sl.get_contextvars().get("request_id") if sl is not None else None
     if sl is not None:
@@ -107,13 +164,9 @@ def _bind_request_id_cm(request_id: str | None = None) -> Iterator[str]:
             _REQUEST_ID.set(None)
 
 
-def bind_request_id(request_id: str | None = None) -> AbstractContextManager[str]:
-    """Bind ``request_id`` (or generate a UUID4) across logs and contextvars."""
-    return _bind_request_id_cm(request_id)
-
-
 @contextmanager
-def _bind_log_context_cm(**fields: Any) -> Iterator[dict[str, Any]]:
+def bind_log_context(**fields: Any) -> Iterator[dict[str, Any]]:
+    """Bind structured context fields onto JSON logs and OTLP log records."""
     clean = {k: v for k, v in fields.items() if v is not None}
     if not clean:
         yield dict(_LOG_CONTEXT.get() or {})
@@ -141,21 +194,18 @@ def _bind_log_context_cm(**fields: Any) -> Iterator[dict[str, Any]]:
             _LOG_CONTEXT.set(prev or None)
 
 
-def bind_log_context(**fields: Any) -> AbstractContextManager[dict[str, Any]]:
-    """Bind structured context fields onto JSON logs and OTLP log records."""
-    return _bind_log_context_cm(**fields)
-
-
 def _scrub(val: Any, env: Mapping[str, str], key: str | None = None) -> Any:
-    if key and is_sensitive_header(key):
+    if key and SECRET_LOG_KEY_RE.fullmatch(key):
         return "[REDACTED]"
+    if val is None or isinstance(val, (bool, int, float)):
+        return val
     if isinstance(val, str):
         return redact_secrets(val, env)
     if isinstance(val, Mapping):
         return {k: _scrub(v, env, str(k)) for k, v in val.items()}
     if isinstance(val, (list, tuple)):
         return type(val)(_scrub(x, env) for x in val)
-    return val
+    return redact_secrets(str(val), env)
 
 
 class JsonLogFormatter(logging.Formatter):
@@ -212,7 +262,12 @@ def configure_logging(
     """Attach the JSON stdout handler once and optionally silence uvicorn probe noise."""
     if level is not None:
         root = logging.getLogger()
-        if not root.handlers:
+        has_json_stream = any(isinstance(h.formatter, JsonLogFormatter) for h in root.handlers)
+        if not has_json_stream:
+            # Remove bare StreamHandlers when installing the structured root formatter cleanly.
+            for h in list(root.handlers):
+                if type(h) is logging.StreamHandler and h.formatter is None:
+                    root.removeHandler(h)
             handler = logging.StreamHandler(sys.stdout)
             ident = {
                 "service.name": service_name or "unknown_service",
@@ -221,7 +276,7 @@ def configure_logging(
             }
             handler.setFormatter(JsonLogFormatter(ident))
             root.addHandler(handler)
-            root.setLevel(level)
+        root.setLevel(level)
     if suppress_probes:
         access = logging.getLogger("uvicorn.access")
         if not any(getattr(f, "_infra2_probe_filter", False) for f in access.filters):
@@ -302,7 +357,7 @@ def _normalize_deployment_env(value: str, tier: str | EnvironmentTier) -> str:
     if not cleaned:
         return resolved.value
     if resolved is EnvironmentTier.PREVIEW:
-        return cleaned
+        return canonicalize_preview_name(cleaned)
     if resolve_tier(cleaned) is not resolved:
         raise ValueError("deployment_environment disagrees with environment tier")
     return resolved.value
@@ -343,9 +398,7 @@ class OtelSettings(ContractModel):
         if self.enabled and not self.endpoint:
             raise ValueError("enabled telemetry requires an OTLP HTTP endpoint")
         if self.endpoint:
-            validate_http_url(
-                self.endpoint, label="OTLP endpoint", allow_fragment=False, validate_port=True
-            )
+            validate_http_url(self.endpoint, label="OTLP endpoint", allow_fragment=False)
         sampler, _ = _parse_traces_sampler(self.traces_sampler, self.traces_sampler_arg)
         object.__setattr__(self, "traces_sampler", sampler if self.traces_sampler.strip() else "")
         object.__setattr__(self, "traces_sampler_arg", self.traces_sampler_arg.strip())
@@ -508,30 +561,42 @@ class TelemetryProviders:
     logging_handler: logging.Handler | None = None
     _closed: bool = False
 
+    def force_flush(self, timeout_millis: int = 30_000) -> bool:
+        """Flush buffered spans, metrics, and logs across all attached providers."""
+        ok = True
+        for provider in (self.tracer_provider, self.meter_provider, self.logger_provider):
+            flush = getattr(provider, "force_flush", None)
+            if callable(flush):
+                try:
+                    if flush(timeout_millis) is False:
+                        ok = False
+                except Exception:  # noqa: BLE001
+                    ok = False
+        return ok
+
     def shutdown(self) -> None:
+        global _ACTIVE_GLOBAL
         if self._closed:
             return
         self._closed = True
-        _release_global(self)
+        with _GLOBAL_LOCK:
+            if _ACTIVE_GLOBAL is not None and _ACTIVE_GLOBAL[0] is self:
+                _ACTIVE_GLOBAL = None
         if self.logging_handler is not None:
-            logging.getLogger().removeHandler(self.logging_handler)
+            with contextlib.suppress(Exception):
+                logging.getLogger().removeHandler(self.logging_handler)
             self.logging_handler = None
         if self.logging_instrumentor is not None:
-            self.logging_instrumentor.uninstrument()
+            with contextlib.suppress(Exception):
+                self.logging_instrumentor.uninstrument()
         for p in (self.logger_provider, self.meter_provider, self.tracer_provider):
             if p is not None:
-                p.shutdown()
+                with contextlib.suppress(Exception):
+                    p.shutdown()
 
 
 _GLOBAL_LOCK = threading.Lock()
 _ACTIVE_GLOBAL: tuple[TelemetryProviders, OtelSettings] | None = None
-
-
-def _release_global(providers: TelemetryProviders) -> None:
-    global _ACTIVE_GLOBAL
-    with _GLOBAL_LOCK:
-        if _ACTIVE_GLOBAL is not None and _ACTIVE_GLOBAL[0] is providers:
-            _ACTIVE_GLOBAL = None
 
 
 class _RedactingLogRecordProcessor:
@@ -544,6 +609,9 @@ class _RedactingLogRecordProcessor:
         log_ctx = dict(_LOG_CONTEXT.get() or {}) | {
             k: v for k, v in sl_ctx.items() if _OTLP_KEY_RE.match(k)
         }
+        rid = current_request_id()
+        if rid and "request_id" not in log_ctx:
+            log_ctx["request_id"] = rid
         if rec.attributes or log_ctx:
             merged = dict(rec.attributes or {}) | log_ctx
             rec.attributes = {k: _scrub(v, env, str(k)) for k, v in merged.items()}
@@ -564,9 +632,10 @@ def _ot(module: str) -> Any:
 
 def signal_endpoint(base_endpoint: str | None, signal: SignalKind) -> str:
     """Derive the OTLP/HTTP per-signal URL while preserving query parameters."""
-    if base_endpoint is None:
+    if not isinstance(base_endpoint, str) or not base_endpoint.strip():
         raise ValueError("OTLP endpoint is required")
-    ep = urlsplit(base_endpoint)
+    validate_http_url(base_endpoint.strip(), label="OTLP endpoint", allow_fragment=False)
+    ep = urlsplit(base_endpoint.strip())
     cleaned = ep.path.rstrip("/")
     for known in ("traces", "metrics", "logs"):
         if cleaned.endswith(suffix := f"/v1/{known}"):
@@ -744,7 +813,7 @@ def init_worker(
             default_service_name=name,
             require_issued_identity=require_issued_identity,
         )
-    except ValueError as exc:
+    except Exception as exc:  # noqa: BLE001
         if strict:
             raise
         warn(str(exc), RuntimeWarning, stacklevel=2)
@@ -767,7 +836,13 @@ def init_worker(
     )
     if not settings or not settings.enabled:
         return None
-    providers = configure_telemetry(settings, set_global=set_global)
+    try:
+        providers = configure_telemetry(settings, set_global=set_global)
+    except Exception as exc:  # noqa: BLE001
+        if strict:
+            raise
+        warn(str(exc), RuntimeWarning, stacklevel=2)
+        return None
     if set_global:
         atexit.register(providers.shutdown)
     return providers
@@ -780,6 +855,8 @@ __all__ = (
     "OtelSettings",
     "TelemetryProviders",
     "JsonLogFormatter",
+    "get_tracer",
+    "get_meter",
     "current_request_id",
     "bind_request_id",
     "bind_log_context",

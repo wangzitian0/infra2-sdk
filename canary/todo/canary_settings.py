@@ -1,10 +1,6 @@
-"""The environment contract of the Canary Todo: one class, read by the app and by the manifest.
+"""The environment contract of the Canary Todo: one class, read by app, worker, and config CLI.
 
 `CanarySettings.from_environ()` is the one reader of the process environment in `app.py`.
-`python -m infra2_sdk.config export canary_settings:CanarySettings` with
-`--source canary/todo --json env.manifest.json --markdown env-reference.generated.md` generates
-`env.manifest.json` from the same class, so a variable cannot be read and not declared.
-
 No default names a host of one platform. A deployment gives each address; a local run gives
 them in `compose.yaml`. An address that is not set makes its check `unconfigured`.
 """
@@ -71,12 +67,6 @@ class CanarySettings(BaseModel):
         empty_ok=True,
         group="frontend_telemetry",
     )
-    openpanel_environment: str = _field(
-        "",
-        "OpenPanel environment from x-capabilities openpanel.",
-        empty_ok=True,
-        group="frontend_telemetry",
-    )
     openpanel_script_url: str = _field(
         "",
         "OpenPanel script URL from x-capabilities openpanel.",
@@ -111,12 +101,6 @@ class CanarySettings(BaseModel):
     environment: str = _field("", "Environment tier. The SDK reads it.", empty_ok=True, group="sdk")
     service_version: str = _field(
         "", "Deployed service version. The SDK reads it.", empty_ok=True, group="sdk"
-    )
-    image_digest: str = _field(
-        "", "Deployed immutable image digest. The SDK reads it.", empty_ok=True, group="sdk"
-    )
-    release_id: str = _field(
-        "", "Release identifier. The SDK reads it.", empty_ok=True, group="sdk"
     )
     configuration_sha256: str = _field(
         "", "Configuration hash of the deployment. The SDK reads it.", empty_ok=True, group="sdk"

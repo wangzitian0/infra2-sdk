@@ -1,35 +1,17 @@
 #!/usr/bin/env python3
-"""Canary Todo List & Infrastructure Validation Service.
-
-Serves todo.zitian.party as the acceptance and verification tool for the platform's
-real runtime paths:
-- Postgres: login with `DATABASE_URL`, then `SET LOCAL transaction_read_only = off`, `SELECT 1`,
-  and a temporary-table `canary_todo_probe` `CREATE`/`INSERT`/`SELECT`/`DELETE` roundtrip
-- Redis: AUTH, then SETEX/GET/DEL of a random value
-- S3: PUT, GET and DELETE of one object under a canary prefix
-- SigNoz, OpenPanel, Authentik: liveness over HTTP
-- Startup environment manifest validation (`validate_startup_environment` via `assert_environment`)
-
-`/api/canary/status` runs these checks. The probe runner reads it over the Docker
-network (ProbeFacet `todo-canary-status`). Traefik does not route it without SSO.
-The service sends traces, metrics, and logs to SigNoz when the deploy issues an OTLP endpoint.
-"""
+"""Canary Todo Service proving all six `infra2_sdk` modules end-to-end."""
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import html
 import logging
 import math
 import os
-import secrets
-import signal
 import sys
 import threading
 import time
 import urllib.parse
-import weakref
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -38,10 +20,13 @@ from typing import Any
 
 from fastapi import Body, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, StrictBool, StrictStr
 
+from infra2_sdk import __version__ as _SDK_VERSION
 from infra2_sdk.config import (
+    EnvironmentManifest,
     EnvironmentTier,
     RuntimeEnvKey,
     assert_env,
@@ -58,6 +43,7 @@ from infra2_sdk.llm import (
     schema_sha256,
 )
 from infra2_sdk.service import (
+    CallableCheck,
     Dependency,
     DependencyKind,
     DependencyManifest,
@@ -73,83 +59,93 @@ from infra2_sdk.storage import (
     PostgresSettings,
     RedisSettings,
     S3Settings,
-    create_s3_client,
     probe_postgres,
     probe_redis,
     probe_s3,
-    put_object_bytes,
-    read_object_bytes,
     redact_postgres_error,
-    redact_presigned_url,
     redact_redis_error,
 )
-from infra2_sdk.telemetry import current_request_id
-
-LOGGER = logging.getLogger("platform-todo")
-SERVICE_TRACER_NAME = "platform-todo"
-
-# Object key prefix for the S3 write probe. The canary credential is scoped to one bucket.
-CANARY_S3_PREFIX = "canary/"
-# The probe runner waits ProbeFacet.timeout_seconds (15 s). One hung dependency must not
-# hold the status document past it, so each check gets this hard deadline.
-CHECK_DEADLINE_SECONDS = 8.0
-# /readyz and /health run one canary status call. A cold call waits for one full run.
-# A run ends at CHECK_DEADLINE_SECONDS at the latest. The SDK counts a longer call as a
-# failure and gives no reason. The timeout stays above the deadline, so the reasons show.
-READINESS_TIMEOUT_SECONDS = CHECK_DEADLINE_SECONDS + 2.0
-
-# Check states. `unconfigured` means a credential the check needs is missing: the check
-# is red (a gap is never green) but it is not a failure of the path it would prove.
-PASS = "pass"
-FAIL = "fail"
-UNCONFIGURED = "unconfigured"
-
-# Only the canary's own write paths gate `ok` and the HTTP status. SigNoz, OpenPanel and
-# Authentik have their own probes and severities, so they stay informational here.
-GATING_CHECKS = ("postgres", "redis", "s3")
-INFORMATIONAL_CHECKS = ("signoz", "openpanel", "authentik")
-
-# Each run does real writes and opens a Postgres connection, and the canary role allows 5.
-# One run is in flight at a time, and a result is reused for this long. It stays below the
-# probe runner's 60 s interval, so every probe round still sees a fresh run.
-STATUS_CACHE_TTL_SECONDS = 30.0
-_STATUS_LOCK = threading.Lock()
-_STATUS_CACHE: tuple[float, dict[str, Any]] | None = None
-
+from infra2_sdk.telemetry import current_request_id, get_meter, get_tracer
 
 try:
-    from canary_schema import CANARY_CAPABILITY_ENUM_NAME, ENSURE_ENUM_SQL
+    from canary_schema import CANARY_CAPABILITY_ENUM_NAME, ENSURE_SCHEMA_SQL
     from canary_settings import CanarySettings
     from ui import HTML_TEMPLATE
 except ImportError:
     _todo_dir = str(Path(__file__).resolve().parent)
     if _todo_dir not in sys.path:
         sys.path.insert(0, _todo_dir)
-    from canary_schema import CANARY_CAPABILITY_ENUM_NAME, ENSURE_ENUM_SQL
+    from canary_schema import CANARY_CAPABILITY_ENUM_NAME, ENSURE_SCHEMA_SQL
     from canary_settings import CanarySettings
     from ui import HTML_TEMPLATE
 
+LOGGER = logging.getLogger("platform-todo")
+SERVICE_TRACER_NAME = "platform-todo"
 
-def _settings() -> CanarySettings:
-    """The one reader of the process environment in this module (read at each call)."""
-    return CanarySettings.from_environ(os.environ)
+CHECK_DEADLINE_SECONDS = 8.0
+READINESS_TIMEOUT_SECONDS = CHECK_DEADLINE_SECONDS + 2.0
+
+PASS = "pass"
+FAIL = "fail"
+UNCONFIGURED = "unconfigured"
+
+GATING_CHECKS = ("postgres", "redis", "s3")
+INFORMATIONAL_CHECKS = ("signoz", "openpanel", "authentik")
+
+_STATUS_LOCK = threading.Lock()
+_STATUS_CACHE: tuple[float, dict[str, Any]] | None = None
+SERVER_START_TIME = time.time()
 
 
 class _TodoStoreUnavailable(RuntimeError):
     """Raised when persistent PostgreSQL storage for todos is not configured."""
 
 
-def _is_psycopg_error(exc: Exception) -> bool:
-    return type(exc).__module__.startswith("psycopg")
+def _settings() -> CanarySettings:
+    return CanarySettings.from_environ(os.environ)
+
+
+def _elapsed_ms(start: float) -> float:
+    return round((time.perf_counter() - start) * 1000, 1)
+
+
+def _outcome(status: str, detail: str, *, latency_ms: float) -> dict[str, Any]:
+    return {"status": status, "latency_ms": round(latency_ms, 1), "detail": detail}
+
+
+def _to_outcome(res: ProbeResult) -> dict[str, Any]:
+    status = PASS if res.status is DependencyStatus.PRESENT else FAIL
+    return _outcome(status, res.detail, latency_ms=res.duration_ms)
+
+
+def _unconfigured(start: float, detail: str) -> dict[str, Any]:
+    return _outcome(UNCONFIGURED, detail, latency_ms=_elapsed_ms(start))
+
+
+def _connect_todo_db() -> Any:
+    raw = CanarySettings.read(os.environ, "database_url").strip()
+    if not raw:
+        raise _TodoStoreUnavailable("Missing PostgreSQL todo storage configuration")
+    try:
+        pg = PostgresSettings(url=raw, connect_timeout_seconds=5.0)
+    except ValueError as exc:
+        raise _TodoStoreUnavailable(redact_postgres_error(exc, raw)) from None
+    import psycopg
+
+    return psycopg.connect(pg.url, connect_timeout=5, options="-c statement_timeout=5000")
+
+
+def _ensure_todos_schema(conn: Any) -> None:
+    exists_row = conn.execute("SELECT to_regclass('public.todos')").fetchone()
+    if not exists_row or not exists_row[0]:
+        conn.execute(ENSURE_SCHEMA_SQL)
 
 
 def _format_todo_timestamp(value: Any) -> str:
     if isinstance(value, datetime):
         dt = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
         return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    if value is None:
-        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    return str(value)
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()) if value is None else str(value)
 
 
 def _row_to_todo(row: tuple[Any, ...]) -> dict[str, Any]:
@@ -160,78 +156,6 @@ def _row_to_todo(row: tuple[Any, ...]) -> dict[str, Any]:
         "capability": str(row[3] or "general"),
         "created_at": _format_todo_timestamp(row[4]),
     }
-
-
-_DATABASE_URL_UNSET = "DATABASE_URL is not configured"
-_DATABASE_URL_INVALID = (
-    "DATABASE_URL is not a PostgreSQL URL with host, user and password "
-    "(percent-encode reserved characters)"
-)
-
-
-def _database_target() -> tuple[str, int, str, str, str]:
-    """Return host, port, user, password and database name from `DATABASE_URL`.
-
-    The todo store and the Postgres probe use this one login. Only these five
-    parts are read: query parameters are ignored. Raise `ValueError` with a
-    message that has no part of the value when the URL is unset or malformed.
-    """
-    # One field only: a malformed REDIS_PORT is not a database fault.
-    raw = CanarySettings.read(os.environ, "database_url").strip()
-    if not raw:
-        raise ValueError(_DATABASE_URL_UNSET)
-    try:
-        parts = urllib.parse.urlsplit(raw)
-        port = parts.port or 5432
-    except ValueError:
-        raise ValueError(_DATABASE_URL_INVALID) from None
-    host = parts.hostname or ""
-    user = urllib.parse.unquote(parts.username or "")
-    password = urllib.parse.unquote(parts.password or "")
-    if parts.scheme.split("+", 1)[0] not in {"postgresql", "postgres"} or not (
-        host and user and password
-    ):
-        raise ValueError(_DATABASE_URL_INVALID)
-    return host, port, user, password, urllib.parse.unquote(parts.path.lstrip("/")) or "postgres"
-
-
-def _connect_todo_db():
-    try:
-        host, port, user, password, dbname = _database_target()
-    except ValueError as exc:
-        raise _TodoStoreUnavailable(
-            f"Missing PostgreSQL todo storage configuration: {exc}"
-        ) from None
-    import psycopg
-
-    return psycopg.connect(
-        host=host,
-        port=port,
-        user=user,
-        password=password,
-        dbname=dbname,
-        connect_timeout=5,
-        options="-c statement_timeout=5000",
-    )
-
-
-def _ensure_todos_schema(conn: Any) -> None:
-    """Create the todos table and capability enum if absent (local/preview DBs)."""
-    exists_row = conn.execute("SELECT to_regclass('public.todos')").fetchone()
-    if exists_row and exists_row[0]:
-        return
-    conn.execute(ENSURE_ENUM_SQL)
-    conn.execute(
-        f"""
-        CREATE TABLE IF NOT EXISTS todos (
-            id SERIAL PRIMARY KEY,
-            title TEXT NOT NULL,
-            completed BOOLEAN NOT NULL DEFAULT FALSE,
-            capability {CANARY_CAPABILITY_ENUM_NAME} NOT NULL DEFAULT 'general',
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-        """
-    )
 
 
 def _list_todos_db(limit: int | None = None) -> list[dict[str, Any]]:
@@ -247,11 +171,6 @@ def _list_todos_db(limit: int | None = None) -> list[dict[str, Any]]:
                 (limit,),
             ).fetchall()
         return [_row_to_todo(r) for r in rows]
-
-
-def _recent_todos_db(limit: int = 20) -> list[dict[str, Any]]:
-    bounded = max(1, min(int(limit), 50))
-    return _list_todos_db(limit=bounded)[:bounded]
 
 
 def _create_todo_db(title: str, completed: bool, capability: str) -> dict[str, Any]:
@@ -302,8 +221,7 @@ def _delete_todo_db(todo_id: int) -> dict[str, Any] | None:
     with _connect_todo_db() as conn:
         _ensure_todos_schema(conn)
         row = conn.execute(
-            "DELETE FROM todos WHERE id = %s "
-            "RETURNING id, title, completed, capability, created_at",
+            "DELETE FROM todos WHERE id = %s RETURNING id, title, completed, capability, created_at",
             (todo_id,),
         ).fetchone()
         return _row_to_todo(row) if row else None
@@ -347,11 +265,13 @@ class CanaryHealthSummary(BaseModel):
 
 class TodoHealthResponse(BaseModel):
     ok: bool
+    request_id: str | None = None
     status: str
     service: str
     domain: str
     environment: str = "unknown"
     configuration_sha256: str = "unknown"
+    sdk_version: str = "unknown"
     version: str
     git_sha: str
     canary: CanaryHealthSummary
@@ -411,468 +331,86 @@ class TodoSummaryResponse(BaseModel):
     detail: str = ""
 
 
-for _model in (
-    TodoErrorResponse,
-    TodoItem,
-    TodoCreateRequest,
-    TodoPatchRequest,
-    TodoDeleteResponse,
-    CanaryHealthSummary,
-    TodoHealthResponse,
-    CanaryCheckOutcome,
-    CanaryStatusResponse,
-    AuthMeResponse,
-    TodoSummaryOutput,
-    TodoSummaryRequest,
-    TodoSummaryResponse,
-):
-    _model.model_rebuild(_types_namespace=globals())
-
-
-class _ProbeFailure(Exception):
-    """A check failed for a stated reason. The message is safe to publish."""
-
-
-def _elapsed_ms(start: float) -> float:
-    return round((time.perf_counter() - start) * 1000, 1)
-
-
-def _outcome(status: str, start: float, detail: str) -> dict[str, Any]:
-    return {"status": status, "latency_ms": _elapsed_ms(start), "detail": detail}
-
-
-def _unconfigured(start: float, detail: str) -> dict[str, Any]:
-    return _outcome(UNCONFIGURED, start, detail)
-
-
-def _probe_postgres(
-    host: str,
-    port: int = 5432,
-    *,
-    user: str = "",
-    password: str = "",
-    dbname: str = "postgres",
-    timeout: float = 2.0,
-    connector: Callable[..., Any] | None = None,
-    verify_write: bool = True,
-) -> dict[str, Any]:
-    """Log in with the `DATABASE_URL` login. Set the transaction read-write, run `SELECT 1`, then a temp-table write/read/delete roundtrip.
-
-    A server that answers the login with an ErrorResponse (`E`), such as "too many
-    clients", fails the check. The password never appears in the detail: the SDK
-    redacts the DSN from error text.
-    """
-    start = time.perf_counter()
-    if not (user and password):
-        return _unconfigured(
-            start,
-            _DATABASE_URL_UNSET,
-        )
-    dsn = ""
-    try:
-        dsn = (
-            f"postgresql://{urllib.parse.quote(user, safe='')}"
-            f":{urllib.parse.quote(password, safe='')}"
-            f"@{f'[{host}]' if ':' in host else host}:{int(port)}"
-            f"/{urllib.parse.quote(dbname, safe='')}"
-        )
-        timeout_arg = max(1, min(60, math.ceil(timeout)))
-        settings = PostgresSettings(url=dsn, connect_timeout_seconds=timeout_arg)
-        if not verify_write and connector is None:
-            result = probe_postgres(settings.url, connect_timeout=timeout_arg)
-            if result.status != DependencyStatus.PRESENT:
-                return _outcome("fail", start, f"login as {user} failed: {result.detail}")
-            return _outcome("pass", start, f"login as {user}: {result.detail}")
-
-        class _CrudSession:
-            def __init__(self, raw: Any) -> None:
-                self._raw = raw
-                self._conn: Any = None
-
-            def __enter__(self) -> Any:
-                self._conn = self._raw.__enter__() if hasattr(self._raw, "__enter__") else self._raw
-                return self._conn
-
-            def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
-                try:
-                    if exc_type is None and self._conn is not None and verify_write:
-                        self._conn.execute("SELECT 1").fetchone()
-                        self._conn.execute(
-                            "CREATE TEMP TABLE IF NOT EXISTS canary_todo_probe (id TEXT PRIMARY KEY, title TEXT NOT NULL)"
-                        )
-                        self._conn.execute(
-                            "INSERT INTO canary_todo_probe (id, title) VALUES ('probe-1', 'canary-write-ok') ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title"
-                        )
-                        row = self._conn.execute(
-                            "SELECT title FROM canary_todo_probe WHERE id = 'probe-1'"
-                        ).fetchone()
-                        self._conn.execute("DELETE FROM canary_todo_probe WHERE id = 'probe-1'")
-                        if not row or row[0] != "canary-write-ok":
-                            raise _ProbeFailure(
-                                f"SELECT returned {row!r} instead of ('canary-write-ok',)"
-                            )
-                finally:
-                    if hasattr(self._raw, "__exit__"):
-                        self._raw.__exit__(exc_type, exc, tb)
-                    target = self._conn if self._conn is not None else self._raw
-                    if target is not None and hasattr(target, "close"):
-                        with contextlib.suppress(Exception):
-                            target.close()
-                return False
-
-        import psycopg
-
-        open_conn = (
-            connector(
-                settings.url,
-                connect_timeout=timeout_arg,
-                options=f"-c statement_timeout={timeout_arg * 1000}",
-            )
-            if connector is not None
-            else psycopg.connect(
-                settings.url,
-                connect_timeout=timeout_arg,
-                options=f"-c statement_timeout={timeout_arg * 1000}",
-            )
-        )
-        with _CrudSession(open_conn) as conn:
-            conn.execute("SET LOCAL transaction_read_only = off")
-            if not verify_write:
-                conn.execute("SELECT 1").fetchone()
-                return _outcome("pass", start, f"login as {user}: ok")
-        return _outcome(
-            "pass",
-            start,
-            f"login as {user}: SELECT 1 and write/read/delete transaction succeeded",
-        )
-    except Exception as exc:  # noqa: BLE001 - a probe reports the failure
-        return _outcome("fail", start, f"login as {user} failed: {redact_postgres_error(exc, dsn)}")
-
-
-def probe_postgres_crud(
-    host: str,
-    port: int = 5432,
-    *,
-    user: str = "",
-    password: str = "",
-    dbname: str = "postgres",
-    timeout: float = 5.0,
-    connector: Callable[..., Any] | None = None,
-) -> dict[str, Any]:
-    """Execute authenticated Postgres login plus a temp-table write/read/delete transaction."""
-    return _probe_postgres(
-        host,
-        port,
-        user=user,
-        password=password,
-        dbname=dbname,
-        timeout=timeout,
-        connector=connector,
-        verify_write=True,
-    )
-
-
-async def _probe_http_async(url: str, timeout: float = 3.0) -> dict[str, Any]:
-    start = time.perf_counter()
-    try:
-        result = await probe_http(url, settings=HttpClientSettings(timeout_seconds=timeout))
-    except Exception as exc:
-        return _outcome("fail", start, str(exc))
-    if result.status != DependencyStatus.PRESENT or not result.detail.startswith(
-        ("HTTP 2", "HTTP 3")
-    ):
-        return _outcome("fail", start, result.detail)
-    return _outcome("pass", start, result.detail)
-
-
-def _probe_http(url: str, timeout: float = 3.0) -> dict[str, Any]:
-    return asyncio.run(_probe_http_async(url, timeout=timeout))
-
-
-_DEFAULT_PROBE_HTTP = _probe_http
-
-
-def _probe_redis(
-    redis_url: str,
-    *,
-    timeout: float = 2.0,
-) -> dict[str, Any]:
-    """Authenticate and run SETEX/GET/DEL through `infra2_sdk.storage.probe_redis`."""
-    start = time.perf_counter()
-    cleaned = redis_url.strip()
+def _check_postgres(raw_url: str) -> dict[str, Any]:
+    started = time.perf_counter()
+    cleaned = raw_url.strip()
     if not cleaned:
-        return _unconfigured(start, "REDIS_URL is not configured")
+        return _unconfigured(started, "DATABASE_URL is not configured")
+    return _to_outcome(probe_postgres(cleaned, connect_timeout=2.0, verify_write=True))
+
+
+def _check_redis(raw_url: str) -> dict[str, Any]:
+    started = time.perf_counter()
+    cleaned = raw_url.strip()
+    if not cleaned:
+        return _unconfigured(started, "REDIS_URL is not configured")
     try:
-        settings = RedisSettings(url=cleaned, connect_timeout_seconds=timeout)
+        settings = RedisSettings(url=cleaned, connect_timeout_seconds=2.0)
     except ValueError as exc:
-        return _outcome("fail", start, redact_redis_error(exc, cleaned))
+        return _outcome(FAIL, redact_redis_error(exc, cleaned), latency_ms=_elapsed_ms(started))
     if not urllib.parse.urlsplit(settings.url).password:
         return _unconfigured(
-            start,
-            "REDIS_URL has no password; the canary cannot prove an authenticated write",
+            started, "REDIS_URL has no password; the canary cannot prove an authenticated write"
         )
-    result = probe_redis(settings.url, key_prefix="canary:probe:", connect_timeout=timeout)
-    status = "pass" if result.status == DependencyStatus.PRESENT else "fail"
-    return _outcome(status, start, result.detail)
-
-
-def _probe_s3(
-    *,
-    endpoint_url: str,
-    bucket: str,
-    access_key: str,
-    secret_key: str,
-    timeout: float = 3.0,
-    client: Any | None = None,
-) -> dict[str, Any]:
-    """HEAD bucket, then PUT, GET and DELETE one object under the canary prefix."""
-    start = time.perf_counter()
-    missing = [
-        name
-        for name, value in (
-            ("S3_ENDPOINT", endpoint_url),
-            ("S3_BUCKET", bucket),
-            ("S3_ACCESS_KEY", access_key),
-            ("S3_SECRET_KEY", secret_key),
-        )
-        if not value
-    ]
-    if missing:
-        return _unconfigured(start, f"{', '.join(missing)} not configured")
-    key = f"{CANARY_S3_PREFIX}{secrets.token_hex(8)}"
-    body = secrets.token_hex(16).encode("utf-8")
-    owned = client is None
-    try:
-        settings = S3Settings(
-            bucket=bucket,
-            endpoint_url=endpoint_url,
-            access_key_id=access_key,
-            secret_access_key=secret_key,
-            use_path_style=True,
-            connect_timeout_seconds=timeout,
-            read_timeout_seconds=timeout,
-        )
-        s3 = client or create_s3_client(settings)
-    except Exception as exc:  # noqa: BLE001 - a probe reports the failure
-        detail = redact_presigned_url(f"{type(exc).__name__}: {exc}") or type(exc).__name__
-        return _outcome("fail", start, f"S3 client setup failed: {detail}")
-    head_res = probe_s3(settings, client=s3)
-    if head_res.status != DependencyStatus.PRESENT:
-        if owned and hasattr(s3, "close"):
-            with contextlib.suppress(Exception):
-                s3.close()
-        detail = redact_presigned_url(head_res.detail) or head_res.detail
-        return _outcome("fail", start, f"HEAD bucket failed: {detail}")
-    failure: str | None = None
-    written = False
-    try:
-        try:
-            put_object_bytes(s3, bucket=bucket, key=key, data=body)
-        except Exception as exc:  # noqa: BLE001
-            raise _ProbeFailure(f"PUT failed: {redact_presigned_url(str(exc)) or exc}") from exc
-        written = True
-        try:
-            got = read_object_bytes(s3, bucket=bucket, key=key)
-        except Exception as exc:  # noqa: BLE001
-            raise _ProbeFailure(f"GET failed: {redact_presigned_url(str(exc)) or exc}") from exc
-        if got != body:
-            raise _ProbeFailure("GET returned data that differs from the PUT body")
-    except _ProbeFailure as exc:
-        failure = str(exc)
-    if written:
-        try:
-            s3.delete_object(Bucket=bucket, Key=key)
-        except Exception as exc:  # noqa: BLE001
-            failure = failure or f"DELETE failed: {redact_presigned_url(str(exc)) or exc}"
-    if owned and hasattr(s3, "close"):
-        with contextlib.suppress(Exception):
-            s3.close()
-    if failure:
-        return _outcome("fail", start, failure)
-    return _outcome("pass", start, "PUT, GET and DELETE verified under canary prefix")
-
-
-def _otlp_active() -> bool:
-    return bool(read_runtime_env(RuntimeEnvKey.OTEL_EXPORTER_OTLP_ENDPOINT).strip())
-
-
-class _NullSpan:
-    def set_attribute(self, key: str, value: Any) -> None:
-        return None
-
-
-def _span(name: str, **attributes: Any):
-    """A span context manager. It is a no-op when no OTLP endpoint was issued.
-
-    The tracer comes from the global provider that `init_service` installs at import.
-    """
-    if not _otlp_active():
-        return contextlib.nullcontext(_NullSpan())
-    from opentelemetry import trace
-
-    return trace.get_tracer(SERVICE_TRACER_NAME).start_as_current_span(
-        name, attributes=attributes or None
+    return _to_outcome(
+        probe_redis(settings.url, key_prefix="canary:probe:", connect_timeout=2.0, write_probe=True)
     )
 
 
-_METER_LOCK = threading.Lock()
-_METER_CACHE: weakref.WeakKeyDictionary[Any, tuple[Any, Any]] = weakref.WeakKeyDictionary()
-
-
-def _meter_instruments() -> tuple[Any, Any]:
-    from opentelemetry import metrics as otel_metrics
-
-    provider = otel_metrics.get_meter_provider()
-    with _METER_LOCK:
-        cached = _METER_CACHE.get(provider)
-        if cached is not None:
-            return cached
-        meter = otel_metrics.get_meter(SERVICE_TRACER_NAME)
-        hist = meter.create_histogram(
-            "canary.probe.duration_ms",
-            unit="ms",
-            description="Latency of each canary dependency probe in milliseconds",
+def _check_s3(cfg: CanarySettings) -> dict[str, Any]:
+    started = time.perf_counter()
+    missing = [
+        name
+        for name, val in (
+            ("S3_ENDPOINT", cfg.s3_endpoint),
+            ("S3_BUCKET", cfg.s3_bucket),
+            ("S3_ACCESS_KEY", cfg.s3_access_key),
+            ("S3_SECRET_KEY", cfg.s3_secret_key),
         )
-        counter = meter.create_counter(
-            "canary.probe.outcomes",
-            unit="1",
-            description="Count of canary dependency probe outcomes by check and status",
+        if not val
+    ]
+    if missing:
+        return _unconfigured(started, f"{', '.join(missing)} not configured")
+    try:
+        settings = S3Settings(
+            endpoint_url=cfg.s3_endpoint,
+            bucket=cfg.s3_bucket,
+            access_key_id=cfg.s3_access_key,
+            secret_access_key=cfg.s3_secret_key,
+            use_path_style=True,
+            connect_timeout_seconds=3.0,
+            read_timeout_seconds=3.0,
         )
-        _METER_CACHE[provider] = (hist, counter)
-        return hist, counter
+    except ValueError as exc:
+        return _outcome(FAIL, str(exc), latency_ms=_elapsed_ms(started))
+    return _to_outcome(probe_s3(settings, key_prefix="canary/", round_trip=True))
 
 
-def _record_check_telemetry(name: str, result: dict[str, Any]) -> dict[str, Any]:
-    if _otlp_active():
-        hist, counter = _meter_instruments()
-        attrs = {
-            "canary.check": name,
-            "canary.status": str(result.get("status", "unknown")),
-        }
-        hist.record(float(result.get("latency_ms") or 0.0), attrs)
-        counter.add(1, attrs)
+async def _check_http(label: str, url: str) -> dict[str, Any]:
+    started = time.perf_counter()
+    if not url:
+        return _unconfigured(started, f"{label} is not configured")
+    res = await probe_http(url, name=label, settings=HttpClientSettings(timeout_seconds=3.0))
+    ok = res.status is DependencyStatus.PRESENT and res.detail.startswith(("HTTP 2", "HTTP 3"))
+    return _outcome(PASS if ok else FAIL, res.detail, latency_ms=res.duration_ms)
+
+
+def _record_probe_telemetry(name: str, result: dict[str, Any]) -> ProbeResult:
+    meter = get_meter(SERVICE_TRACER_NAME)
+    attrs = {"canary.check": name, "canary.status": str(result.get("status", "unknown"))}
+    meter.create_histogram("canary.probe.duration_ms", unit="ms").record(
+        float(result.get("latency_ms") or 0.0), attrs
+    )
+    meter.create_counter("canary.probe.outcomes", unit="1").add(1, attrs)
     if result["status"] != PASS:
         LOGGER.warning("canary check %s is %s: %s", name, result["status"], result["detail"])
-    return result
-
-
-def _traced_check(name: str, probe: Callable[[], dict[str, Any]]) -> dict[str, Any]:
-    with _span(f"canary.check.{name}", **{"canary.check": name}) as span:
-        try:
-            result = probe()
-        except Exception as exc:  # noqa: BLE001 - one crashed probe must not hide the rest
-            result = {
-                "status": "fail",
-                "latency_ms": 0.0,
-                "detail": f"probe raised {type(exc).__name__}: {exc}",
-            }
-        span.set_attribute("canary.status", result["status"])
-        span.set_attribute("canary.latency_ms", result["latency_ms"])
-        span.set_attribute("canary.detail", result["detail"])
-    return _record_check_telemetry(name, result)
-
-
-async def _traced_check_async(name: str, probe: Callable[[], Any]) -> dict[str, Any]:
-    with _span(f"canary.check.{name}", **{"canary.check": name}) as span:
-        try:
-            result = await probe()
-        except Exception as exc:  # noqa: BLE001 - one crashed probe must not hide the rest
-            result = {
-                "status": "fail",
-                "latency_ms": 0.0,
-                "detail": f"probe raised {type(exc).__name__}: {exc}",
-            }
-        span.set_attribute("canary.status", result["status"])
-        span.set_attribute("canary.latency_ms", result["latency_ms"])
-        span.set_attribute("canary.detail", result["detail"])
-    return _record_check_telemetry(name, result)
-
-
-def _to_probe_result(name: str, raw: dict[str, Any]) -> ProbeResult:
-    status = DependencyStatus.PRESENT if raw.get("status") == PASS else DependencyStatus.ABSENT
+    status = DependencyStatus.PRESENT if result["status"] == PASS else DependencyStatus.ABSENT
     return ProbeResult(
         name=name,
         status=status,
-        detail=str(raw.get("detail") or ""),
-        duration_ms=float(raw.get("latency_ms") or 0.0),
+        detail=str(result["detail"]),
+        duration_ms=float(result.get("latency_ms") or 0.0),
     )
-
-
-def _run_checks(
-    plan: dict[str, Callable[[], Any]],
-) -> dict[str, dict[str, Any]]:
-    """Run every check in parallel through infra2_sdk.service.run_probes."""
-    raw_outcomes: dict[str, dict[str, Any]] = {}
-    checks: list[Any] = []
-    for name, fn in plan.items():
-        if asyncio.iscoroutinefunction(fn):
-
-            class _AsyncCheck:
-                def __init__(self, check_name: str, check_fn: Callable[[], Any]) -> None:
-                    self.name = check_name
-                    self._fn = check_fn
-
-                async def probe(self) -> ProbeResult:
-                    raw = await _traced_check_async(self.name, self._fn)
-                    raw_outcomes[self.name] = raw
-                    return _to_probe_result(self.name, raw)
-
-            checks.append(_AsyncCheck(name, fn))
-        else:
-
-            class _SyncCheck:
-                def __init__(self, check_name: str, check_fn: Callable[[], dict[str, Any]]) -> None:
-                    self.name = check_name
-                    self._fn = check_fn
-
-                def probe(self) -> ProbeResult:
-                    raw = _traced_check(self.name, self._fn)
-                    raw_outcomes[self.name] = raw
-                    return _to_probe_result(self.name, raw)
-
-            checks.append(_SyncCheck(name, fn))
-
-    coro = run_probes(checks, timeout_seconds=CHECK_DEADLINE_SECONDS)
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        probe_results = asyncio.run(coro)
-    else:
-        import contextvars
-
-        holder: list[Any] = []
-        err_holder: list[BaseException] = []
-        ctx = contextvars.copy_context()
-
-        def _loop_runner() -> None:
-            try:
-                holder.append(ctx.run(asyncio.run, coro))
-            except BaseException as exc:  # noqa: BLE001
-                err_holder.append(exc)
-
-        runner_thread = threading.Thread(target=_loop_runner, name="canary-probe-loop", daemon=True)
-        runner_thread.start()
-        runner_thread.join()
-        if err_holder:
-            raise err_holder[0]
-        probe_results = holder[0]
-    results: dict[str, dict[str, Any]] = {}
-    for res in probe_results:
-        if res.name in raw_outcomes:
-            results[res.name] = raw_outcomes[res.name]
-        else:
-            detail = (
-                f"check did not finish within {CHECK_DEADLINE_SECONDS:g}s"
-                if res.detail.startswith("probe timed out after ")
-                else res.detail
-            )
-            LOGGER.warning("canary check %s failed: %s", res.name, detail)
-            results[res.name] = {
-                "status": "fail",
-                "latency_ms": round(CHECK_DEADLINE_SECONDS * 1000, 1),
-                "detail": detail,
-            }
-    return {name: results[name] for name in plan}
 
 
 def _capability_summary(cfg: CanarySettings) -> dict[str, Any]:
@@ -888,71 +426,60 @@ def _capability_summary(cfg: CanarySettings) -> dict[str, Any]:
 
 
 def run_all_checks() -> dict[str, Any]:
-    """Run the real probes against the platform's infrastructure capabilities."""
+    """Execute all gating and informational dependency probes through `service.run_probes`."""
     cfg = _settings()
-    pg_problem = ""
-    pg_host, pg_port, pg_user, pg_password, pg_database = "", 5432, "", "", "postgres"
-    try:
-        pg_host, pg_port, pg_user, pg_password, pg_database = _database_target()
-    except ValueError as exc:
-        pg_problem = str(exc)
-    redis_url = cfg.redis_url
-    s3_endpoint, s3_bucket = cfg.s3_endpoint, cfg.s3_bucket
-    s3_access_key, s3_secret_key = cfg.s3_access_key, cfg.s3_secret_key
-    signoz_url = cfg.signoz_otel_collector
-    openpanel_url = cfg.openpanel_health_url or cfg.openpanel_api_url
-    authentik_url = cfg.authentik_endpoint
+    outcomes: dict[str, dict[str, Any]] = {}
+    tracer = get_tracer(SERVICE_TRACER_NAME)
 
-    def _http_entry(name: str, url: str) -> Callable[[], Any]:
-        if not url:
-            return lambda: _unconfigured(time.perf_counter(), f"{name} is not configured")
-        if _probe_http is _DEFAULT_PROBE_HTTP:
+    def _probe_check(name: str, fn: Callable[[], Any], *, is_async: bool = False) -> CallableCheck:
+        async def _run() -> ProbeResult:
+            with tracer.start_as_current_span(
+                f"canary.check.{name}", attributes={"canary.check": name}
+            ) as span:
+                res = await fn() if is_async else await asyncio.to_thread(fn)
+                span.set_attribute("canary.status", res["status"])
+                span.set_attribute("canary.latency_ms", res["latency_ms"])
+                outcomes[name] = res
+                return _record_probe_telemetry(name, res)
 
-            async def _run_http() -> dict[str, Any]:
-                return await _probe_http_async(url)
+        return CallableCheck(name, _run)
 
-            return _run_http
-        return lambda: _probe_http(url)
+    checks = [
+        _probe_check(
+            "postgres", lambda: _check_postgres(CanarySettings.read(os.environ, "database_url"))
+        ),
+        _probe_check("redis", lambda: _check_redis(cfg.redis_url)),
+        _probe_check("s3", lambda: _check_s3(cfg)),
+        _probe_check(
+            "signoz",
+            lambda: _check_http("SIGNOZ_OTEL_COLLECTOR", cfg.signoz_otel_collector),
+            is_async=True,
+        ),
+        _probe_check(
+            "openpanel",
+            lambda: _check_http(
+                "OPENPANEL_API_URL", cfg.openpanel_health_url or cfg.openpanel_api_url
+            ),
+            is_async=True,
+        ),
+        _probe_check(
+            "authentik",
+            lambda: _check_http("AUTHENTIK_ENDPOINT", cfg.authentik_endpoint),
+            is_async=True,
+        ),
+    ]
 
-    plan: dict[str, Callable[[], Any]] = {
-        "postgres": lambda: (
-            _outcome("fail", time.perf_counter(), pg_problem)
-            if pg_problem == _DATABASE_URL_INVALID
-            else _probe_postgres(
-                pg_host, pg_port, user=pg_user, password=pg_password, dbname=pg_database
+    with tracer.start_as_current_span("canary.run") as run_span:
+        probe_results = asyncio.run(run_probes(checks, timeout_seconds=CHECK_DEADLINE_SECONDS))
+        final_checks: dict[str, dict[str, Any]] = {}
+        for res in probe_results:
+            final_checks[res.name] = outcomes.get(
+                res.name, _outcome(FAIL, res.detail, latency_ms=res.duration_ms)
             )
-        ),
-        "redis": lambda: _probe_redis(redis_url),
-        "s3": lambda: _probe_s3(
-            endpoint_url=s3_endpoint,
-            bucket=s3_bucket,
-            access_key=s3_access_key,
-            secret_key=s3_secret_key,
-        ),
-        "signoz": _http_entry("SIGNOZ_OTEL_COLLECTOR", signoz_url),
-        "openpanel": _http_entry("OPENPANEL_API_URL", openpanel_url),
-        "authentik": _http_entry("AUTHENTIK_ENDPOINT", authentik_url),
-    }
-    with _span("canary.run") as run_span:
-        results = _run_checks(plan)
-        checks = {
-            "postgres": results["postgres"],
-            "redis": results["redis"],
-            "s3": results["s3"],
-            "signoz": results["signoz"],
-            "openpanel": results["openpanel"],
-            "authentik": results["authentik"],
-        }
-        unconfigured = [n for n in GATING_CHECKS if results[n]["status"] == UNCONFIGURED]
-        failed = [n for n in GATING_CHECKS if results[n]["status"] not in (PASS, UNCONFIGURED)]
-        informational_down = [n for n in INFORMATIONAL_CHECKS if results[n]["status"] != PASS]
-        # A status other than `pass` or `unconfigured` counts as a failure (fail closed).
+        unconfigured = [n for n in GATING_CHECKS if final_checks[n]["status"] == UNCONFIGURED]
+        failed = [n for n in GATING_CHECKS if final_checks[n]["status"] not in (PASS, UNCONFIGURED)]
         all_pass = not failed and not unconfigured
         run_span.set_attribute("canary.ok", all_pass)
-        run_span.set_attribute("canary.failed_checks", ",".join(failed))
-        run_span.set_attribute("canary.unconfigured_checks", ",".join(unconfigured))
-        run_span.set_attribute("canary.informational_down", ",".join(informational_down))
-        # inside the span, so the exported log record carries the trace id
         if all_pass:
             LOGGER.info("canary run ok: %d write paths passed", len(GATING_CHECKS))
         else:
@@ -961,13 +488,7 @@ def run_all_checks() -> dict[str, Any]:
                 ",".join(failed) or "-",
                 ",".join(unconfigured) or "-",
             )
-        if informational_down:
-            LOGGER.warning(
-                "canary informational checks not passing: %s",
-                ",".join(informational_down),
-            )
-    # The probe runner keeps only the first 128 bytes of this body as its observed text, so
-    # the verdict and its classification come first.
+
     return {
         "ok": all_pass,
         "unconfigured": unconfigured,
@@ -977,188 +498,112 @@ def run_all_checks() -> dict[str, Any]:
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "gating": list(GATING_CHECKS),
         "informational": list(INFORMATIONAL_CHECKS),
-        "checks": checks,
+        "checks": final_checks,
         "capabilities": _capability_summary(cfg),
     }
 
 
 def cached_canary_status() -> dict[str, Any]:
-    """The status document, with one run in flight and a short-lived reuse.
-
-    Requests queue on the lock. The first one runs the probes. The others get that result
-    until STATUS_CACHE_TTL_SECONDS pass. `age_seconds` says how old the result is, so a
-    reused result never reads as a fresh one.
-    """
+    """Return cached canary status with single-flight locking."""
     global _STATUS_CACHE
-    ttl = (
-        STATUS_CACHE_TTL_SECONDS
-        if STATUS_CACHE_TTL_SECONDS != 30.0
-        else _settings().status_cache_ttl_seconds
-    )
+    ttl = _settings().status_cache_ttl_seconds
     with _STATUS_LOCK:
         cached = _STATUS_CACHE
         if cached is None or time.monotonic() - cached[0] >= ttl:
-            report = run_all_checks()
-            cached = (time.monotonic(), report)
+            cached = (time.monotonic(), run_all_checks())
             _STATUS_CACHE = cached
-        document = dict(cached[1])
-        document["age_seconds"] = round(time.monotonic() - cached[0], 1)
-        return document
+        doc = dict(cached[1])
+        doc["age_seconds"] = round(time.monotonic() - cached[0], 1)
+        return doc
 
 
-def peek_canary_verdict() -> dict[str, Any]:
-    """The last status document without a probe run; empty before the first run."""
-    cached = _STATUS_CACHE  # one atomic read; the lock is held during a slow run
-    return dict(cached[1]) if cached else {}
-
-
-SERVER_START_TIME = time.time()
-
-
-_ALL_TIERS = frozenset(EnvironmentTier)
 CANARY_DEPENDENCY_MANIFEST = DependencyManifest(
     dependencies=(
         Dependency(
             name="postgres",
             kind=DependencyKind.CODE_DOMINANT,
-            required_in=_ALL_TIERS,
+            required_in=frozenset(EnvironmentTier),
             env_vars=frozenset({"DATABASE_URL"}),
-            summary="PostgreSQL todo store and canary probe role",
         ),
         Dependency(
             name="redis",
             kind=DependencyKind.CODE_DOMINANT,
-            required_in=_ALL_TIERS,
+            required_in=frozenset(EnvironmentTier),
             env_vars=frozenset({"REDIS_URL"}),
-            summary="Redis SETEX/GET/DEL write path probe",
         ),
         Dependency(
             name="s3",
             kind=DependencyKind.CODE_DOMINANT,
-            required_in=_ALL_TIERS,
+            required_in=frozenset(EnvironmentTier),
             env_vars=frozenset({"S3_ENDPOINT", "S3_BUCKET", "S3_ACCESS_KEY", "S3_SECRET_KEY"}),
-            summary="S3 PUT/GET/DELETE write path probe",
         ),
     )
 )
 
 
 class _CanaryDependencyCheck:
-    """Expose one gating probe from `cached_canary_status` as an SDK `DependencyCheck`."""
-
     def __init__(self, dep_name: str) -> None:
         self.name = dep_name
 
     def probe(self) -> ProbeResult:
         started = time.perf_counter()
-        try:
-            report = cached_canary_status()
-        except Exception as exc:  # noqa: BLE001
-            return ProbeResult(
-                name=self.name,
-                status=DependencyStatus.ABSENT,
-                detail=f"canary status check failed: {exc}",
-                duration_ms=_elapsed_ms(started),
-            )
-        checks = report.get("checks")
-        if isinstance(checks, Mapping) and isinstance(checks.get(self.name), Mapping):
-            entry = checks[self.name]
-            status_val = entry.get("status")
-            present = status_val == PASS
-            detail = str(entry.get("detail") or (PASS if present else status_val or "absent"))
-            latency = float(entry.get("latency_ms") or _elapsed_ms(started))
-            return ProbeResult(
-                name=self.name,
-                status=DependencyStatus.PRESENT if present else DependencyStatus.ABSENT,
-                detail=detail,
-                duration_ms=max(0.0, latency),
-            )
-        if report.get("ok") is True:
-            return ProbeResult(
-                name=self.name,
-                status=DependencyStatus.PRESENT,
-                detail="canary write path passed",
-                duration_ms=_elapsed_ms(started),
-            )
-        failed = report.get("failed") or ()
-        unconfigured = report.get("unconfigured") or ()
-        if self.name in failed:
-            detail = f"failed={self.name}"
-        elif self.name in unconfigured:
-            detail = f"unconfigured={self.name}"
-        elif failed or unconfigured:
-            return ProbeResult(
-                name=self.name,
-                status=DependencyStatus.PRESENT,
-                detail="canary write path passed",
-                duration_ms=_elapsed_ms(started),
-            )
-        else:
-            detail = "canary checks not ok"
+        report = cached_canary_status()
+        entry = (report.get("checks") or {}).get(self.name) or {}
+        present = entry.get("status") == PASS
         return ProbeResult(
             name=self.name,
-            status=DependencyStatus.ABSENT,
-            detail=detail,
-            duration_ms=_elapsed_ms(started),
+            status=DependencyStatus.PRESENT if present else DependencyStatus.ABSENT,
+            detail=str(entry.get("detail") or entry.get("status") or "absent"),
+            duration_ms=max(0.0, float(entry.get("latency_ms") or _elapsed_ms(started))),
         )
 
 
-def _installed_sdk_version() -> str:
-    from importlib.metadata import PackageNotFoundError, version
-
-    try:
-        return version("infra2-sdk")
-    except PackageNotFoundError:
-        return "unknown"
-
-
 def _todo_health_extra(verdict: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    doc = dict(verdict) if verdict is not None else peek_canary_verdict()
+    doc = dict(verdict) if verdict is not None else dict(_STATUS_CACHE[1]) if _STATUS_CACHE else {}
     canary_ok = doc.get("ok") is True
-    env_name = read_runtime_env(RuntimeEnvKey.ENVIRONMENT) or "unknown"
-    config_sha = read_runtime_env(RuntimeEnvKey.CONFIGURATION_SHA256) or "unknown"
     return {
         "ok": canary_ok,
         "request_id": current_request_id(),
         "domain": "todo.zitian.party",
-        "environment": env_name,
-        "configuration_sha256": config_sha,
-        # The installed SDK. The infra2 staging gate compares it with the image pin (#247).
-        "sdk_version": _installed_sdk_version(),
-        "canary": {
-            "ok": canary_ok,
-            "checked_at": doc.get("timestamp"),
-        },
+        "environment": read_runtime_env(RuntimeEnvKey.ENVIRONMENT) or "unknown",
+        "configuration_sha256": read_runtime_env(RuntimeEnvKey.CONFIGURATION_SHA256) or "unknown",
+        "sdk_version": _SDK_VERSION,
+        "canary": {"ok": canary_ok, "checked_at": doc.get("timestamp")},
         "uptime_seconds": round(time.time() - SERVER_START_TIME, 1),
     }
 
 
-def _db_unavailable_response(exc: Exception) -> JSONResponse:
+def _db_unavailable_response(exc: Exception) -> JSONResponse | None:
+    if not (
+        isinstance(exc, (_TodoStoreUnavailable, OSError))
+        or type(exc).__module__.startswith("psycopg")
+    ):
+        return None
     LOGGER.warning("Todo PostgreSQL storage unavailable: %s", exc)
     return JSONResponse(
-        status_code=503,
-        content={"error": "Todo database unavailable", "detail": str(exc)},
+        status_code=503, content={"error": "Todo database unavailable", "detail": str(exc)}
     )
 
 
-# ---------------------------------------------------------------------------
-# FastAPI runtime with turnkey infra2-sdk observability and lifecycle hooks
-# ---------------------------------------------------------------------------
+def _run_todo_db(fn: Callable[[], Response]) -> Response:
+    try:
+        return fn()
+    except Exception as exc:  # noqa: BLE001
+        if (resp := _db_unavailable_response(exc)) is not None:
+            return resp
+        raise
+
 
 fastapi_app = FastAPI(
-    title="Canary Todo",
-    description="Canary Infrastructure Validation Service",
-    docs_url="/docs",
-    redoc_url=None,
+    title="Canary Todo", description="Canary Service", docs_url="/docs", redoc_url=None
+)
+fastapi_app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-
-# The one OpenTelemetry bootstrap (#1209). init_service mounts /livez, /readyz and /health.
-# It sets the root logger to INFO before the OpenTelemetry handler attaches.
-# It starts traces, metrics and logs when the endpoint is set and the SDK is not disabled.
-# strict_otel stops the service on a malformed OTEL_* value.
-# require_issued_identity stops it on such an endpoint without the issued identity.
-# The tier is the issued deployment.environment.name. The SDK does not read ENV.
 init_service(
     fastapi_app,
     name="platform-todo",
@@ -1172,59 +617,19 @@ init_service(
     health_extra=_todo_health_extra,
 )
 
+for _library_logger in ("httpx", "httpcore"):
+    logging.getLogger(_library_logger).setLevel(logging.WARNING)
+
 
 @fastapi_app.exception_handler(RequestValidationError)
 async def validation_exception_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
     del request
-    errors = exc.errors()
-    first = errors[0] if errors else {}
-    err_type = first.get("type", "")
-    loc = first.get("loc", ())
-    if err_type == "json_invalid":
-        message = "Invalid JSON body"
-    elif "completed" in loc:
-        message = "Field 'completed' must be a boolean"
-    elif "title" in loc:
-        message = "Field 'title' must be a string"
-    elif "capability" in loc:
-        message = "Field 'capability' must be a string"
-    else:
-        message = first.get("msg", "Invalid request body")
+    first = exc.errors()[0] if exc.errors() else {}
     return JSONResponse(
-        status_code=400,
-        content={"error": message, "detail": str(exc)},
+        status_code=400, content={"error": first.get("msg", "Invalid request"), "detail": str(exc)}
     )
-
-
-# The probes call httpx, and httpx logs one INFO line for each successful request. With the
-# root logger at INFO, those lines were 75% of the exported log lines (#1436). The libraries
-# keep their WARNING and ERROR lines. The service logs each failed check itself, with the
-# reason, and it logs the canary result line for each run.
-for _library_logger in ("httpx", "httpcore"):
-    logging.getLogger(_library_logger).setLevel(logging.WARNING)
-
-
-@fastapi_app.middleware("http")
-async def add_cors_headers(request: Request, call_next: Any) -> Response:
-    if request.method == "OPTIONS":
-        return Response(
-            status_code=204,
-            headers={
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": ("GET, POST, PATCH, PUT, DELETE, OPTIONS, HEAD"),
-                "Access-Control-Allow-Headers": ("Content-Type, Authorization"),
-                "Content-Length": "0",
-            },
-        )
-    response = await call_next(request)
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = (
-        "GET, POST, PATCH, PUT, DELETE, OPTIONS, HEAD"
-    )
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-    return response
 
 
 @fastapi_app.get(
@@ -1232,25 +637,26 @@ async def add_cors_headers(request: Request, call_next: Any) -> Response:
     tags=["Observability"],
     response_model=TodoHealthResponse,
     responses={503: {"model": TodoHealthResponse}},
-    operation_id="get_api_health",
 )
 @fastapi_app.head("/api/health", include_in_schema=False)
 def fastapi_api_health() -> Response:
     try:
         verdict = cached_canary_status()
-    except Exception:  # noqa: BLE001 - fail closed without leaking probe errors publicly
+    except Exception:  # noqa: BLE001
         verdict = {"ok": False}
     extra = _todo_health_extra(verdict)
     canary_ok = bool(extra["ok"])
     rel = getattr(fastapi_app.state, "service_release", {})
-    payload = {
-        **extra,
-        "status": "healthy" if canary_ok else "unhealthy",
-        "service": "platform/todo",
-        "version": rel.get("version", "unknown"),
-        "git_sha": rel.get("git_sha", "unknown"),
-    }
-    return JSONResponse(status_code=200 if canary_ok else 503, content=payload)
+    return JSONResponse(
+        status_code=200 if canary_ok else 503,
+        content={
+            **extra,
+            "status": "healthy" if canary_ok else "unhealthy",
+            "service": "platform/todo",
+            "version": rel.get("version", "unknown"),
+            "git_sha": rel.get("git_sha", "unknown"),
+        },
+    )
 
 
 @fastapi_app.get(
@@ -1258,13 +664,11 @@ def fastapi_api_health() -> Response:
     tags=["Observability"],
     response_model=CanaryStatusResponse,
     responses={503: {"model": CanaryStatusResponse}},
-    operation_id="get_canary_status",
 )
 @fastapi_app.head("/api/canary/status", include_in_schema=False)
 def fastapi_api_canary_status() -> Response:
     result = cached_canary_status()
-    status_code = 200 if result.get("ok") else 503
-    return JSONResponse(status_code=status_code, content=result)
+    return JSONResponse(status_code=200 if result.get("ok") else 503, content=result)
 
 
 @fastapi_app.get(
@@ -1272,17 +676,10 @@ def fastapi_api_canary_status() -> Response:
     tags=["Todos"],
     response_model=list[TodoItem],
     responses={503: {"model": TodoErrorResponse}},
-    operation_id="list_todos",
 )
 @fastapi_app.head("/api/todos", include_in_schema=False)
 def fastapi_get_todos() -> Response:
-    try:
-        items = _list_todos_db()
-    except Exception as exc:  # noqa: BLE001 - fail closed as 503 only for DB outages
-        if isinstance(exc, (_TodoStoreUnavailable, OSError)) or _is_psycopg_error(exc):
-            return _db_unavailable_response(exc)
-        raise
-    return JSONResponse(status_code=200, content=items)
+    return _run_todo_db(lambda: JSONResponse(status_code=200, content=_list_todos_db()))
 
 
 @fastapi_app.post(
@@ -1290,23 +687,18 @@ def fastapi_get_todos() -> Response:
     tags=["Todos"],
     status_code=201,
     response_model=TodoItem,
-    responses={
-        400: {"model": TodoErrorResponse},
-        503: {"model": TodoErrorResponse},
-    },
-    operation_id="create_todo",
+    responses={400: {"model": TodoErrorResponse}, 503: {"model": TodoErrorResponse}},
 )
 def fastapi_create_todo(payload: TodoCreateRequest) -> Response:
     title = payload.title.strip() if payload.title is not None else f"Todo #{int(time.time())}"
     if not title:
         return JSONResponse(status_code=400, content={"error": "Field 'title' must not be blank"})
-    try:
-        item = _create_todo_db(title, bool(payload.completed), str(payload.capability))
-    except Exception as exc:  # noqa: BLE001 - fail closed as 503 only for DB outages
-        if isinstance(exc, (_TodoStoreUnavailable, OSError)) or _is_psycopg_error(exc):
-            return _db_unavailable_response(exc)
-        raise
-    return JSONResponse(status_code=201, content=item)
+    return _run_todo_db(
+        lambda: JSONResponse(
+            status_code=201,
+            content=_create_todo_db(title, bool(payload.completed), str(payload.capability)),
+        )
+    )
 
 
 @fastapi_app.patch(
@@ -1318,55 +710,44 @@ def fastapi_create_todo(payload: TodoCreateRequest) -> Response:
         404: {"model": TodoErrorResponse},
         503: {"model": TodoErrorResponse},
     },
-    operation_id="update_todo",
 )
 def fastapi_update_todo(
-    todo_id: int,
-    payload: TodoPatchRequest | None = Body(default=None),
+    todo_id: int, payload: TodoPatchRequest | None = Body(default=None)
 ) -> Response:
     patch = payload or TodoPatchRequest()
     title = patch.title.strip() if patch.title is not None else None
     if patch.title is not None and not title:
         return JSONResponse(status_code=400, content={"error": "Field 'title' must not be blank"})
-    try:
+
+    def _do() -> Response:
         updated = _patch_todo_db(
-            todo_id,
-            title=title,
-            completed=patch.completed,
-            capability=patch.capability,
+            todo_id, title=title, completed=patch.completed, capability=patch.capability
         )
-    except Exception as exc:  # noqa: BLE001 - fail closed as 503 only for DB outages
-        if isinstance(exc, (_TodoStoreUnavailable, OSError)) or _is_psycopg_error(exc):
-            return _db_unavailable_response(exc)
-        raise
-    if updated is not None:
-        return JSONResponse(status_code=200, content=updated)
-    return JSONResponse(status_code=404, content={"error": "Todo not found"})
+        return (
+            JSONResponse(status_code=200, content=updated)
+            if updated
+            else JSONResponse(status_code=404, content={"error": "Todo not found"})
+        )
+
+    return _run_todo_db(_do)
 
 
 @fastapi_app.delete(
     "/api/todos/{todo_id}",
     tags=["Todos"],
     response_model=TodoDeleteResponse,
-    responses={
-        404: {"model": TodoErrorResponse},
-        503: {"model": TodoErrorResponse},
-    },
-    operation_id="delete_todo",
+    responses={404: {"model": TodoErrorResponse}, 503: {"model": TodoErrorResponse}},
 )
 def fastapi_delete_todo(todo_id: int) -> Response:
-    try:
+    def _do() -> Response:
         removed = _delete_todo_db(todo_id)
-    except Exception as exc:  # noqa: BLE001 - fail closed as 503 only for DB outages
-        if isinstance(exc, (_TodoStoreUnavailable, OSError)) or _is_psycopg_error(exc):
-            return _db_unavailable_response(exc)
-        raise
-    if removed is not None:
-        return JSONResponse(
-            status_code=200,
-            content={"ok": True, "deleted_id": todo_id, "item": removed},
-        )
-    return JSONResponse(status_code=404, content={"error": "Todo not found"})
+        if removed:
+            return JSONResponse(
+                status_code=200, content={"ok": True, "deleted_id": todo_id, "item": removed}
+            )
+        return JSONResponse(status_code=404, content={"error": "Todo not found"})
+
+    return _run_todo_db(_do)
 
 
 TODO_SUMMARY_CALL_SITE = "todo.summary"
@@ -1380,14 +761,6 @@ TODO_SUMMARY_DECODING = DecodingSpec(
 SUMMARY_RATE_LIMIT = RateLimitWindow(max_requests=30, window_seconds=60.0)
 
 
-def _telemetry_providers() -> tuple[Any | None, Any | None]:
-    providers = getattr(fastapi_app.state, "telemetry_providers", None)
-    return (
-        getattr(providers, "tracer_provider", None),
-        getattr(providers, "meter_provider", None),
-    )
-
-
 async def summarize_recent_todos(
     *,
     limit: int = 20,
@@ -1399,7 +772,7 @@ async def summarize_recent_todos(
     max_attempts: int = 3,
     usage_limits: Any | None = None,
 ) -> TodoSummaryResponse:
-    """Summarize recent persisted todos through the single SDK Agent entrypoint."""
+    """Summarize recent persisted todos through `infra2_sdk.llm.create_llm_agent`."""
     settings = LlmSettings.from_env(os.environ)
     if model_override is None and not (settings.api_key and settings.api_key.strip()):
         return TodoSummaryResponse(
@@ -1408,8 +781,8 @@ async def summarize_recent_todos(
             detail="Missing LLM_API_KEY",
         )
 
-    bounded_limit = max(1, min(int(limit), 50))
-    items = (todos_loader or _recent_todos_db)(bounded_limit)
+    bounded = max(1, min(int(limit), 50))
+    items = (todos_loader or _list_todos_db)(bounded)[:bounded]
     lines = [
         f"- [{'done' if item.get('completed') else 'open'}] ({item.get('capability', 'general')}) {item.get('title', '')}"
         for item in items
@@ -1419,10 +792,7 @@ async def summarize_recent_todos(
     s_sha = schema_sha256(TodoSummaryOutput)
     model_label = settings.role_model("small")
     r_sha = request_sha256(
-        model=model_label,
-        prompt=prompt_text,
-        schema=s_sha,
-        decoding=TODO_SUMMARY_DECODING,
+        model=model_label, prompt=prompt_text, schema=s_sha, decoding=TODO_SUMMARY_DECODING
     )
 
     from pydantic_ai import UsageLimits
@@ -1433,9 +803,16 @@ async def summarize_recent_todos(
         total_tokens_limit=4096,
         cost_limit=Decimal("0.05"),
     )
-    default_tp, default_mp = _telemetry_providers()
-    eff_tp = tracer_provider if tracer_provider is not None else default_tp
-    eff_mp = meter_provider if meter_provider is not None else default_mp
+    providers = getattr(fastapi_app.state, "telemetry_providers", None)
+    eff_tp = (
+        tracer_provider
+        if tracer_provider is not None
+        else getattr(providers, "tracer_provider", None)
+    )
+    eff_mp = (
+        meter_provider if meter_provider is not None else getattr(providers, "meter_provider", None)
+    )
+
     agent = create_llm_agent(
         settings,
         role="small",
@@ -1443,10 +820,7 @@ async def summarize_recent_todos(
         call_site=TODO_SUMMARY_CALL_SITE,
         decoding=TODO_SUMMARY_DECODING,
         output_type=TodoSummaryOutput,
-        instructions=(
-            "Summarize recent infrastructure todo items concisely. "
-            "Report open_count, completed_count, a brief headline, and the next focus."
-        ),
+        instructions="Summarize recent infrastructure todo items concisely. Report open_count, completed_count, a brief headline, and the next focus.",
         usage_limits=eff_limits,
         max_attempts=max_attempts,
         tracer_provider=eff_tp,
@@ -1466,12 +840,7 @@ async def summarize_recent_todos(
             run_res = await agent.run(prompt_text)
             summary_out = run_res.output
             usage = run_res.usage
-        LOGGER.info(
-            "todo summary ok: todos=%d stream=%s model=%s",
-            len(items),
-            stream,
-            model_label,
-        )
+        LOGGER.info("todo summary ok: todos=%d stream=%s model=%s", len(items), stream, model_label)
 
     return TodoSummaryResponse(
         status=PASS,
@@ -1496,7 +865,6 @@ async def summarize_recent_todos(
         502: {"model": TodoErrorResponse},
         503: {"model": TodoErrorResponse},
     },
-    operation_id="summarize_todos",
 )
 async def fastapi_summarize_todos(
     payload: TodoSummaryRequest | None = Body(default=None),
@@ -1522,24 +890,18 @@ async def fastapi_summarize_todos(
             status_code=429,
             content={"error": "LLM usage limit exceeded", "detail": type(exc).__name__},
         )
-    except Exception as exc:  # noqa: BLE001 - fail closed for DB outages and scrub LLM faults
-        if isinstance(exc, (_TodoStoreUnavailable, OSError)) or _is_psycopg_error(exc):
-            return _db_unavailable_response(exc)
+    except Exception as exc:  # noqa: BLE001
+        if (db_resp := _db_unavailable_response(exc)) is not None:
+            return db_resp
         scrubbed = redact_llm_error(exc)
         LOGGER.warning("todo summary failed: %s", scrubbed)
         return JSONResponse(
-            status_code=502,
-            content={"error": "LLM summary failed", "detail": str(scrubbed)},
+            status_code=502, content={"error": "LLM summary failed", "detail": str(scrubbed)}
         )
     return JSONResponse(status_code=200, content=res.model_dump(mode="json"))
 
 
-@fastapi_app.get(
-    "/api/auth/me",
-    tags=["Auth"],
-    response_model=AuthMeResponse,
-    operation_id="get_auth_me",
-)
+@fastapi_app.get("/api/auth/me", tags=["Auth"], response_model=AuthMeResponse)
 @fastapi_app.head("/api/auth/me", include_in_schema=False)
 def fastapi_auth_me(request: Request) -> Response:
     username = request.headers.get("X-authentik-username", "")
@@ -1558,57 +920,42 @@ def fastapi_auth_me(request: Request) -> Response:
     )
 
 
-@fastapi_app.get("/", tags=["UI"], response_class=HTMLResponse, operation_id="get_ui_index")
+@fastapi_app.get("/", tags=["UI"], response_class=HTMLResponse)
 @fastapi_app.head("/", include_in_schema=False)
 @fastapi_app.get("/index.html", include_in_schema=False, response_class=HTMLResponse)
 @fastapi_app.head("/index.html", include_in_schema=False)
 def fastapi_ui_index(request: Request) -> HTMLResponse:
     username = request.headers.get("X-authentik-username", "")
-    name = request.headers.get("X-authentik-name", "")
-    email = request.headers.get("X-authentik-email", "")
-    user_display = name or username or email
-    if username:
-        safe_display = html.escape(user_display)
-        auth_badge = (
-            f'<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">'
-            f'<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>'
-            f"SSO 认证通过: {safe_display}"
-            f"</span>"
-        )
-    else:
-        auth_badge = (
-            '<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-slate-800 text-slate-400 border border-slate-700">'
-            '<span class="w-2 h-2 rounded-full bg-slate-500"></span>'
-            "未检测到 ForwardAuth 头 (开发/直连模式)"
-            "</span>"
-        )
+    user_display = request.headers.get("X-authentik-name", "") or username
+    badge = f"SSO: {html.escape(user_display)}" if username else "Direct mode"
     resolved_sha = getattr(fastapi_app.state, "service_release", {}).get("git_sha", "unknown")
     sha = resolved_sha[:7] if resolved_sha != "unknown" else "unknown"
-    rendered = HTML_TEMPLATE.replace("${GIT_COMMIT_SHA}", sha).replace("${AUTH_BADGE}", auth_badge)
-    return HTMLResponse(content=rendered, status_code=200)
+    return HTMLResponse(
+        content=HTML_TEMPLATE.replace("${GIT_COMMIT_SHA}", sha).replace("${AUTH_BADGE}", badge),
+        status_code=200,
+    )
 
 
-# Standard ASGI entrypoint
 app = fastapi_app
 
 
-ENV_MANIFEST_PATH = Path(__file__).resolve().parent / "env.manifest.json"
-
-
 def validate_startup_environment(environ: Mapping[str, str] | None = None) -> None:
-    """Fail closed at startup when any required variable in env.manifest.json is missing."""
-    assert_env(ENV_MANIFEST_PATH, environ=environ, require_injected=True)
+    """Fail closed at startup when any required variable in CanarySettings is missing."""
+    assert_env(
+        EnvironmentManifest.from_model(CanarySettings, source="canary/todo"),
+        environ=environ,
+        require_injected=True,
+    )
 
 
 def main() -> None:
     validate_startup_environment()
     port = _settings().port
-    LOGGER.info("Canary Todo service starting on port %d with FastAPI and infra2_sdk", port)
-    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(0))
     import uvicorn
 
-    uvicorn.run(fastapi_app, host="0.0.0.0", port=port, log_level="info")
+    LOGGER.info("Canary Todo starting on port %d", port)
+    uvicorn.run(fastapi_app, host="0.0.0.0", port=port, log_config=None)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

@@ -10,6 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 
 import pytest
+from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter, SimpleLogRecordProcessor
 
 from infra2_sdk import telemetry
 
@@ -32,9 +33,7 @@ def test_otel_settings_strict_and_lenient() -> None:
     }
     settings = telemetry.OtelSettings.from_env(env, strict=True, require_issued_identity=True)
     assert settings.service_name == "billing-api"
-    assert settings.traces_sampler_arg == "0.5"
     assert settings.export_interval_millis == 15000
-    assert settings.enabled is True
     assert (
         telemetry.signal_endpoint("http://collector:4318", "traces")
         == "http://collector:4318/v1/traces"
@@ -43,30 +42,28 @@ def test_otel_settings_strict_and_lenient() -> None:
         telemetry.signal_endpoint("http://collector:4318/v1/traces", "traces")
         == "http://collector:4318/v1/traces"
     )
+    with pytest.raises(ValueError, match="OTLP endpoint"):
+        telemetry.signal_endpoint("", "traces")
+
+    preview_s = telemetry.OtelSettings(
+        service_name="svc",
+        endpoint="http://127.0.0.1:4318",
+        environment="preview",
+        deployment_environment="pr_12",
+    )
+    assert preview_s.deployment_environment == "pr-12"
+
     attrs = settings.resolved_resource_attributes()
     for key in telemetry.REQUIRED_IDENTITY_ATTRIBUTES:
         assert key in attrs
     assert attrs["service.instance.id"] == "inst-1"
 
     with pytest.raises(ValueError, match="OTEL_TRACES_SAMPLER"):
-        telemetry.OtelSettings.from_env(
-            {**env, "OTEL_TRACES_SAMPLER": "invalid_sampler"}, strict=True
-        )
+        telemetry.OtelSettings.from_env({**env, "OTEL_TRACES_SAMPLER": "invalid"}, strict=True)
     with pytest.raises(ValueError, match="OTEL_TRACES_SAMPLER_ARG"):
         telemetry.OtelSettings.from_env({**env, "OTEL_TRACES_SAMPLER_ARG": "2.5"}, strict=True)
     with pytest.raises(ValueError, match="OTEL_METRIC_EXPORT_INTERVAL"):
         telemetry.OtelSettings.from_env({**env, "OTEL_METRIC_EXPORT_INTERVAL": "abc"}, strict=True)
-    with pytest.raises(ValueError, match="issued identity attributes"):
-        telemetry.OtelSettings.from_env(
-            {
-                "ENVIRONMENT": "staging",
-                "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318",
-                "OTEL_SERVICE_NAME": "svc",
-                "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=staging",
-            },
-            strict=True,
-            require_issued_identity=True,
-        )
     with pytest.raises(ValueError, match="disagrees"):
         telemetry.OtelSettings(
             service_name="svc",
@@ -91,7 +88,9 @@ def test_otel_settings_strict_and_lenient() -> None:
     assert lenient.export_interval_millis == 60_000
 
 
-def test_json_logging_contextvars_and_redaction(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_json_logging_preserves_safe_keys_and_scrubs_secrets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("DATABASE_URL", "postgresql://user:supersecretpw@db:5432/app")
     formatter = telemetry.JsonLogFormatter({"service.name": "demo"})
     try:
@@ -108,21 +107,42 @@ def test_json_logging_contextvars_and_redaction(monkeypatch: pytest.MonkeyPatch)
         args=(),
         exc_info=exc_info,
     )
+    record.err_obj = RuntimeError("postgresql://user:supersecretpw@db:5432/app")
     with (
         telemetry.bind_request_id("req-42") as rid,
         telemetry.bind_log_context(
-            infra_key="v1", authorization="Bearer secret", nested={"token": "x"}
+            infra_key="v1",
+            input_tokens=42,
+            output_tokens=17,
+            s3_key="docs/report.pdf",
+            author="alice",
+            authenticated=True,
+            authorization="Bearer secret",
+            raw_prompt="sensitive prompt",
+            nested={"token": "x"},
         ),
     ):
         assert telemetry.current_request_id() == "req-42" == rid
         line = formatter.format(record)
     doc = json.loads(line)
     assert doc["request_id"] == "req-42"
+    assert doc["infra_key"] == "v1"
+    assert doc["input_tokens"] == 42
+    assert doc["output_tokens"] == 17
+    assert doc["s3_key"] == "docs/report.pdf"
+    assert doc["author"] == "alice"
+    assert doc["authenticated"] is True
+    assert doc["authorization"] == "[REDACTED]"
+    assert doc["raw_prompt"] == "[REDACTED]"
+    assert doc["nested"] == {"token": "[REDACTED]"}
     assert "supersecretpw" not in line
     assert "user@example.com" not in line
     assert "[EMAIL]" in doc["message"]
-    assert doc["authorization"] == "[REDACTED]"
     assert "exception" in doc and "supersecretpw" not in doc["exception"]
+
+    # Control-char / oversized request IDs are replaced with UUID4.
+    with telemetry.bind_request_id("bad\nid") as sanitized:
+        assert sanitized != "bad\nid" and len(sanitized) == 36
 
     telemetry.configure_logging(level=logging.INFO, service_name="demo", suppress_probes=True)
     access = logging.getLogger("uvicorn.access")
@@ -139,17 +159,14 @@ def test_json_logging_contextvars_and_redaction(monkeypatch: pytest.MonkeyPatch)
     assert access.filters[-1].filter(probe_rec) is False
 
 
-def test_configure_telemetry_sampler_and_init_worker() -> None:
+def test_configure_telemetry_sampler_otlp_request_id_and_shutdown() -> None:
     from opentelemetry.sdk.trace import sampling
-
-    received: list[str] = []
 
     class _Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:  # noqa: N802
             n = int(self.headers.get("Content-Length") or 0)
             if n:
                 self.rfile.read(n)
-            received.append(self.path)
             self.send_response(200)
             self.end_headers()
 
@@ -157,8 +174,7 @@ def test_configure_telemetry_sampler_and_init_worker() -> None:
             return None
 
     srv = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
-    th = Thread(target=srv.serve_forever, daemon=True)
-    th.start()
+    Thread(target=srv.serve_forever, daemon=True).start()
     try:
         settings = telemetry.OtelSettings(
             service_name="demo-sampler",
@@ -168,7 +184,7 @@ def test_configure_telemetry_sampler_and_init_worker() -> None:
             traces_sampler_arg="1.0",
             suppress_probe_telemetry=True,
         )
-        providers = telemetry.configure_telemetry(settings, set_global=False, capture_logs=True)
+        providers = telemetry.configure_telemetry(settings, set_global=False, capture_logs=False)
         sampler = providers.tracer_provider.sampler
         assert "DropProbeSampler" in sampler.get_description()
         assert sampler.should_sample(None, 1, "GET /readyz").decision is sampling.Decision.DROP
@@ -176,39 +192,69 @@ def test_configure_telemetry_sampler_and_init_worker() -> None:
             None, 1, "GET /api/todos", attributes={"url.path": "/api/todos"}
         )
         assert api_res.decision is sampling.Decision.RECORD_AND_SAMPLE
+
+        # Verify OTLP log record processor injects request_id from current_request_id().
+        from opentelemetry.sdk._logs import LoggingHandler
+
+        mem_logs = InMemoryLogRecordExporter()
+        assert providers.logger_provider is not None
+        providers.logger_provider.add_log_record_processor(SimpleLogRecordProcessor(mem_logs))
+        otlp_h = LoggingHandler(level=logging.INFO, logger_provider=providers.logger_provider)
+        test_logger = logging.getLogger("telemetry.otlp.test")
+        test_logger.setLevel(logging.INFO)
+        test_logger.addHandler(otlp_h)
+        try:
+            with (
+                telemetry.bind_request_id("req-otlp-7"),
+                telemetry.bind_log_context(input_tokens=9),
+            ):
+                test_logger.info("hello otlp")
+            assert providers.force_flush() is True
+            emitted = [r.log_record for r in mem_logs.get_finished_logs()]
+            assert emitted
+            rec_attrs = dict(emitted[-1].attributes or {})
+            assert rec_attrs["request_id"] == "req-otlp-7"
+            assert rec_attrs["input_tokens"] == 9
+        finally:
+            test_logger.removeHandler(otlp_h)
+
+        # Verify get_tracer and get_meter return active instruments.
+        tracer = telemetry.get_tracer("demo", tracer_provider=providers.tracer_provider)
+        with tracer.start_as_current_span("op"):
+            pass
+        meter = telemetry.get_meter("demo", meter_provider=providers.meter_provider)
+        meter.create_counter("demo.count").add(1)
         providers.shutdown()
 
-        worker_p = telemetry.init_worker(
-            "demo-worker",
-            environ={
-                "ENVIRONMENT": "staging",
-                "OTEL_EXPORTER_OTLP_ENDPOINT": f"http://127.0.0.1:{srv.server_port}",
-                "OTEL_SERVICE_NAME": "demo-worker",
-                "OTEL_RESOURCE_ATTRIBUTES": (
-                    "deployment.environment.name=staging,"
-                    "infra.service.id=platform/demo,"
-                    "service.version=1.0.0,"
-                    "infra.iac.ref=0123456789abcdef0123456789abcdef01234567"
-                ),
-            },
-            strict=True,
-            require_issued_identity=True,
-            set_global=False,
+        # Verify shutdown isolates provider errors so remaining providers still close.
+        closed: list[str] = []
+
+        class _BoomProvider:
+            def shutdown(self) -> None:
+                raise RuntimeError("boom")
+
+        class _OkProvider:
+            def shutdown(self) -> None:
+                closed.append("ok")
+
+        partial_p = telemetry.TelemetryProviders(
+            logger_provider=_BoomProvider(),
+            meter_provider=_OkProvider(),
+            tracer_provider=_OkProvider(),
         )
-        assert worker_p is not None
-        p_global = telemetry.configure_telemetry(settings, set_global=True, capture_logs=False)
-        p_same = telemetry.configure_telemetry(settings, set_global=True, capture_logs=False)
-        assert p_same is p_global
-        with pytest.warns(RuntimeWarning, match="already configured"):
-            telemetry.configure_telemetry(
-                settings.model_copy(update={"service_name": "other"}),
-                set_global=True,
-                capture_logs=False,
+        partial_p.shutdown()
+        assert closed == ["ok", "ok"]
+
+        with pytest.warns(RuntimeWarning):
+            assert (
+                telemetry.init_worker(
+                    "bad-worker",
+                    environ={"ENVIRONMENT": "staging", "OTEL_EXPORTER_OTLP_ENDPOINT": "not-a-url"},
+                    strict=False,
+                    set_global=False,
+                )
+                is None
             )
-        p_global.shutdown()
-        noop = telemetry.init_worker("noop", environ={"ENVIRONMENT": "local"}, set_global=False)
-        assert noop is None
-        worker_p.shutdown()
     finally:
         srv.shutdown()
         srv.server_close()

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Canary Todo background worker proving `init_worker` and `request_with_retry`."""
+"""Canary Todo background worker proving `init_worker`, `assert_env`, and `request_with_retry`."""
 
 from __future__ import annotations
 
@@ -8,15 +8,14 @@ import contextlib
 import json
 import logging
 import os
-import signal
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from infra2_sdk.config import assert_env
-from infra2_sdk.service import request_with_retry
-from infra2_sdk.telemetry import init_worker
+from infra2_sdk.config import EnvironmentManifest, assert_env
+from infra2_sdk.service import HttpClientSettings, create_http_client, request_with_retry
+from infra2_sdk.telemetry import get_tracer, init_worker
 
 try:
     from canary_settings import CanarySettings
@@ -27,32 +26,7 @@ except ImportError:
     from canary_settings import CanarySettings
 
 LOGGER = logging.getLogger("platform-todo-worker")
-ENV_MANIFEST_PATH = Path(__file__).resolve().parent / "env.manifest.json"
 DEFAULT_SERVICE_NAME = "platform-todo-worker"
-
-
-class _NoopSpan:
-    def __enter__(self) -> _NoopSpan:
-        return self
-
-    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
-        return False
-
-    def set_attribute(self, key: str, value: Any) -> None:
-        return None
-
-
-class _NoopTracer:
-    def start_as_current_span(self, name: str) -> _NoopSpan:
-        return _NoopSpan()
-
-
-def _default_tracer() -> Any:
-    try:
-        from opentelemetry import trace as otel_trace
-    except ImportError:
-        return _NoopTracer()
-    return otel_trace.get_tracer(DEFAULT_SERVICE_NAME)
 
 
 def run_once(
@@ -65,13 +39,12 @@ def run_once(
     sleep: Callable[[float], None] | None = None,
 ) -> dict[str, Any]:
     """Probe the web health endpoint once with `request_with_retry` inside an OTel span."""
-    active_tracer = tracer if tracer is not None else _default_tracer()
-    if client is not None:
-        client_cm: Any = contextlib.nullcontext(client)
-    else:
-        import httpx
-
-        client_cm = httpx.Client(timeout=timeout)
+    active_tracer = tracer if tracer is not None else get_tracer(DEFAULT_SERVICE_NAME)
+    client_cm: Any = (
+        contextlib.nullcontext(client)
+        if client is not None
+        else create_http_client(HttpClientSettings(timeout_seconds=timeout))
+    )
 
     with active_tracer.start_as_current_span("canary.worker.tick") as span:
         try:
@@ -95,7 +68,7 @@ def run_once(
                 if ok
                 else f"unexpected health response status={status_code}"
             )
-        except Exception as exc:  # noqa: BLE001 - report probe failures in worker tick payload
+        except Exception as exc:  # noqa: BLE001
             status_code = 0
             service = None
             ok = False
@@ -120,72 +93,29 @@ def run_once(
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Canary Todo background health worker")
     parser.add_argument("--once", action="store_true", help="Run one probe tick and exit.")
-    parser.add_argument(
-        "--interval",
-        type=float,
-        default=60.0,
-        help="Seconds between probe ticks in daemon mode.",
-    )
-    parser.add_argument(
-        "--health-url",
-        default="",
-        help="Target /readyz URL. Defaults to http://127.0.0.1:<PORT>/readyz.",
-    )
-    parser.add_argument(
-        "--service-name",
-        default=DEFAULT_SERVICE_NAME,
-        help="Telemetry service name passed to init_worker().",
-    )
-    parser.add_argument(
-        "--no-require-issued-identity",
-        action="store_true",
-        help="Allow unissued OTEL_* attributes when OTLP export is enabled locally.",
-    )
-    parser.add_argument(
-        "--validate-env",
-        action="store_true",
-        help="Validate environment against env.manifest.json before probing.",
-    )
+    parser.add_argument("--health-url", default="", help="Target /readyz URL.")
+    parser.add_argument("--validate-env", action="store_true")
     args = parser.parse_args(argv)
 
     if args.validate_env:
-        assert_env(ENV_MANIFEST_PATH, environ=os.environ, require_injected=True)
+        assert_env(
+            EnvironmentManifest.from_model(CanarySettings, source="canary/todo"),
+            environ=os.environ,
+            require_injected=True,
+        )
 
-    providers = init_worker(
-        args.service_name,
-        strict=True,
-        require_issued_identity=not args.no_require_issued_identity,
-    )
+    providers = init_worker(DEFAULT_SERVICE_NAME, strict=True, require_issued_identity=True)
     health_url = args.health_url.strip() or (
         f"http://127.0.0.1:{CanarySettings.from_environ(os.environ).port}/readyz"
     )
-    if args.once:
+    try:
         result = run_once(health_url=health_url)
         print(json.dumps(result))
-        if providers is not None:
-            providers.shutdown()
         return 0 if result["ok"] else 1
-
-    stop = False
-
-    def _stop(signum: int, frame: Any) -> None:
-        nonlocal stop
-        stop = True
-
-    signal.signal(signal.SIGTERM, _stop)
-    signal.signal(signal.SIGINT, _stop)
-    import time
-
-    try:
-        while not stop:
-            run_once(health_url=health_url)
-            if not stop:
-                time.sleep(max(1.0, args.interval))
     finally:
         if providers is not None:
             providers.shutdown()
-    return 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())

@@ -1,4 +1,4 @@
-"""Shared helpers for the Canary Todo tests (wangzitian0/infra2-sdk#247)."""
+"""Shared fixtures and fake PostgreSQL store for Canary Todo tests."""
 
 from __future__ import annotations
 
@@ -21,13 +21,9 @@ if str(TODO_DIR) not in sys.path:
     sys.path.insert(0, str(TODO_DIR))
 
 
-def _contract_names() -> set[str]:
-    return {k.value for k in RuntimeEnvKey}
-
-
 def clear_telemetry_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Remove every SDK contract variable, alias and OTEL_* name of the developer shell."""
-    declared = _contract_names()
+    """Remove every SDK contract variable and OTEL_* name from the environment."""
+    declared = {k.value for k in RuntimeEnvKey}
     for key in list(os.environ):
         if key in declared or key.startswith("OTEL_"):
             monkeypatch.delenv(key, raising=False)
@@ -35,11 +31,9 @@ def clear_telemetry_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def _no_ambient_telemetry_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The app starts telemetry while it loads. The developer shell must not decide that."""
     clear_telemetry_env(monkeypatch)
 
 
-# The addresses a deployment gives the Canary. The app has no default for them.
 DEPLOYMENT_ADDRESSES = {
     "REDIS_URL": "redis://platform-redis:6379/0",
     "SIGNOZ_OTEL_COLLECTOR": "http://platform-signoz-otel-collector:13133",
@@ -58,6 +52,7 @@ def load_todo_module(name: str) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, TODO_APP)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -87,22 +82,19 @@ class FakeTodoPgConnection:
         normalized = " ".join(sql.split())
         if normalized.startswith("SELECT to_regclass"):
             return FakeTodoCursor([("todos" if self._store.table_created else None,)])
-        if normalized.startswith("DO $do$"):
-            return FakeTodoCursor()
-        if normalized.startswith("CREATE TABLE IF NOT EXISTS todos"):
-            self._store.table_created = True
+        if normalized.startswith("DO $do$") or normalized.startswith(
+            "CREATE TABLE IF NOT EXISTS todos"
+        ):
+            if "CREATE TABLE IF NOT EXISTS todos" in normalized:
+                self._store.table_created = True
             return FakeTodoCursor()
         if normalized.startswith("SELECT id, title, completed, capability, created_at FROM todos"):
+            reverse = "ORDER BY id DESC" in normalized
+            rows = sorted(self._store.rows, key=lambda r: r["id"], reverse=reverse)
             return FakeTodoCursor(
                 [
-                    (
-                        item["id"],
-                        item["title"],
-                        item["completed"],
-                        item["capability"],
-                        item["created_at"],
-                    )
-                    for item in sorted(self._store.rows, key=lambda r: r["id"])
+                    (r["id"], r["title"], r["completed"], r["capability"], r["created_at"])
+                    for r in rows
                 ]
             )
         if normalized.startswith("INSERT INTO todos"):
@@ -117,15 +109,7 @@ class FakeTodoPgConnection:
             }
             self._store.rows.append(row)
             return FakeTodoCursor(
-                [
-                    (
-                        row["id"],
-                        row["title"],
-                        row["completed"],
-                        row["capability"],
-                        row["created_at"],
-                    )
-                ]
+                [(row["id"], row["title"], row["completed"], row["capability"], row["created_at"])]
             )
         if normalized.startswith("UPDATE todos SET"):
             set_clause = normalized.split("UPDATE todos SET ", 1)[1].split(" WHERE id = %s", 1)[0]

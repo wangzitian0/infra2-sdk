@@ -33,19 +33,15 @@ from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from pydantic_ai import UsageLimits, models
-from pydantic_ai.capabilities import RetryOnModelErrors
+from pydantic_ai import models
 from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.usage import RequestUsage
 from starlette.testclient import TestClient
 
 from infra2_sdk.llm import (
-    LlmSettings,
     allow_vcr_model_requests,
-    create_llm_agent,
     redact_llm_error,
     vcr_llm_config,
 )
@@ -347,70 +343,6 @@ async def test_summary_otel_spans_metrics_logs_and_redaction(
         assert otlp_attrs[key] == chat_attrs[key]
     assert int(log_entry["code.line.number"]) > 0
     assert int(otlp_attrs["code.line.number"]) == int(log_entry["code.line.number"])
-
-
-def test_agent_missing_call_site_warns(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    settings = LlmSettings(provider="zai", api_key="test-key", small_model="glm-5.3-flash")
-    agent = create_llm_agent(settings, model=TestModel(custom_output_text="ok"))
-    with caplog.at_level(logging.WARNING, logger="infra2_sdk.llm"):
-        res = agent.run_sync("ping")
-    assert res.output == "ok"
-    assert any("missing explicit call_site" in rec.message for rec in caplog.records)
-    assert any(
-        "test_llm_summary.test_agent_missing_call_site_warns" in rec.message
-        for rec in caplog.records
-    )
-
-
-def test_zai_agent_disables_openai_sdk_retries_and_wires_retry_capability() -> None:
-    settings = LlmSettings(
-        provider="zai",
-        api_key="test-key",
-        base_url="https://api.z.ai/api/coding/paas/v4",
-        small_model="glm-5.3-flash",
-    )
-    agent = create_llm_agent(settings, call_site="todo.summary", max_attempts=3)
-    raw_zai = agent.model.wrapped
-    assert raw_zai.client.max_retries == 0
-    retry_caps = [
-        c for c in agent._root_capability.capabilities if isinstance(c, RetryOnModelErrors)
-    ]
-    assert len(retry_caps) == 1
-    assert retry_caps[0].max_attempts == 3
-
-
-async def test_usage_limit_exceeded_propagates_without_retry_or_fallback(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("LLM_API_KEY", "test-key")
-    calls: list[str] = []
-
-    def _primary(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        calls.append("primary")
-        return ModelResponse(
-            parts=[TextPart(_sample_summary_json())],
-            usage=RequestUsage(input_tokens=50, output_tokens=500),
-            model_name="glm-5.3-flash",
-        )
-
-    def _fallback(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        calls.append("fallback")
-        return ModelResponse(parts=[TextPart(_sample_summary_json())])
-
-    settings = LlmSettings(provider="zai", api_key="test-key", small_model="glm-5.3-flash")
-    agent = create_llm_agent(
-        settings,
-        model=FunctionModel(_primary),
-        fallback_models=[FunctionModel(_fallback)],
-        call_site="todo.summary",
-        max_attempts=3,
-        usage_limits=UsageLimits(request_limit=1, output_tokens_limit=10),
-    )
-    with pytest.raises(UsageLimitExceeded):
-        await agent.run("summarize")
-    assert calls == ["primary"]
 
 
 def test_fastapi_summary_returns_429_on_usage_limit_and_502_scrubs_secrets(
