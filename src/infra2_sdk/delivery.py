@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import functools
+import importlib.metadata
 import importlib.resources
 import json
 import math
@@ -606,10 +607,25 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def _default_user_agent() -> str:
+    try:
+        pkg_version = importlib.metadata.version("infra2-sdk")
+    except importlib.metadata.PackageNotFoundError:  # pragma: no cover
+        pkg_version = "0.0.0"
+    return f"infra2-sdk/{pkg_version}"
+
+
 def _default_http_get(
     url: str, timeout_seconds: float, *, follow_redirects: bool = False
 ) -> tuple[int, bytes]:
-    req = urllib.request.Request(url, method="GET")
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": _default_user_agent(),
+            "Accept": "application/json",
+        },
+        method="GET",
+    )
     opener = (
         urllib.request.build_opener()
         if follow_redirects

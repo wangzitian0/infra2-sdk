@@ -251,6 +251,44 @@ def test_health_polling_and_cli() -> None:
         srv.server_close()
 
 
+def test_default_http_get_sends_sdk_user_agent() -> None:
+    seen_headers: list[tuple[str, str]] = []
+
+    class _WafHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            ua = self.headers.get("User-Agent", "")
+            accept = self.headers.get("Accept", "")
+            seen_headers.append((ua, accept))
+            if not ua or ua.startswith("Python-urllib"):
+                self.send_response(403)
+                self.end_headers()
+                self.wfile.write(b"cloudflare 403 blocked")
+                return
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"status":"healthy","version":"v4.13.0"}')
+
+        def log_message(self, *args: object) -> None:
+            return None
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _WafHandler)
+    Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        status, body = delivery._default_http_get(
+            f"http://127.0.0.1:{srv.server_port}/api/health",
+            2.0,
+        )
+        assert status == 200
+        assert b'"healthy"' in body
+        assert len(seen_headers) == 1
+        ua, accept = seen_headers[0]
+        assert ua.startswith("infra2-sdk/"), f"unexpected User-Agent: {ua!r}"
+        assert accept == "application/json"
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 def test_per_check_required_and_optional_env_scoping() -> None:
     manifest = delivery.RuntimeHooksManifest(
         schema_version=3,
