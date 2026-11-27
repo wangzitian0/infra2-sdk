@@ -2,6 +2,12 @@
 
 Versions follow `README.md`. Release steps are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## 4.14.1 - 2026-11-27
+
+### Fixed
+
+- `llm`: include HTTP `500`/`529` and `ModelServerError`/`ModelUnavailableError`/`ModelOverloadedError`/`ModelTimeoutError`/`ModelRateLimitError` in `is_retryable_llm_error()` while preserving terminal provider-code precedence (`1113`/`1310`).
+
 ## 4.14.0 - 2026-11-27
 
 ### Removed

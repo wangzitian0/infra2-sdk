@@ -188,6 +188,8 @@ def test_stream_text_zai_extra_body_retryable_and_midstream_redaction() -> None:
     assert zai_agent.model.wrapped.settings["extra_body"]["max_tokens"] == 256
 
     assert llm.is_retryable_llm_error(ModelHTTPError(429, "m", body="rate limited")) is True
+    assert llm.is_retryable_llm_error(ModelHTTPError(500, "m", body="server error")) is True
+    assert llm.is_retryable_llm_error(ModelHTTPError(529, "m", body="overloaded")) is True
     assert (
         llm.is_retryable_llm_error(
             ModelHTTPError(429, "m", body={"error": {"code": "1113", "message": "arrears"}})
@@ -198,6 +200,20 @@ def test_stream_text_zai_extra_body_retryable_and_midstream_redaction() -> None:
         llm.is_retryable_llm_error(
             ModelHTTPError(429, "m", provider_error_code="1310", body="quota exhausted")
         )
+        is False
+    )
+    from pydantic_ai.exceptions import (
+        ModelRateLimitError,
+        ModelServerError,
+        ModelTimeoutError,
+        ModelUnavailableError,
+    )
+
+    assert llm.is_retryable_llm_error(ModelServerError(500, "m", body="upstream")) is True
+    assert llm.is_retryable_llm_error(ModelUnavailableError(503, "m", body="busy")) is True
+    assert llm.is_retryable_llm_error(ModelTimeoutError(408, "m", body="slow")) is True
+    assert (
+        llm.is_retryable_llm_error(ModelRateLimitError(429, "m", body={"error": {"code": "1113"}}))
         is False
     )
     assert llm.is_retryable_llm_error(ModelHTTPError(400, "m", body='{"code": "1302"}')) is True

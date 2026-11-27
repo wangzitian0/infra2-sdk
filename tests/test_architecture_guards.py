@@ -91,7 +91,7 @@ EXPECTED_EXPORTS: dict[str, tuple[str, ...]] = {
 def test_package_metadata_and_module_surface() -> None:
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     project = pyproject["project"]
-    assert project["version"] == "4.14.0"
+    assert project["version"] == "4.14.1"
     assert infra2_sdk.__all__ == EXPECTED_MODULES
     assert [n for n in dir(infra2_sdk) if not n.startswith("_")] == sorted(infra2_sdk.__all__)
     assert sorted(
@@ -190,7 +190,7 @@ def test_no_unexported_public_defs_cross_private_imports_or_eager_io() -> None:
         "im.version = lambda n: (ver_calls.append(n), orig_ver(n))[1]; "
         "import infra2_sdk; "
         "assert opened == [] and ver_calls == [], (opened, ver_calls); "
-        "assert infra2_sdk.__version__ == '4.14.0'; "
+        "assert infra2_sdk.__version__ == '4.14.1'; "
         "assert len(ver_calls) == 1"
     )
     proc_root = subprocess.run(
@@ -222,8 +222,8 @@ def test_no_unexported_public_defs_cross_private_imports_or_eager_io() -> None:
 
 def test_readme_version_and_module_surface_table_parity() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "v4.14.0" in readme and "4.14.0" in readme
-    assert "v4.14.0" in (ROOT / "docs" / "app-integration-contract.md").read_text(encoding="utf-8")
+    assert "v4.14.1" in readme and "4.14.1" in readme
+    assert "v4.14.1" in (ROOT / "docs" / "app-integration-contract.md").read_text(encoding="utf-8")
     assert "4.13." not in readme and "4.12." not in readme and "4.11." not in readme
 
     table_rows = re.findall(r"^\|\s*`infra2_sdk\.([a-z]+)`\s*\|[^|]+\|\s*([^|]+)\|", readme, re.M)
