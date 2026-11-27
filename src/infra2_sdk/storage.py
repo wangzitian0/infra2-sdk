@@ -1259,7 +1259,7 @@ def probe_s3(
                     close_fn()
 
 
-def _main(argv: _Sequence[str] | None = None) -> int:
+def check_schema_cli(argv: _Sequence[str] | None = None) -> int:
     """CLI entrypoint: ``python -m infra2_sdk.storage check-schema ...``."""
     parser = _argparse.ArgumentParser(prog="python -m infra2_sdk.storage")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1318,6 +1318,9 @@ def _main(argv: _Sequence[str] | None = None) -> int:
     return _EXIT_BLOCKED if report.is_blocking else _EXIT_OK
 
 
+_main = check_schema_cli
+
+
 def __dir__() -> list[str]:
     return sorted(__all__)
 
@@ -1326,6 +1329,7 @@ __all__ = (
     "PostgresSettings",
     "RedisSettings",
     "S3Settings",
+    "check_schema_cli",
     "create_s3_client",
     "ensure_bucket",
     "is_not_found",
@@ -1341,4 +1345,4 @@ __all__ = (
 )
 
 if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(_main())
+    raise SystemExit(check_schema_cli())

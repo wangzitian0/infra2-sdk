@@ -41,7 +41,6 @@ jobs:
         with:
           python-version: "3.11"
           enable-cache: true
-      - run: uv sync --frozen
       - run: uv build
       - uses: actions/upload-artifact@v4
         with:

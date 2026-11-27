@@ -1,4 +1,4 @@
-# infra2-sdk (`v4.14.1`)
+# infra2-sdk (`v4.14.2`)
 
 Standalone cross-repository runtime contracts and explicit open-protocol adapters for `infra2`, consumer applications, and `canary/todo`.
 
@@ -12,27 +12,27 @@ Standalone cross-repository runtime contracts and explicit open-protocol adapter
 
 | Install Spec | Packages Added | Capabilities Unlocked |
 |---|---|---|
-| `infra2-sdk==4.14.1` | `pydantic`, `pyyaml` | All 6 modules (contracts, `probe_redis`, hooks/schema/config CLIs) |
-| `infra2-sdk[telemetry]==4.14.1` | `opentelemetry-api/sdk/exporter-otlp-proto-http/instrumentation-logging` | `telemetry.init_worker`, `telemetry.worker_run`, `telemetry.get_tracer`, `telemetry.get_meter`, `TelemetryProviders` |
-| `infra2-sdk[http]==4.14.1` | `httpx` | `service.create_http_client`, `service.create_async_http_client`, `service.request_with_retry`, `service.async_request_with_retry`, `service.probe_http` |
-| `infra2-sdk[fastapi]==4.14.1` | `fastapi`, `uvicorn[standard]`, `telemetry` extra, `http` extra | `service.init_service`, `service.sse_stream_response`, `service.serve` (`/livez`, `/readyz`, `/health`, OTel lifespan, probe exclusion, `X-Request-ID`) |
-| `infra2-sdk[postgres]==4.14.1` | `psycopg[binary]` | `storage.probe_postgres`, `python -m infra2_sdk.storage check-schema` |
-| `infra2-sdk[s3]==4.14.1` | `boto3` | `storage.create_s3_client`, `storage.ensure_bucket`, `storage.probe_s3`, `storage.put_object_bytes`, `storage.read_object_bytes`, `storage.presign_get_url` |
-| `infra2-sdk[llm]==4.14.1` | `pydantic-ai-slim[zai]`, `http` extra, `telemetry` extra | `llm.create_llm_agent`, `llm.llm_call_context`, `llm.redact_llm_error`, `llm.DecodingSpec`, `llm.stream_text`, `llm.is_retryable_llm_error` |
-| `infra2-sdk[all]==4.14.1` | All optional extras | Full SDK runtime surface |
+| `infra2-sdk==4.14.2` | `pydantic`, `pyyaml` | All 6 modules (contracts, `probe_redis`, hooks/schema/config CLIs) |
+| `infra2-sdk[telemetry]==4.14.2` | `opentelemetry-api/sdk/exporter-otlp-proto-http/instrumentation-logging` | `telemetry.init_worker`, `telemetry.worker_run`, `telemetry.get_tracer`, `telemetry.get_meter`, `TelemetryProviders` |
+| `infra2-sdk[http]==4.14.2` | `httpx` | `service.create_http_client`, `service.create_async_http_client`, `service.request_with_retry`, `service.async_request_with_retry`, `service.probe_http` |
+| `infra2-sdk[fastapi]==4.14.2` | `fastapi`, `uvicorn[standard]`, `telemetry` extra, `http` extra | `service.init_service`, `service.sse_stream_response`, `service.serve` (`/livez`, `/readyz`, `/health`, OTel lifespan, probe exclusion, `X-Request-ID`) |
+| `infra2-sdk[postgres]==4.14.2` | `psycopg[binary]` | `storage.probe_postgres`, `python -m infra2_sdk.storage check-schema` |
+| `infra2-sdk[s3]==4.14.2` | `boto3` | `storage.create_s3_client`, `storage.ensure_bucket`, `storage.probe_s3`, `storage.put_object_bytes`, `storage.read_object_bytes`, `storage.presign_get_url` |
+| `infra2-sdk[llm]==4.14.2` | `pydantic-ai-slim[zai]`, `http` extra, `telemetry` extra | `llm.create_llm_agent`, `llm.llm_call_context`, `llm.redact_llm_error`, `llm.DecodingSpec`, `llm.stream_text`, `llm.is_retryable_llm_error` |
+| `infra2-sdk[all]==4.14.2` | All optional extras | Full SDK runtime surface |
 
-## 3. Public Module Surface (MECE 6-Module Contract — 57 Exports)
+## 3. Public Module Surface (MECE 6-Module Contract — 58 Exports)
 
 | Module | Ownership | Key Exports & Entrypoints |
 |---|---|---|
 | `infra2_sdk.config` | Canonical environment tiers, `RuntimeEnvKey`, Pydantic `EnvironmentManifest` & startup guard | `EnvironmentTier`, `RuntimeEnvKey`, `EnvironmentField`, `EnvironmentManifest`, `resolve_tier()`, `assert_env()`, CLI `python -m infra2_sdk.config {export\|check\|validate}` |
 | `infra2_sdk.telemetry` | `TelemetryProviders`, tracer/meter helpers, request/log `ContextVar`s, and worker OTLP bootstrap | `TelemetryProviders`, `get_tracer()`, `get_meter()`, `current_request_id()`, `bind_log_context()`, `init_worker()`, `worker_run()` |
 | `infra2_sdk.service` | Dependency manifest & checks, FastAPI `/livez`/`/readyz`/`/health` + SSE & uvicorn server bootstrap, `httpx` retry/probe helpers, rate limiter | `DependencyKind`, `DependencyStatus`, `Dependency`, `DependencyManifest`, `ProbeResult`, `CallableCheck`, `init_service()`, `sse_stream_response()`, `serve()`, `HttpClientSettings`, `create_http_client()`, `create_async_http_client()`, `request_with_retry()`, `async_request_with_retry()`, `probe_http()`, `RateLimitWindow` |
-| `infra2_sdk.storage` | PostgreSQL/Redis/S3 settings & probes, S3 helpers & presigned GET / URL/error redaction, schema-gate CLI | `PostgresSettings`, `probe_postgres()`, `redact_postgres_error()`, `RedisSettings`, `probe_redis()`, `redact_redis_error()`, `S3Settings`, `create_s3_client()`, `ensure_bucket()`, `is_not_found()`, `put_object_bytes()`, `read_object_bytes()`, `presign_get_url()`, `redact_presigned_url()`, `probe_s3()`, CLI `python -m infra2_sdk.storage check-schema` |
+| `infra2_sdk.storage` | PostgreSQL/Redis/S3 settings & probes, S3 helpers & presigned GET / URL/error redaction, schema-gate CLI | `PostgresSettings`, `probe_postgres()`, `redact_postgres_error()`, `RedisSettings`, `probe_redis()`, `redact_redis_error()`, `S3Settings`, `check_schema_cli()`, `create_s3_client()`, `ensure_bucket()`, `is_not_found()`, `put_object_bytes()`, `read_object_bytes()`, `presign_get_url()`, `redact_presigned_url()`, `probe_s3()`, CLI `python -m infra2_sdk.storage check-schema` |
 | `infra2_sdk.llm` | `LlmSettings`, `DecodingSpec`, schema digest, OTel `create_llm_agent()`, SSE text streamer, and error scrubbing | `LlmSettings`, `DecodingSpec`, `create_llm_agent()`, `stream_text()`, `is_retryable_llm_error()`, `llm_call_context()`, `schema_sha256()`, `redact_llm_error()` |
 | `infra2_sdk.delivery` | Lazy `stages.yaml` policy (`CELL_POLICIES`), schema v3 `RuntimeHooksManifest`, cell routing & hooks/poll CLI | `CELL_POLICIES`, `CellPolicy`, `CheckRow`, `RuntimeHooksManifest`, `resolve_check_cells()`, CLI `python -m infra2_sdk.delivery {check-hooks\|run-cell\|poll}` |
 
 ## 4. Migration & Canary Proof
 
-- Consolidated runtime adapters into 57 public exports across `infra2_sdk.{config,telemetry,service,storage,llm,delivery}` (`README.md` is the public API reference).
+- Consolidated runtime adapters into 58 public exports across `infra2_sdk.{config,telemetry,service,storage,llm,delivery}` (`README.md` is the public API reference).
 - Standalone Canary proof: `pytest canary/todo/tests -q` and `scripts/check_canary_standalone.sh` exercise all six modules against real PostgreSQL, Redis, RustFS S3, OTLP HTTP stub, worker probes, `check-schema`, `check-hooks`/`run-cell`, and LLM summary replay.

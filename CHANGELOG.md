@@ -2,6 +2,13 @@
 
 Versions follow `README.md`. Release steps are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## 4.14.2 - 2026-11-27
+
+### Added & Cleaned
+
+- `storage`: export `check_schema_cli()` in `infra2_sdk.storage` (`__all__`) so downstream runners can invoke the schema gate directly without `runpy` or `sys.argv` mutation (`57` -> `58` total exports).
+- `ci`: remove redundant `uv sync --frozen` steps immediately before isolated `uv build` in `.github/workflows/ci.yml` and `.github/workflows/release.yml`.
+
 ## 4.14.1 - 2026-11-27
 
 ### Fixed
