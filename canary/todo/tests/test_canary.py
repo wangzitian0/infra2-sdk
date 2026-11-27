@@ -124,7 +124,7 @@ def test_canary_endpoints_probes_and_status_cache(monkeypatch) -> None:
         "groups": ["ops", "dev"],
     }
     ui = client.get("/", headers={"X-authentik-username": "alice", "X-authentik-name": "<Alice>"})
-    assert ui.status_code == 200 and "todo.zitian.party" in ui.text and "&lt;Alice&gt;" in ui.text
+    assert ui.status_code == 200 and "localhost" in ui.text and "&lt;Alice&gt;" in ui.text
 
 
 def test_canary_rate_limit_logging_settings_and_schema(monkeypatch) -> None:

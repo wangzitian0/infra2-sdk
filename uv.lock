@@ -566,9 +566,6 @@ telemetry = [
 ]
 
 [package.dev-dependencies]
-canary = [
-    { name = "uvicorn", extra = ["standard"] },
-]
 dev = [
     { name = "boto3" },
     { name = "build" },
@@ -626,7 +623,6 @@ requires-dist = [
 provides-extras = ["telemetry", "http", "fastapi", "postgres", "s3", "llm", "all"]
 
 [package.metadata.requires-dev]
-canary = [{ name = "uvicorn", extras = ["standard"], specifier = ">=0.28,<1" }]
 dev = [
     { name = "boto3", specifier = ">=1.34,<2" },
     { name = "build", specifier = ">=1.2,!=1.5.1,<2" },

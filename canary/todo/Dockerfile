@@ -14,8 +14,8 @@ ENV UV_PROJECT_ENVIRONMENT=/app/.venv \
     PATH="/app/.venv/bin:$PATH"
 
 COPY pyproject.toml uv.lock README.md LICENSE /tmp/sdk/
-RUN uv sync --locked --no-dev --group canary \
-      --extra fastapi --extra http --extra postgres --extra s3 --extra llm \
+RUN uv sync --locked --no-dev \
+      --extra fastapi --extra postgres --extra s3 --extra llm \
       --no-install-project --project /tmp/sdk
 
 COPY src /tmp/sdk/src

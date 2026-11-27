@@ -99,9 +99,7 @@ class CanarySettings(BaseModel):
     canary_service_name: str = _field(
         "platform-todo", "Telemetry service name and logger identifier.", group="canary"
     )
-    canary_domain: str = _field(
-        "todo.zitian.party", "Public hostname of this canary slot.", group="canary"
-    )
+    canary_domain: str = _field("localhost", "Public hostname of this canary slot.", group="canary")
     redis_key_prefix: str = _field(
         "canary:probe:", "Redis key prefix isolated per canary slot.", group="redis"
     )
