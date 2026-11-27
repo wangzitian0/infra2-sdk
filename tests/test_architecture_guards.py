@@ -241,6 +241,18 @@ def test_readme_version_and_module_surface_table_parity() -> None:
         )
 
 
+def test_readme_anchor_links_resolve_to_headings() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    anchors = {
+        re.sub(r"[^\w\- ]", "", heading.strip().lower()).replace(" ", "-")
+        for heading in re.findall(r"^#{1,6}\s+(.+)$", readme, re.M)
+    }
+    assert "compatibility" in anchors
+    for doc in [ROOT / "CHANGELOG.md", *sorted((ROOT / "docs").glob("*.md"))]:
+        for anchor in re.findall(r"README\.md#([\w-]+)", doc.read_text(encoding="utf-8")):
+            assert anchor in anchors, f"{doc.name} links missing README.md#{anchor}"
+
+
 def test_optional_extra_parity_and_public_openapi_schemas() -> None:
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     opt_deps = pyproject["project"]["optional-dependencies"]
