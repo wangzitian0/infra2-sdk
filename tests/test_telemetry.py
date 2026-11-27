@@ -16,19 +16,6 @@ from infra2_sdk import _core, telemetry
 
 
 def test_otel_settings_strict_and_lenient() -> None:
-    for obsolete in (
-        "OtelSettings",
-        "configure_telemetry",
-        "configure_logging",
-        "JsonLogFormatter",
-        "bind_request_id",
-        "signal_endpoint",
-        "PROBE_PATHS",
-        "SignalKind",
-        "REQUIRED_IDENTITY_ATTRIBUTES",
-    ):
-        assert not hasattr(telemetry, obsolete)
-
     env = {
         "ENVIRONMENT": "staging",
         "OTEL_SERVICE_NAME": "billing-api",

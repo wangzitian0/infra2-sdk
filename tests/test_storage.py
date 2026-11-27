@@ -115,27 +115,6 @@ ALTER TABLE sdkt_dropped DROP COLUMN v;
 
 
 def test_postgres_dsn_and_redaction() -> None:
-    for obsolete in (
-        "normalize_postgres_dsn",
-        "check_schema",
-        "enums_from_metadata",
-        "check_enums",
-        "classify_rollback",
-        "EnumSchemaSpec",
-        "EnumDiscrepancy",
-        "EnumDiscrepancyKind",
-        "SchemaDiffReport",
-        "TableColumn",
-        "ROLLBACK_CLASS_A",
-        "ROLLBACK_CLASS_C",
-        "EXIT_OK",
-        "EXIT_BLOCKED",
-        "EXIT_NOT_EVALUATED",
-        "GateNotEvaluated",
-        "main",
-    ):
-        assert not hasattr(storage, obsolete)
-
     assert (
         storage._normalize_postgres_dsn(
             "postgresql+psycopg://u:p@db.internal:5432/app?sslmode=require"

@@ -28,6 +28,7 @@ from infra2_sdk._core import (
 )
 from infra2_sdk._core import (
     ContractModel,
+    redact_text,
     redact_url_credentials,
     require_contract_version,
     require_optional,
@@ -840,7 +841,7 @@ async def sse_stream_response(
 
             return redact_llm_error(exc)
         except Exception:  # noqa: BLE001
-            return RuntimeError(redact_url_credentials(str(exc), ""))
+            return RuntimeError(redact_text(str(exc)))
 
     async def _close_stream() -> None:
         aclose = getattr(text_stream, "aclose", None)
