@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Canary Todo background worker proving `init_worker`, `assert_env`, and `request_with_retry`."""
+"""Canary Todo background worker proving `worker_run`, `assert_env`, and `request_with_retry`."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from typing import Any
 
 from infra2_sdk.config import EnvironmentManifest, assert_env
 from infra2_sdk.service import HttpClientSettings, create_http_client, request_with_retry
-from infra2_sdk.telemetry import TelemetryProviders, bind_log_context, get_tracer, worker_run
+from infra2_sdk.telemetry import bind_log_context, get_tracer, worker_run
 
 try:
     from canary_settings import CanarySettings
@@ -111,8 +111,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         environ=os.environ,
         strict=True,
         require_issued_identity=True,
-    ) as _providers:
-        _unused: TelemetryProviders | None = _providers
+    ):
         with bind_log_context(worker_mode="once"):
             result = run_once(health_url=health_url)
         print(json.dumps(result))

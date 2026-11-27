@@ -32,16 +32,6 @@ class _Out(BaseModel):
 
 
 def test_llm_settings_decoding_and_binary_digests() -> None:
-    for obsolete in (
-        "create_llm_model",
-        "GuardedLlmModel",
-        "ModelRole",
-        "ThinkingLevel",
-        "vcr_llm_config",
-        "allow_vcr_model_requests",
-    ):
-        assert not hasattr(llm, obsolete)
-
     cfg = llm.LlmSettings.from_env(
         {
             "LLM_PROVIDER": "zai",

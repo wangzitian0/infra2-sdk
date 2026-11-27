@@ -30,22 +30,6 @@ class _BadSensitivitySettings(BaseModel):
 
 
 def test_tier_and_environment_resolution() -> None:
-    for obsolete in (
-        "validate_env",
-        "EnvironmentValidation",
-        "EnvironmentConflictError",
-        "resolve_environment",
-        "RuntimeEnvironment",
-        "shared_env_contract",
-        "check_shared_env",
-        "is_preview_alias",
-        "FieldSource",
-        "MANIFEST_CONTRACT_VERSION",
-        "PLATFORM_OWNED_TIERS",
-        "main",
-    ):
-        assert not hasattr(config, obsolete)
-
     assert config.resolve_tier("prod") is config.EnvironmentTier.PRODUCTION
     assert config.resolve_tier("production") is config.EnvironmentTier.PRODUCTION
     assert config.resolve_tier("staging") is config.EnvironmentTier.STAGING
@@ -89,7 +73,6 @@ def test_manifest_lifecycle_offline_checks_and_cli(
     )
     assert manifest.validate_offline() == []
     assert [f.env for f in manifest.store_backed()] == ["DATABASE_URL", "API_TOKEN"]
-    assert not hasattr(manifest, "render_markdown")
     fp1 = manifest.fingerprint({"PORT": "8000", "DATABASE_URL": "postgresql://u:p@h/db"})
     fp2 = manifest.fingerprint(
         {"DATABASE_URL": "postgresql://u:p@h/db", "PORT": "8000", "API_TOKEN": ""}

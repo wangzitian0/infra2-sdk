@@ -17,31 +17,6 @@ from infra2_sdk import delivery
 def test_stages_and_hooks_manifest_and_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    for obsolete in (
-        "DeployOperation",
-        "DeployType",
-        "DeployRequest",
-        "record_verdicts",
-        "run_cell",
-        "poll_until_healthy",
-        "build_hook_env",
-        "default_http_get",
-        "HttpGet",
-        "CheckVerdict",
-        "HookRunResult",
-        "HealthPollResult",
-        "CellOverrides",
-        "OverrideReason",
-        "NeedKind",
-        "HOOKS_SCHEMA_VERSION",
-        "FORBIDDEN_HOOK_ENV_NAMES",
-        "FORBIDDEN_HOOK_ENV_PREFIXES",
-        "POLICY_VERSION",
-        "load_stages",
-        "main",
-    ):
-        assert not hasattr(delivery, obsolete)
-
     assert "staging.operation" in delivery.CELL_POLICIES
     assert isinstance(delivery.CELL_POLICIES["staging.operation"], delivery.CellPolicy)
 

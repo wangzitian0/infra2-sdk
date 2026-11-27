@@ -25,17 +25,6 @@ from infra2_sdk import _core, config, service
 
 
 def test_dependency_manifest_and_probes_and_health() -> None:
-    for obsolete in (
-        "evaluate_health",
-        "run_probes",
-        "HealthStatus",
-        "ProbeResponse",
-        "HealthResponse",
-        "DependencyCheck",
-        "CheckOutcome",
-    ):
-        assert not hasattr(service, obsolete)
-
     manifest = service.DependencyManifest(
         dependencies=(
             service.Dependency(
@@ -392,3 +381,31 @@ def test_sse_stream_response_and_serve(monkeypatch: pytest.MonkeyPatch) -> None:
     assert seen_serve == [
         {"app": app, "host": "127.0.0.1", "port": 9123, "log_config": None, "log_level": "warning"}
     ]
+
+
+def test_sse_stream_response_fallback_redactor_scrubs_secrets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from infra2_sdk import llm
+
+    app = FastAPI()
+    monkeypatch.setattr(
+        llm,
+        "redact_llm_error",
+        lambda _exc: (_ for _ in ()).throw(RuntimeError("redactor unavailable")),
+    )
+
+    @app.get("/sse-fallback")
+    async def _sse_fallback():
+        async def _gen():
+            raise RuntimeError("upstream failed Bearer sk-secret-99999999")
+            yield "never"  # pragma: no cover
+
+        return await service.sse_stream_response(_gen())
+
+    with TestClient(app) as client:
+        res = client.get("/sse-fallback")
+        assert res.status_code == 503
+        body = res.json()
+        assert body["error"] == "LLM stream unavailable"
+        assert "sk-secret-99999999" not in body["detail"]

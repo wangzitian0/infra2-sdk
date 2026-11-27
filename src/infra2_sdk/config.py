@@ -168,7 +168,6 @@ class EnvironmentField(ContractModel):
 
     field: str
     env: str
-    aliases: tuple[str, ...] = ()
     required: bool = False
     injected: bool = False
     has_default: bool = True
@@ -187,9 +186,6 @@ class EnvironmentField(ContractModel):
     def _validate_field(self) -> EnvironmentField:
         if not self.field or not self.env:
             raise ValueError("field and env must be non-empty")
-        names = (self.env, *self.aliases)
-        if len(names) != len(set(names)):
-            raise ValueError(f"duplicate environment alias for {self.field}")
         if self.scope not in _FIELD_SCOPES:
             raise ValueError(f"{self.field}: scope must be one of {sorted(_FIELD_SCOPES)}")
         if self.ci not in _CI_POLICIES:
@@ -255,13 +251,11 @@ class EnvironmentManifest(ContractModel):
             raise ValueError("source is required")
         owners: dict[str, str] = {}
         for fld in self.fields:
-            for env_name in (fld.env, *fld.aliases):
-                if (owner := owners.get(env_name)) is not None:
-                    raise ValueError(
-                        f"environment variable {env_name!r} is shared "
-                        f"by {owner!r} and {fld.field!r}"
-                    )
-                owners[env_name] = fld.field
+            if (owner := owners.get(fld.env)) is not None:
+                raise ValueError(
+                    f"environment variable {fld.env!r} is shared by {owner!r} and {fld.field!r}"
+                )
+            owners[fld.env] = fld.field
         return self
 
     def store_backed(self) -> tuple[EnvironmentField, ...]:
