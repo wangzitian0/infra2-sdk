@@ -296,6 +296,18 @@ def test_enum_diff_metadata_unwrapping_and_sql_safety_and_cli_import(tmp_path) -
     ]
 
     spec = storage._EnumSchemaSpec(schema_name="public", name="status", labels=("open", "closed"))
+    assert storage._check_enums([spec], {("public", "status"): ("closed", "open")}) == ()
+    assert (
+        storage._check_enums(
+            [
+                storage._EnumSchemaSpec(
+                    schema_name="public", name="status", labels=("open", "closed", "paused")
+                )
+            ],
+            {("public", "status"): ("closed", "open")},
+        )[0].kind
+        == "additive_labels"
+    )
     add_diff = storage._check_enums([spec], {("public", "status"): ("open",)})
     assert add_diff[0].kind == "additive_labels"
     assert (
@@ -349,6 +361,18 @@ def test_enum_diff_metadata_unwrapping_and_sql_safety_and_cli_import(tmp_path) -
         == storage._EXIT_NOT_EVALUATED
     )
     assert storage._main(["check-schema", "--database-url", ""]) == storage._EXIT_NOT_EVALUATED
+    assert (
+        storage.check_schema_cli(
+            [
+                "check-schema",
+                "--database-url",
+                "postgresql://u:pw@127.0.0.1:1/db",
+                "--timeout",
+                "nan",
+            ]
+        )
+        == storage._EXIT_NOT_EVALUATED
+    )
 
     # CLI --import option imports side-effect module before resolving --metadata.
     (tmp_path / "custom_side_effect.py").write_text("IMPORTED = True\n", encoding="utf-8")
@@ -615,6 +639,12 @@ def test_s3_public_endpoint_presign_and_alembic_error(monkeypatch: pytest.Monkey
         storage,
         "_require_optional",
         lambda mod, *, extra: (_ for _ in ()).throw(RuntimeError(f"missing {mod} [{extra}]")),
+    )
+    assert (
+        storage.check_schema_cli(
+            ["check-schema", "--database-url", "postgresql://u:pw@127.0.0.1:1/db"]
+        )
+        == storage._EXIT_NOT_EVALUATED
     )
     with pytest.raises(RuntimeError, match="application environment"):
         storage._check_alembic_pending(None, alembic_config_path="alembic.ini")

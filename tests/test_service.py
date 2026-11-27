@@ -174,7 +174,11 @@ def test_init_service_probe_exclusion_telemetry_and_health_guard(
         health_extra=lambda: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     res_503 = TestClient(bad_app).get("/health")
-    assert res_503.status_code == 503 and res_503.json()["health_extra_error"] == "RuntimeError"
+    assert res_503.status_code == 503
+    bad_payload = res_503.json()
+    assert bad_payload["health_extra_error"] == "RuntimeError"
+    assert bad_payload["status"] == "unhealthy"
+    assert "health_extra:RuntimeError" in bad_payload["reasons"]
 
     class _Ok(BaseHTTPRequestHandler):
         def do_POST(self) -> None:  # noqa: N802
@@ -324,6 +328,12 @@ def test_http_clients_retry_probe_and_rate_limit() -> None:
     now[0] = 10.5
     assert win.acquire() == (True, 0.0)
     assert win.acquire()[0] is False
+    with pytest.raises(ValueError):
+        service.HttpClientSettings(timeout_seconds=float("inf"))
+    with pytest.raises(ValueError):
+        service.RateLimitWindow(1, float("nan"))
+    with pytest.raises(ValueError):
+        service.RateLimitWindow(True, 10.0)  # type: ignore[arg-type]
 
 
 def test_sse_stream_response_and_serve(monkeypatch: pytest.MonkeyPatch) -> None:

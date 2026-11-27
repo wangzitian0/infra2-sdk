@@ -173,6 +173,26 @@ def test_health_polling_and_cli() -> None:
         sleep=lambda s: now.__setitem__(0, now[0] + s),
     )
     assert res.ok is True and res.attempts == 8
+    assert delivery._version_matches("v4.14.1", ["v4.14.10"]) is False
+    assert delivery._version_matches("v4.14.10", ["v4.14.1"]) is False
+    assert delivery._version_matches("03ca473", ["03ca473abcdef0123456"]) is True
+
+    smoke_writes = delivery.CheckRow(
+        id="smoke", argv=("echo", "ok"), needs=("code", "running_service"), writes=True
+    )
+    assert "prod.operation" not in delivery.resolve_check_cells(smoke_writes)
+
+    seen_timeouts: list[float] = []
+    poll_now = [0.0]
+    delivery._poll_until_healthy(
+        "https://todo.zitian.party/api/health",
+        timeout_seconds=1.5,
+        request_timeout_seconds=5.0,
+        http_get=lambda _u, t: (seen_timeouts.append(t), (200, b"{}"))[1],
+        monotonic=lambda: poll_now[0],
+        sleep=lambda s: poll_now.__setitem__(0, poll_now[0] + s),
+    )
+    assert seen_timeouts == [1.5]
 
     class _Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802

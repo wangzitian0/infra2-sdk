@@ -496,12 +496,12 @@ class LlmSettings(_ContractModel):
         """Build LlmSettings strictly from canonical shared_env.yaml LLM variables."""
         env = _os.environ if environ is None else environ
         values: dict[str, _Any] = {}
-        for attr, key, sensitive in _LLM_ENV_FIELDS:
+        for attr, key, _sensitive in _LLM_ENV_FIELDS:
             if attr in overrides and overrides[attr] is not None:
                 continue
             raw = env.get(key)
             if isinstance(raw, str) and raw.strip():
-                values[attr] = raw if sensitive else raw.strip()
+                values[attr] = raw.strip()
         values.update({k: v for k, v in overrides.items() if v is not None})
         return cls(**values)
 
@@ -632,7 +632,8 @@ def llm_call_context(
         merged["_infra2_ctx_call_site"] = updates["infra.llm.call_site"]
     if decoding_version is not None:
         merged["_infra2_ctx_decoding_version"] = decoding_version
-    code_attrs, _ = _caller_frame_info()
+    stream_caller = prev.get("_infra2_stream_caller")
+    code_attrs, _ = stream_caller if stream_caller is not None else _caller_frame_info()
     public = {k: v for k, v in merged.items() if not k.startswith("_infra2_")}
     log_fields = {**code_attrs, **public}
     tok = _LLM_CONTEXT.set(merged)
@@ -859,6 +860,10 @@ def create_llm_agent(
         **(decoding.to_model_settings() if decoding is not None else {}),
         **(dict(model_settings) if model_settings is not None else {}),
     } or None
+    if cfg.provider.strip().lower() == "zai" and merged and "max_tokens" in merged:
+        eb = dict(merged.get("extra_body") or {})
+        eb.setdefault("max_tokens", merged["max_tokens"])
+        merged["extra_body"] = eb
     eff_dec = decoding.decoding_version if decoding is not None else None
     guarded_primary = _build_guarded_model(
         cfg,
@@ -928,6 +933,7 @@ def create_llm_agent(
             self, *, caller: tuple[dict[str, str | int], str] | None = None
         ) -> _Iterator[None]:
             prev = dict(_LLM_CONTEXT.get() or {})
+            stream_caller = prev.pop("_infra2_stream_caller", None)
             if caller is None:
                 pending = _PENDING_SYNC_CALLER.get()
                 if pending is not None and pending[0] == id(self):
@@ -936,6 +942,8 @@ def create_llm_agent(
                 elif _is_internal_agent_reentry(id(self), prev):
                     yield
                     return
+                elif stream_caller is not None:
+                    caller = stream_caller
             code_attrs, fallback_site = caller if caller is not None else _caller_frame_info()
             resolved_site = self._call_site or prev.get("_infra2_ctx_call_site")
             eff_site = str(resolved_site or fallback_site)
@@ -1076,8 +1084,13 @@ async def stream_text(
 
     queue: asyncio.Queue[tuple[str, _Any]] = asyncio.Queue(maxsize=1)
     pa_exc = _sys.modules.get("pydantic_ai.exceptions")
+    caller_info = _caller_frame_info()
 
     async def _produce() -> None:
+        prev_ctx = dict(_LLM_CONTEXT.get() or {})
+        stream_tok = None
+        if "_infra2_stream_caller" not in prev_ctx:
+            stream_tok = _LLM_CONTEXT.set({**prev_ctx, "_infra2_stream_caller": caller_info})
         try:
             ctx_kw = {
                 k: v
@@ -1111,6 +1124,9 @@ async def stream_text(
         except Exception as exc:  # noqa: BLE001
             out_exc = exc if _is_passthrough_exception(exc, pa_exc) else redact_llm_error(exc)
             await queue.put(("error", out_exc))
+        finally:
+            if stream_tok is not None:
+                _reset_llm_context(stream_tok, prev_ctx)
 
     producer = asyncio.create_task(_produce())
     try:
