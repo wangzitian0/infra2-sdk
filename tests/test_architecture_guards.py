@@ -216,9 +216,7 @@ def test_no_unexported_public_defs_cross_private_imports_or_eager_io() -> None:
 def test_readme_version_and_module_surface_table_parity() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "v4.13.1" in readme and "4.13.1" in readme
-    assert (
-        "v4.13.1" in (ROOT / "docs" / "app-integration-contract.md").read_text(encoding="utf-8")
-    )
+    assert "v4.13.1" in (ROOT / "docs" / "app-integration-contract.md").read_text(encoding="utf-8")
     assert "4.12." not in readme and "4.11." not in readme and "4.10." not in readme
 
     table_rows = re.findall(r"^\|\s*`infra2_sdk\.([a-z]+)`\s*\|[^|]+\|\s*([^|]+)\|", readme, re.M)

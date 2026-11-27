@@ -253,8 +253,7 @@ class EnvironmentManifest(ContractModel):
         for fld in self.fields:
             if (owner := owners.get(fld.env)) is not None:
                 raise ValueError(
-                    f"environment variable {fld.env!r} is shared "
-                    f"by {owner!r} and {fld.field!r}"
+                    f"environment variable {fld.env!r} is shared by {owner!r} and {fld.field!r}"
                 )
             owners[fld.env] = fld.field
         return self

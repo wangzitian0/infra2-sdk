@@ -2,6 +2,15 @@
 
 Versions follow `README.md`. Release steps are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## 4.13.1 - 2026-11-27
+
+### Fixed & Cleaned
+
+- `delivery`: send explicit `User-Agent` and `Accept: application/json` in `_default_http_get()` to avoid Cloudflare HTTP 403 blocks (#308).
+- `service`: use `redact_text(str(exc))` in `sse_stream_response()` fallback error scrubbing instead of invalid `redact_url_credentials(str(exc), "")`.
+- `config`: remove dead `EnvironmentField.aliases` field and unused alias checks.
+- `canary` / `docs` / `tests`: clean `canary/todo/worker.py` docstring and unused binding, update docs to `v4.13.1`, and drop duplicate v4.12 tombstone loops covered by `test_architecture_guards.py`.
+
 ## 4.13.0 - 2026-11-26
 
 ### Added
