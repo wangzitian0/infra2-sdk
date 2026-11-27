@@ -352,10 +352,18 @@ def is_retryable_llm_error(
     if code in {"1302", "1305"}:
         return True
     raw_status = getattr(exc, "status_code", None)
-    if type(raw_status) is int and raw_status in {429, 502, 503, 504}:
+    if type(raw_status) is int and raw_status in {429, 500, 502, 503, 504, 529}:
         return True
     pa_exc = _sys.modules.get("pydantic_ai.exceptions")
-    for name in ("ModelRequestTimeout", "ModelConnectionError"):
+    for name in (
+        "ModelRequestTimeout",
+        "ModelTimeoutError",
+        "ModelConnectionError",
+        "ModelServerError",
+        "ModelUnavailableError",
+        "ModelOverloadedError",
+        "ModelRateLimitError",
+    ):
         cls = getattr(pa_exc, name, None) if pa_exc is not None else None
         if cls is not None and isinstance(exc, cls):
             return True
