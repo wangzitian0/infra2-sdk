@@ -343,6 +343,11 @@ def test_enum_diff_metadata_unwrapping_and_sql_safety_and_cli_import(tmp_path) -
 
     with pytest.raises(storage._GateNotEvaluated):
         storage._check_schema("postgresql://u:pw@127.0.0.1:1/db", connect_timeout=0.5)
+    assert "check_schema_cli" in storage.__all__
+    assert (
+        storage.check_schema_cli(["check-schema", "--database-url", ""])
+        == storage._EXIT_NOT_EVALUATED
+    )
     assert storage._main(["check-schema", "--database-url", ""]) == storage._EXIT_NOT_EVALUATED
 
     # CLI --import option imports side-effect module before resolving --metadata.
