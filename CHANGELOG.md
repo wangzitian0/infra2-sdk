@@ -1,6 +1,6 @@
 # Changelog
 
-Versions follow `README.md`. Release steps are in [CONTRIBUTING.md](CONTRIBUTING.md).
+Versions follow the [README Compatibility](README.md#compatibility) rule. Release steps are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## 4.14.2 - 2026-11-27
 

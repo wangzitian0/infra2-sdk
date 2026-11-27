@@ -111,3 +111,17 @@ return await sse_stream_response(
 - Architectural charter and P1–P5 boundaries: [init.md](init.md)
 - Development and release guide: [CONTRIBUTING.md](CONTRIBUTING.md)
 - Canary Todo reference app: [canary/todo/README.md](canary/todo/README.md) (`pytest canary/todo/tests -q` and `scripts/check_canary_standalone.sh`)
+
+## Compatibility
+
+- Semantic versions describe the public Python and serialized JSON contracts.
+- Additive fields and enum values require a minor release.
+- Removing or changing an existing field requires a major release.
+- While infra2, finance_report and truealpha are the only consumers, a minor release may remove a
+  public name. It may also change the default of a keyword. The census must cover the production
+  and test code of the three consumers. It must find no use of the name and no reliance on the
+  old default. The CHANGELOG states the change. A change that a consumer relies on needs a major
+  release.
+- Receivers must require a JSON integer `contract_version` and reject booleans or unsupported
+  values before side effects.
+- Removed names and their replacements are listed in [CHANGELOG.md](CHANGELOG.md).
