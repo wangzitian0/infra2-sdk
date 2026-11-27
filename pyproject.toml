@@ -60,9 +60,6 @@ all = [
 ]
 
 [dependency-groups]
-canary = [
-    "uvicorn[standard]>=0.28,<1",
-]
 dev = [
     "boto3>=1.34,<2",
     "build>=1.2,<2,!=1.5.1",

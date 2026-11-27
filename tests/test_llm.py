@@ -31,7 +31,7 @@ class _Out(BaseModel):
     answer: str
 
 
-def test_llm_settings_decoding_and_binary_digests() -> None:
+def test_llm_settings_decoding_and_schema_digest() -> None:
     cfg = llm.LlmSettings.from_env(
         {
             "LLM_PROVIDER": "zai",

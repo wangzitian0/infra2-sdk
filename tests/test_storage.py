@@ -460,7 +460,14 @@ def pg_url() -> Iterator[tuple[str, bool]]:
         _wait_for(dsn, psycopg)
         yield dsn, False
         return
-    runtime = "docker" if shutil.which("docker") else ("podman" if shutil.which("podman") else None)
+    docker_ok = (
+        shutil.which("docker") is not None
+        and subprocess.run(
+            ["docker", "info"], capture_output=True, text=True, timeout=5, check=False
+        ).returncode
+        == 0
+    )
+    runtime = "docker" if docker_ok else ("podman" if shutil.which("podman") else None)
     if runtime is None:
         pytest.skip(f"no PostgreSQL: set {DSN_ENV} or install docker/podman")
     port = _free_port()

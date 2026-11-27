@@ -30,7 +30,6 @@ from infra2_sdk import __version__ as _SDK_VERSION
 from infra2_sdk.config import (
     EnvironmentManifest,
     EnvironmentTier,
-    RuntimeEnvKey,
     assert_env,
 )
 from infra2_sdk.llm import (
@@ -590,14 +589,13 @@ class _CanaryDependencyCheck:
 def _todo_health_extra(verdict: Mapping[str, Any] | None = None) -> dict[str, Any]:
     doc = dict(verdict) if verdict is not None else dict(_STATUS_CACHE[1]) if _STATUS_CACHE else {}
     canary_ok = doc.get("ok") is True
+    cfg = _settings()
     return {
         "ok": canary_ok,
         "request_id": current_request_id(),
-        "domain": _settings().canary_domain,
-        "environment": os.environ.get(RuntimeEnvKey.ENVIRONMENT.value, "").strip() or "unknown",
-        "configuration_sha256": (
-            os.environ.get(RuntimeEnvKey.CONFIGURATION_SHA256.value, "").strip() or "unknown"
-        ),
+        "domain": cfg.canary_domain,
+        "environment": cfg.environment or "unknown",
+        "configuration_sha256": cfg.configuration_sha256 or "unknown",
         "sdk_version": _SDK_VERSION,
         "canary": {"ok": canary_ok, "checked_at": doc.get("timestamp")},
         "uptime_seconds": round(time.time() - SERVER_START_TIME, 1),
