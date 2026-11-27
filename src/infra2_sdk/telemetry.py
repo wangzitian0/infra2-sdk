@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import atexit
-import contextlib
-import logging
-from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
-from dataclasses import dataclass
-from typing import Any
+import atexit as _atexit
+import contextlib as _contextlib
+import logging as _logging
+from collections.abc import Iterator as _Iterator
+from collections.abc import Mapping as _Mapping
+from contextlib import contextmanager as _contextmanager
+from dataclasses import dataclass as _dataclass
+from typing import Any as _Any
 
 from infra2_sdk._core import (
     bind_log_context as _bind_log_context,
@@ -31,35 +32,41 @@ class _NoopSpan:
     def __enter__(self) -> _NoopSpan:
         return self
 
-    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+    def __exit__(self, exc_type: _Any, exc: _Any, tb: _Any) -> bool:
         return False
 
-    def set_attribute(self, key: str, value: Any) -> None:
+    def set_attribute(self, key: str, value: _Any) -> None:
         return None
 
 
 class _NoopTracer:
-    def start_as_current_span(self, name: str, **_kwargs: Any) -> _NoopSpan:
+    def start_as_current_span(self, name: str, **_kwargs: _Any) -> _NoopSpan:
         return _NoopSpan()
 
 
 class _NoopMetric:
-    def record(self, value: float, attributes: Mapping[str, Any] | None = None) -> None:
+    def record(self, value: float, attributes: _Mapping[str, _Any] | None = None) -> None:
         return None
 
-    def add(self, amount: int | float, attributes: Mapping[str, Any] | None = None) -> None:
+    def add(self, amount: int | float, attributes: _Mapping[str, _Any] | None = None) -> None:
         return None
 
 
 class _NoopMeter:
-    def create_histogram(self, *_args: Any, **_kwargs: Any) -> _NoopMetric:
+    def create_histogram(self, *_args: _Any, **_kwargs: _Any) -> _NoopMetric:
         return _NoopMetric()
 
-    def create_counter(self, *_args: Any, **_kwargs: Any) -> _NoopMetric:
+    def create_counter(self, *_args: _Any, **_kwargs: _Any) -> _NoopMetric:
+        return _NoopMetric()
+
+    def create_up_down_counter(self, *_args: _Any, **_kwargs: _Any) -> _NoopMetric:
+        return _NoopMetric()
+
+    def create_observable_gauge(self, *_args: _Any, **_kwargs: _Any) -> _NoopMetric:
         return _NoopMetric()
 
 
-def get_tracer(name: str, tracer_provider: Any | None = None) -> Any:
+def get_tracer(name: str, tracer_provider: _Any | None = None) -> _Any:
     """Return an OpenTelemetry tracer when installed, else a lightweight no-op tracer."""
     try:
         from opentelemetry import trace as otel_trace
@@ -69,7 +76,7 @@ def get_tracer(name: str, tracer_provider: Any | None = None) -> Any:
     return provider.get_tracer(name)
 
 
-def get_meter(name: str, meter_provider: Any | None = None) -> Any:
+def get_meter(name: str, meter_provider: _Any | None = None) -> _Any:
     """Return an OpenTelemetry meter when installed, else a lightweight no-op meter."""
     try:
         from opentelemetry import metrics as otel_metrics
@@ -84,22 +91,22 @@ def current_request_id() -> str | None:
     return _current_request_id()
 
 
-@contextmanager
-def bind_log_context(**fields: Any) -> Iterator[dict[str, Any]]:
+@_contextmanager
+def bind_log_context(**fields: _Any) -> _Iterator[dict[str, _Any]]:
     """Bind structured context fields onto JSON logs and OTLP log records."""
     with _bind_log_context(**fields) as bound:
         yield bound
 
 
-@dataclass(slots=True)
+@_dataclass(slots=True)
 class TelemetryProviders:
     """Active OpenTelemetry trace, metric, and log providers with lifecycle controls."""
 
-    tracer_provider: Any | None = None
-    meter_provider: Any | None = None
-    logger_provider: Any | None = None
-    logging_instrumentor: Any | None = None
-    logging_handler: logging.Handler | None = None
+    tracer_provider: _Any | None = None
+    meter_provider: _Any | None = None
+    logger_provider: _Any | None = None
+    logging_instrumentor: _Any | None = None
+    logging_handler: _logging.Handler | None = None
     _closed: bool = False
 
     def force_flush(self, timeout_millis: int = 30_000) -> bool:
@@ -121,25 +128,25 @@ class TelemetryProviders:
         self._closed = True
         _clear_active_global(self)
         if self.logging_handler is not None:
-            with contextlib.suppress(Exception):
-                logging.getLogger().removeHandler(self.logging_handler)
+            with _contextlib.suppress(Exception):
+                _logging.getLogger().removeHandler(self.logging_handler)
             self.logging_handler = None
         if self.logging_instrumentor is not None:
-            with contextlib.suppress(Exception):
+            with _contextlib.suppress(Exception):
                 self.logging_instrumentor.uninstrument()
         for provider in (self.logger_provider, self.meter_provider, self.tracer_provider):
             if provider is not None:
-                with contextlib.suppress(Exception):
+                with _contextlib.suppress(Exception):
                     provider.shutdown()
 
 
 def init_worker(
     name: str,
     *,
-    environ: Mapping[str, str] | None = None,
+    environ: _Mapping[str, str] | None = None,
     strict: bool = True,
     require_issued_identity: bool = False,
-    log_level: int | None = logging.INFO,
+    log_level: int | None = _logging.INFO,
     set_global: bool = True,
 ) -> TelemetryProviders | None:
     """Configure JSON stdout logging and OTLP telemetry for a non-HTTP worker."""
@@ -153,7 +160,6 @@ def init_worker(
         require_issued_identity=require_issued_identity,
         suppress_probes=False,
         log_level=log_level,
-        set_global=set_global,
     )
     if active_settings is None:
         return None
@@ -167,22 +173,22 @@ def init_worker(
         warn(str(exc), RuntimeWarning, stacklevel=2)
         return None
     if set_global:
-        atexit.register(providers.shutdown)
+        _atexit.register(providers.shutdown)
     return providers
 
 
-@contextmanager
+@_contextmanager
 def worker_run(
     name: str,
     *,
-    environ: Mapping[str, str] | None = None,
+    environ: _Mapping[str, str] | None = None,
     strict: bool = False,
     require_issued_identity: bool = False,
-    log_level: int | None = logging.INFO,
+    log_level: int | None = _logging.INFO,
     set_global: bool = True,
     clear_root_handlers: bool = False,
-    on_sigterm: Any | None = None,
-) -> Iterator[TelemetryProviders | None]:
+    on_sigterm: _Any | None = None,
+) -> _Iterator[TelemetryProviders | None]:
     """Run a background worker task with unique instance ID, SIGTERM handling, and forced flush."""
     import os
     import signal
@@ -192,7 +198,7 @@ def worker_run(
     from infra2_sdk.config import RuntimeEnvKey
 
     if clear_root_handlers:
-        root = logging.getLogger()
+        root = _logging.getLogger()
         for handler in list(root.handlers):
             root.removeHandler(handler)
 
@@ -204,12 +210,12 @@ def worker_run(
             f"{raw_attrs},{instance_attr}" if raw_attrs else instance_attr
         )
 
-    prev_sigterm: Any = None
+    prev_sigterm: _Any = None
     installed_sigterm = False
     if threading.current_thread() is threading.main_thread():
         prev_sigterm = signal.getsignal(signal.SIGTERM)
 
-        def _handle_sigterm(signum: int, _frame: Any) -> None:
+        def _handle_sigterm(signum: int, _frame: _Any) -> None:
             if callable(on_sigterm):
                 on_sigterm()
             raise SystemExit(128 + signum)
@@ -229,7 +235,7 @@ def worker_run(
         yield providers
     finally:
         if providers is not None:
-            with contextlib.suppress(Exception):
+            with _contextlib.suppress(Exception):
                 providers.force_flush()
             providers.shutdown()
         if installed_sigterm:

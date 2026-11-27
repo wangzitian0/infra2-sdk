@@ -2,33 +2,54 @@
 
 from __future__ import annotations
 
-import argparse
-import functools
-import importlib.metadata
-import importlib.resources
-import json
-import math
-import os
-import re
-import subprocess
-import time
-import urllib.error
-import urllib.request
-from collections.abc import Callable, Mapping, Sequence
-from datetime import UTC, datetime
-from pathlib import Path
-from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal
+import argparse as _argparse
+import functools as _functools
+import json as _json
+import math as _math
+import os as _os
+import re as _re
+import subprocess as _subprocess
+import time as _time
+from collections.abc import Callable as _Callable
+from collections.abc import Mapping as _Mapping
+from collections.abc import Sequence as _Sequence
+from datetime import UTC as _UTC
+from datetime import datetime as _datetime
+from importlib import metadata as _importlib_metadata
+from importlib import resources as _importlib_resources
+from pathlib import Path as _Path
+from types import MappingProxyType as _MappingProxyType
+from typing import TYPE_CHECKING as _TYPE_CHECKING
+from typing import Any as _Any
+from typing import Literal as _Literal
+from urllib import error as _urllib_error
+from urllib import request as _urllib_request
 
-import yaml
-from pydantic import Field, field_validator, model_validator
+import yaml as _yaml
+from pydantic import (
+    Field as _Field,
+)
+from pydantic import (
+    field_validator as _field_validator,
+)
+from pydantic import (
+    model_validator as _model_validator,
+)
 
 from infra2_sdk._core import (
-    ContractModel,
-    parse_iso_utc,
-    redact_secrets,
-    require_contract_version,
-    validate_http_url,
+    ContractModel as _ContractModel,
+)
+from infra2_sdk._core import (
+    parse_iso_utc as _parse_iso_utc,
+)
+from infra2_sdk._core import (
+    redact_secrets as _redact_secrets,
+)
+from infra2_sdk._core import (
+    require_contract_version as _require_contract_version,
+)
+from infra2_sdk._core import (
+    validate_http_url as _validate_http_url,
 )
 
 _POLICY_VERSION = 1
@@ -84,7 +105,7 @@ _HOOK_PASSTHROUGH_KEYS: frozenset[str] = frozenset(
     }
 )
 
-_NeedKind = Literal[
+_NeedKind = _Literal[
     "code",
     "recorded_llm",
     "running_service",
@@ -93,7 +114,7 @@ _NeedKind = Literal[
     "real_provider",
 ]
 _CODE_ONLY_NEEDS: frozenset[str] = frozenset({"code", "recorded_llm"})
-_ENV_NAME_RE = re.compile(r"\A[A-Z][A-Z0-9_]*\Z")
+_ENV_NAME_RE = _re.compile(r"\A[A-Z][A-Z0-9_]*\Z")
 
 
 def _validate_hook_env_names(names: tuple[str, ...], *, label: str = "manifest") -> tuple[str, ...]:
@@ -109,40 +130,42 @@ def _validate_hook_env_names(names: tuple[str, ...], *, label: str = "manifest")
     return names
 
 
-class CellPolicy(ContractModel):
+class CellPolicy(_ContractModel):
     """Typed delivery policy definition for one pipeline cell from stages.yaml."""
 
     stage: str
     phase: str
     stage_id: str
-    owner: Literal["app", "platform"]
+    owner: _Literal["app", "platform"]
     check_list: str | tuple[str, ...] | None = None
     trigger: str
     budget_seconds: int
     scale: str
-    enforcement: Literal["blocks", "reports"]
+    enforcement: _Literal["blocks", "reports"]
     stop_on_fail: bool
     capabilities: tuple[_NeedKind, ...] = ()
 
-    @field_validator("check_list", mode="before")
+    @_field_validator("check_list", mode="before")
     @classmethod
-    def _coerce_check_list(cls, value: Any) -> str | tuple[str, ...] | None:
+    def _coerce_check_list(cls, value: _Any) -> str | tuple[str, ...] | None:
         if isinstance(value, list):
             return tuple(str(x) for x in value)
         return value
 
 
-@functools.cache
-def _load_stages_cached() -> tuple[Mapping[str, Any], Mapping[str, CellPolicy]]:
+@_functools.cache
+def _load_stages_cached() -> tuple[_Mapping[str, _Any], _Mapping[str, CellPolicy]]:
     raw_text = (
-        importlib.resources.files("infra2_sdk.data")
+        _importlib_resources.files("infra2_sdk.data")
         .joinpath("stages.yaml")
         .read_text(encoding="utf-8")
     )
-    doc = yaml.safe_load(raw_text)
+    doc = _yaml.safe_load(raw_text)
     if not isinstance(doc, dict):
         raise ValueError("stages.yaml root must be a mapping")
-    require_contract_version(doc.get("policy_version"), _POLICY_VERSION, label="stages.yaml policy")
+    _require_contract_version(
+        doc.get("policy_version"), _POLICY_VERSION, label="stages.yaml policy"
+    )
     raw_stages = dict(doc.get("stages") or {})
     raw_cells = doc.get("cells")
     if not isinstance(raw_cells, dict) or not raw_cells:
@@ -153,38 +176,35 @@ def _load_stages_cached() -> tuple[Mapping[str, Any], Mapping[str, CellPolicy]]:
         if raw_stages and policy.stage_id not in raw_stages:
             raise ValueError(f"stages.yaml cell {name!r} references unknown stage_id")
         cells[str(name)] = policy
-    frozen_cells = MappingProxyType(cells)
-    payload = MappingProxyType(
+    frozen_cells = _MappingProxyType(cells)
+    payload = _MappingProxyType(
         {
-            "policy_version": int(doc["policy_version"]),
             "bootstrap_cap_seconds": int(doc.get("bootstrap_cap_seconds", 120)),
-            "stages": MappingProxyType(raw_stages),
-            "cells": frozen_cells,
         }
     )
     return payload, frozen_cells
 
 
-if TYPE_CHECKING:
-    CELL_POLICIES: Mapping[str, CellPolicy]
+if _TYPE_CHECKING:
+    CELL_POLICIES: _Mapping[str, CellPolicy]
 
 
-def _cell_policies() -> Mapping[str, CellPolicy]:
+def _cell_policies() -> _Mapping[str, CellPolicy]:
     return _load_stages_cached()[1]
 
 
-def __getattr__(name: str) -> Any:
+def __getattr__(name: str) -> _Any:
     if name == "CELL_POLICIES":
         return _cell_policies()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-class _OverrideReason(ContractModel):
+class _OverrideReason(_ContractModel):
     reason: str
     issue: str = ""
-    expires_at: datetime | None = None
+    expires_at: _datetime | None = None
 
-    @field_validator("reason")
+    @_field_validator("reason")
     @classmethod
     def _require_reason(cls, value: str) -> str:
         text = value.strip()
@@ -192,26 +212,28 @@ class _OverrideReason(ContractModel):
             raise ValueError("override reason must not be blank")
         return text
 
-    @field_validator("expires_at", mode="before")
+    @_field_validator("expires_at", mode="before")
     @classmethod
-    def _coerce_expires(cls, value: Any) -> datetime | None:
+    def _coerce_expires(cls, value: _Any) -> _datetime | None:
         if value is None:
             return None
-        return parse_iso_utc(value)
+        return _parse_iso_utc(value)
 
-    def is_active(self, now: datetime | None = None) -> bool:
+    def is_active(self, now: _datetime | None = None) -> bool:
         if self.expires_at is None:
             return True
-        current = now or datetime.now(UTC)
-        current = current.replace(tzinfo=UTC) if current.tzinfo is None else current.astimezone(UTC)
+        current = now or _datetime.now(_UTC)
+        current = (
+            current.replace(tzinfo=_UTC) if current.tzinfo is None else current.astimezone(_UTC)
+        )
         return self.expires_at > current
 
 
-class _CellOverrides(ContractModel):
-    add: dict[str, _OverrideReason] = Field(default_factory=dict)
-    remove: dict[str, _OverrideReason] = Field(default_factory=dict)
+class _CellOverrides(_ContractModel):
+    add: dict[str, _OverrideReason] = _Field(default_factory=dict)
+    remove: dict[str, _OverrideReason] = _Field(default_factory=dict)
 
-    @field_validator("add", "remove")
+    @_field_validator("add", "remove")
     @classmethod
     def _validate_cells(cls, value: dict[str, _OverrideReason]) -> dict[str, _OverrideReason]:
         known = _cell_policies()
@@ -220,7 +242,7 @@ class _CellOverrides(ContractModel):
             raise ValueError(f"cells override references unknown cells: {', '.join(unknown)}")
         return value
 
-    @model_validator(mode="after")
+    @_model_validator(mode="after")
     def _disjoint_add_remove(self) -> _CellOverrides:
         overlap = sorted(set(self.add) & set(self.remove))
         if overlap:
@@ -228,7 +250,7 @@ class _CellOverrides(ContractModel):
         return self
 
 
-class CheckRow(ContractModel):
+class CheckRow(_ContractModel):
     """One executable verification step declared in Schema v3 runtime-hooks.manifest.json."""
 
     id: str
@@ -241,10 +263,10 @@ class CheckRow(ContractModel):
     required_env: tuple[str, ...] = ()
     optional_env: tuple[str, ...] = ()
     checkout_lineage: bool = False
-    cells: _CellOverrides = Field(default_factory=_CellOverrides)
+    cells: _CellOverrides = _Field(default_factory=_CellOverrides)
     off: _OverrideReason | None = None
 
-    @field_validator("id")
+    @_field_validator("id")
     @classmethod
     def _validate_id(cls, value: str) -> str:
         text = value.strip()
@@ -252,27 +274,27 @@ class CheckRow(ContractModel):
             raise ValueError(f"invalid check id {value!r}")
         return text
 
-    @field_validator("argv")
+    @_field_validator("argv")
     @classmethod
     def _validate_argv(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         if not value or any(not str(part).strip() for part in value):
             raise ValueError("check argv must be a non-empty list of strings")
         return value
 
-    @field_validator("timeout_seconds")
+    @_field_validator("timeout_seconds")
     @classmethod
     def _validate_timeout(cls, value: int) -> int:
         if value <= 0:
             raise ValueError("timeout_seconds must be positive")
         return int(value)
 
-    @field_validator("required_env", "optional_env")
+    @_field_validator("required_env", "optional_env")
     @classmethod
     def _validate_env_names(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         return _validate_hook_env_names(value, label="check")
 
 
-class RuntimeHooksManifest(ContractModel):
+class RuntimeHooksManifest(_ContractModel):
     """Schema v3 runtime-hooks.manifest.json contract."""
 
     schema_version: int = _HOOKS_SCHEMA_VERSION
@@ -282,14 +304,14 @@ class RuntimeHooksManifest(ContractModel):
     optional_env: tuple[str, ...] = ()
     checks: tuple[CheckRow, ...]
 
-    @field_validator("schema_version", mode="before")
+    @_field_validator("schema_version", mode="before")
     @classmethod
-    def _validate_schema_version(cls, value: Any) -> int:
-        return require_contract_version(
+    def _validate_schema_version(cls, value: _Any) -> int:
+        return _require_contract_version(
             value, _HOOKS_SCHEMA_VERSION, label="runtime-hooks manifest"
         )
 
-    @field_validator("service", "artifacts_dir")
+    @_field_validator("service", "artifacts_dir")
     @classmethod
     def _validate_non_empty(cls, value: str) -> str:
         text = value.strip()
@@ -297,12 +319,12 @@ class RuntimeHooksManifest(ContractModel):
             raise ValueError("service and artifacts_dir must not be empty")
         return text
 
-    @field_validator("required_env", "optional_env")
+    @_field_validator("required_env", "optional_env")
     @classmethod
     def _validate_env_names(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         return _validate_hook_env_names(value, label="manifest")
 
-    @model_validator(mode="after")
+    @_model_validator(mode="after")
     def _validate_manifest(self) -> RuntimeHooksManifest:
         if overlap := sorted(set(self.required_env) & set(self.optional_env)):
             raise ValueError(f"env var(s) declared in both required and optional: {overlap}")
@@ -314,13 +336,13 @@ class RuntimeHooksManifest(ContractModel):
         return self
 
     @classmethod
-    def from_file(cls, path: str | Path) -> RuntimeHooksManifest:
+    def from_file(cls, path: str | _Path) -> RuntimeHooksManifest:
         """Load and validate a runtime-hooks.manifest.json file."""
-        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+        raw = _json.loads(_Path(path).read_text(encoding="utf-8"))
         return cls.model_validate(raw)
 
 
-class _CheckVerdict(ContractModel):
+class _CheckVerdict(_ContractModel):
     id: str
     cell: str
     passed: bool
@@ -330,7 +352,7 @@ class _CheckVerdict(ContractModel):
     stderr: str = ""
 
 
-class _HookRunResult(ContractModel):
+class _HookRunResult(_ContractModel):
     cell: str
     service: str
     passed: bool
@@ -340,11 +362,11 @@ class _HookRunResult(ContractModel):
 def resolve_check_cells(
     check: CheckRow,
     *,
-    now: datetime | None = None,
+    now: _datetime | None = None,
 ) -> tuple[str, ...]:
     """Derive the ordered delivery cells in which a CheckRow should execute."""
     active_policies = _cell_policies()
-    current_time = now or datetime.now(UTC)
+    current_time = now or _datetime.now(_UTC)
     if check.off is not None and check.off.is_active(current_time):
         return ()
     needed = set(check.needs)
@@ -392,12 +414,12 @@ def resolve_check_cells(
 
 def _build_hook_env(
     manifest: RuntimeHooksManifest,
-    environ: Mapping[str, str] | None = None,
-    checks: Sequence[CheckRow] = (),
+    environ: _Mapping[str, str] | None = None,
+    checks: _Sequence[CheckRow] = (),
     *,
     cell: str | None = None,
 ) -> dict[str, str]:
-    source = os.environ if environ is None else environ
+    source = _os.environ if environ is None else environ
     required_keys = tuple(
         dict.fromkeys(
             [*manifest.required_env, *(k for check in checks for k in check.required_env)]
@@ -437,17 +459,17 @@ def _run_cell(
     manifest: RuntimeHooksManifest,
     cell: str,
     *,
-    environ: Mapping[str, str] | None = None,
-    cwd: str | Path | None = None,
-    runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
-    now: datetime | None = None,
-    monotonic: Callable[[], float] = time.monotonic,
+    environ: _Mapping[str, str] | None = None,
+    cwd: str | _Path | None = None,
+    runner: _Callable[..., _subprocess.CompletedProcess[str]] | None = None,
+    now: _datetime | None = None,
+    monotonic: _Callable[[], float] = _time.monotonic,
 ) -> _HookRunResult:
     policies = _cell_policies()
     if cell not in policies:
         raise ValueError(f"unknown delivery cell {cell!r}")
     policy = policies[cell]
-    current_time = now or datetime.now(UTC)
+    current_time = now or _datetime.now(_UTC)
     selected = [
         c
         for c in manifest.checks
@@ -471,8 +493,8 @@ def _run_cell(
             ),
         )
     env = _build_hook_env(manifest, environ, checks=selected, cell=cell)
-    exec_fn = subprocess.run if runner is None else runner
-    source_env = os.environ if environ is None else environ
+    exec_fn = _subprocess.run if runner is None else runner
+    source_env = _os.environ if environ is None else environ
     bootstrap_cap = float(_load_stages_cached()[0]["bootstrap_cap_seconds"])
     cell_deadline = monotonic() + policy.budget_seconds
 
@@ -495,7 +517,7 @@ def _run_cell(
                 check=False,
             )
             rc = int(proc.returncode)
-            err_text = redact_secrets(_decode_stream(proc.stderr), source_env)
+            err_text = _redact_secrets(_decode_stream(proc.stderr), source_env)
             if prefix and rc != 0:
                 stripped = err_text.strip()
                 err_text = (
@@ -508,12 +530,12 @@ def _run_cell(
                 cell=cell,
                 passed=rc == 0,
                 exit_code=rc,
-                duration_seconds=time.perf_counter() - started,
-                stdout=redact_secrets(_decode_stream(proc.stdout), source_env),
+                duration_seconds=_time.perf_counter() - started,
+                stdout=_redact_secrets(_decode_stream(proc.stdout), source_env),
                 stderr=err_text,
             )
-        except subprocess.TimeoutExpired as exc:
-            err_tail = redact_secrets(_decode_stream(exc.stderr), source_env)
+        except _subprocess.TimeoutExpired as exc:
+            err_tail = _redact_secrets(_decode_stream(exc.stderr), source_env)
             timeout_note = f"{prefix}timed out after {timeout:g}s"
             combined_err = f"{timeout_note}\n{err_tail}".strip() if err_tail else timeout_note
             return _CheckVerdict(
@@ -521,8 +543,8 @@ def _run_cell(
                 cell=cell,
                 passed=False,
                 exit_code=124,
-                duration_seconds=time.perf_counter() - started,
-                stdout=redact_secrets(_decode_stream(exc.stdout), source_env),
+                duration_seconds=_time.perf_counter() - started,
+                stdout=_redact_secrets(_decode_stream(exc.stdout), source_env),
                 stderr=combined_err,
             )
         except OSError as exc:
@@ -531,8 +553,8 @@ def _run_cell(
                 cell=cell,
                 passed=False,
                 exit_code=127,
-                duration_seconds=time.perf_counter() - started,
-                stderr=redact_secrets(f"{prefix}{type(exc).__name__}: {exc}", source_env),
+                duration_seconds=_time.perf_counter() - started,
+                stderr=_redact_secrets(f"{prefix}{type(exc).__name__}: {exc}", source_env),
             )
 
     verdicts: list[_CheckVerdict] = []
@@ -550,7 +572,7 @@ def _run_cell(
                 )
             )
             break
-        started = time.perf_counter()
+        started = _time.perf_counter()
         if check.bootstrap.strip():
             boot_verdict = _exec_step(
                 check.id,
@@ -572,7 +594,7 @@ def _run_cell(
                         cell=cell,
                         passed=False,
                         exit_code=124,
-                        duration_seconds=time.perf_counter() - started,
+                        duration_seconds=_time.perf_counter() - started,
                         stderr=f"cell {cell!r} exhausted {policy.budget_seconds}s budget",
                     )
                 )
@@ -591,10 +613,10 @@ def _run_cell(
     )
 
 
-_HttpGet = Callable[[str, float], tuple[int, bytes]]
+_HttpGet = _Callable[[str, float], tuple[int, bytes]]
 
 
-class _HealthPollResult(ContractModel):
+class _HealthPollResult(_ContractModel):
     ok: bool
     attempts: int
     status_code: int | None = None
@@ -602,15 +624,15 @@ class _HealthPollResult(ContractModel):
     detail: str = ""
 
 
-class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req: Any, fp: Any, code: int, msg: str, hdrs: Any, newurl: str):
+class _NoRedirectHandler(_urllib_request.HTTPRedirectHandler):
+    def redirect_request(self, req: _Any, fp: _Any, code: int, msg: str, hdrs: _Any, newurl: str):
         return None
 
 
 def _default_user_agent() -> str:
     try:
-        pkg_version = importlib.metadata.version("infra2-sdk")
-    except importlib.metadata.PackageNotFoundError:  # pragma: no cover
+        pkg_version = _importlib_metadata.version("infra2-sdk")
+    except _importlib_metadata.PackageNotFoundError:  # pragma: no cover
         pkg_version = "0.0.0"
     return f"infra2-sdk/{pkg_version}"
 
@@ -618,7 +640,7 @@ def _default_user_agent() -> str:
 def _default_http_get(
     url: str, timeout_seconds: float, *, follow_redirects: bool = False
 ) -> tuple[int, bytes]:
-    req = urllib.request.Request(
+    req = _urllib_request.Request(
         url,
         headers={
             "User-Agent": _default_user_agent(),
@@ -627,19 +649,19 @@ def _default_http_get(
         method="GET",
     )
     opener = (
-        urllib.request.build_opener()
+        _urllib_request.build_opener()
         if follow_redirects
-        else urllib.request.build_opener(_NoRedirectHandler())
+        else _urllib_request.build_opener(_NoRedirectHandler())
     )
     try:
         with opener.open(req, timeout=timeout_seconds) as resp:  # noqa: S310
             return (int(resp.status), resp.read())
-    except urllib.error.HTTPError as exc:
+    except _urllib_error.HTTPError as exc:
         body = exc.read() if hasattr(exc, "read") else b""
         return (int(exc.code), body)
 
 
-def _version_matches(expected: str, candidates: Sequence[str]) -> bool:
+def _version_matches(expected: str, candidates: _Sequence[str]) -> bool:
     exp = expected.strip()
     if not exp:
         return True
@@ -663,16 +685,16 @@ def _poll_until_healthy(
     interval_seconds: float = 2.0,
     follow_redirects: bool = False,
     http_get: _HttpGet | None = None,
-    monotonic: Callable[[], float] = time.monotonic,
-    sleep: Callable[[float], None] = time.sleep,
+    monotonic: _Callable[[], float] = _time.monotonic,
+    sleep: _Callable[[float], None] = _time.sleep,
 ) -> _HealthPollResult:
-    validate_http_url(url, label="poll url")
+    _validate_http_url(url, label="poll url")
     for label, val in (
         ("timeout_seconds", timeout_seconds),
         ("request_timeout_seconds", request_timeout_seconds),
         ("interval_seconds", interval_seconds),
     ):
-        if not math.isfinite(val) or val <= 0:
+        if not _math.isfinite(val) or val <= 0:
             raise ValueError(f"{label} must be positive")
 
     getter: _HttpGet = (
@@ -691,13 +713,13 @@ def _poll_until_healthy(
         try:
             status_code, body = getter(url, request_timeout_seconds)
             last_status = status_code
-            payload: Mapping[str, Any] = {}
+            payload: _Mapping[str, _Any] = {}
             if body:
                 try:
-                    parsed = json.loads(body.decode("utf-8", errors="replace"))
-                    if isinstance(parsed, Mapping):
+                    parsed = _json.loads(body.decode("utf-8", errors="replace"))
+                    if isinstance(parsed, _Mapping):
                         payload = parsed
-                except json.JSONDecodeError:
+                except _json.JSONDecodeError:
                     payload = {}
             version_candidates = [
                 str(payload.get(k) or "").strip()
@@ -735,9 +757,9 @@ def _poll_until_healthy(
         sleep(min(interval_seconds, remaining))
 
 
-def _main(argv: Sequence[str] | None = None) -> int:
+def _main(argv: _Sequence[str] | None = None) -> int:
     """CLI entrypoint for runtime hooks validation, cell execution, and health polling."""
-    parser = argparse.ArgumentParser(prog="python -m infra2_sdk.delivery")
+    parser = _argparse.ArgumentParser(prog="python -m infra2_sdk.delivery")
     sub = parser.add_subparsers(dest="command", required=True)
 
     chk = sub.add_parser("check-hooks", help="Validate runtime-hooks.manifest.json.")
@@ -759,12 +781,12 @@ def _main(argv: Sequence[str] | None = None) -> int:
     if args.command == "check-hooks":
         manifest = RuntimeHooksManifest.from_file(args.manifest)
         resolved = {c.id: resolve_check_cells(c) for c in manifest.checks}
-        print(json.dumps({"service": manifest.service, "checks": resolved}, sort_keys=True))
+        print(_json.dumps({"service": manifest.service, "checks": resolved}, sort_keys=True))
         return 0
     if args.command == "run-cell":
         manifest = RuntimeHooksManifest.from_file(args.manifest)
         result = _run_cell(manifest, args.cell, cwd=args.cwd)
-        print(json.dumps(result.to_dict(), sort_keys=True))
+        print(_json.dumps(result.to_dict(), sort_keys=True))
         return 0 if result.passed else 1
 
     res = _poll_until_healthy(
@@ -774,7 +796,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
         interval_seconds=args.interval_seconds,
         follow_redirects=args.follow_redirects,
     )
-    print(json.dumps(res.to_dict(), sort_keys=True))
+    print(_json.dumps(res.to_dict(), sort_keys=True))
     return 0 if res.ok else 1
 
 

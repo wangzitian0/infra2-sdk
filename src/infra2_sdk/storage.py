@@ -2,35 +2,66 @@
 
 from __future__ import annotations
 
-import argparse
-import contextlib
-import importlib
-import json
-import math
-import os
-import re
-import secrets
-import socket
-import ssl
-import sys
-import time
-from collections.abc import Collection, Iterator, Mapping, Sequence
-from typing import Any, ClassVar, Literal, Self
-from urllib.parse import unquote, urlsplit
+import argparse as _argparse
+import contextlib as _contextlib
+import importlib as _importlib
+import json as _json
+import math as _math
+import os as _os
+import re as _re
+import secrets as _secrets
+import socket as _socket
+import ssl as _ssl
+import sys as _sys
+import time as _time
+from collections.abc import (
+    Collection as _Collection,
+)
+from collections.abc import (
+    Iterator as _Iterator,
+)
+from collections.abc import (
+    Mapping as _Mapping,
+)
+from collections.abc import (
+    Sequence as _Sequence,
+)
+from typing import Any as _Any
+from typing import ClassVar as _ClassVar
+from typing import Literal as _Literal
+from typing import Self as _Self
+from urllib.parse import unquote as _unquote
+from urllib.parse import urlsplit as _urlsplit
 
-from pydantic import Field, field_validator
+from pydantic import Field as _Field
+from pydantic import field_validator as _field_validator
 
 from infra2_sdk._core import (
-    ContractModel,
-    load_dotted_symbol,
-    redact_secrets,
-    redact_text,
-    redact_url,
-    redact_url_credentials,
-    require_optional,
-    validate_http_url,
+    ContractModel as _ContractModel,
 )
-from infra2_sdk.service import DependencyStatus, ProbeResult
+from infra2_sdk._core import (
+    load_dotted_symbol as _load_dotted_symbol,
+)
+from infra2_sdk._core import (
+    redact_secrets as _redact_secrets,
+)
+from infra2_sdk._core import (
+    redact_text as _redact_text,
+)
+from infra2_sdk._core import (
+    redact_url as _redact_url,
+)
+from infra2_sdk._core import (
+    redact_url_credentials as _redact_url_credentials,
+)
+from infra2_sdk._core import (
+    require_optional as _require_optional,
+)
+from infra2_sdk._core import (
+    validate_http_url as _validate_http_url,
+)
+from infra2_sdk.service import DependencyStatus as _DependencyStatus
+from infra2_sdk.service import ProbeResult as _ProbeResult
 
 _EXIT_OK = 0
 _EXIT_BLOCKED = 1
@@ -40,7 +71,7 @@ _ROLLBACK_CLASS_A = "A"
 _ROLLBACK_CLASS_C = "C"
 
 _DEFAULT_TIMEOUT_SECONDS = 5.0
-_PROBE_TABLE_RE = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]{0,62}\Z")
+_PROBE_TABLE_RE = _re.compile(r"\A[A-Za-z_][A-Za-z0-9_]{0,62}\Z")
 _RESP_CRLF = b"\r\n"
 _RESP_MAX_LINE_BYTES = 65_536
 
@@ -136,16 +167,16 @@ WHERE a.attnum > 0
 ORDER BY en.nspname, et.typname, tn.nspname, c.relname;
 """
 
-_DISALLOWED_SQL_RE = re.compile(
+_DISALLOWED_SQL_RE = _re.compile(
     r"\b(?:INSERT|UPDATE|DELETE|MERGE|UPSERT|CREATE|ALTER|DROP|TRUNCATE|GRANT|REVOKE|"
     r"COPY|CALL|DO|EXECUTE|PREPARE|LOCK|VACUUM|ANALYZE|REINDEX|CLUSTER|COMMENT|"
     r"SET|RESET|BEGIN|COMMIT|ROLLBACK|SAVEPOINT|NEXTVAL|SETVAL|"
     r"PG_TERMINATE_BACKEND|PG_CANCEL_BACKEND|SET_CONFIG)\b",
-    re.IGNORECASE,
+    _re.IGNORECASE,
 )
-_LINE_COMMENT_RE = re.compile(r"--[^\n]*")
-_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
-_STRING_LITERAL_RE = re.compile(r"'(?:''|[^'])*'")
+_LINE_COMMENT_RE = _re.compile(r"--[^\n]*")
+_BLOCK_COMMENT_RE = _re.compile(r"/\*.*?\*/", _re.DOTALL)
+_STRING_LITERAL_RE = _re.compile(r"'(?:''|[^'])*'")
 _FALSY_SCALAR_STRINGS = frozenset({"false", "f", "0", "no", "none", ""})
 
 
@@ -153,28 +184,28 @@ class _GateNotEvaluated(RuntimeError):
     """Raised when the schema gate cannot evaluate database or migration state."""
 
 
-class _UrlConnectionSettings(ContractModel):
-    _DEFAULT_ENV_VAR: ClassVar[str]
-    url: str = Field(repr=False)
+class _UrlConnectionSettings(_ContractModel):
+    _DEFAULT_ENV_VAR: _ClassVar[str]
+    url: str = _Field(repr=False)
     connect_timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS
 
-    @field_validator("connect_timeout_seconds")
+    @_field_validator("connect_timeout_seconds")
     @classmethod
     def _validate_timeout(cls, value: float) -> float:
-        if not math.isfinite(value) or value <= 0:
+        if not _math.isfinite(value) or value <= 0:
             raise ValueError("connect_timeout_seconds must be positive")
         return float(value)
 
     @classmethod
     def from_env(
         cls,
-        environ: Mapping[str, str] | None = None,
+        environ: _Mapping[str, str] | None = None,
         *,
         url_env_var: str | None = None,
         timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
-    ) -> Self:
+    ) -> _Self:
         """Build connection settings from an environment mapping."""
-        env = os.environ if environ is None else environ
+        env = _os.environ if environ is None else environ
         key = url_env_var or cls._DEFAULT_ENV_VAR
         raw = env.get(key, "").strip()
         if not raw:
@@ -185,9 +216,9 @@ class _UrlConnectionSettings(ContractModel):
 class PostgresSettings(_UrlConnectionSettings):
     """PostgreSQL connection configuration."""
 
-    _DEFAULT_ENV_VAR: ClassVar[str] = "DATABASE_URL"
+    _DEFAULT_ENV_VAR: _ClassVar[str] = "DATABASE_URL"
 
-    @field_validator("url")
+    @_field_validator("url")
     @classmethod
     def _validate_url(cls, value: str) -> str:
         return _normalize_postgres_dsn(value)
@@ -198,7 +229,7 @@ def _normalize_postgres_dsn(dsn: str) -> str:
     text = dsn.strip()
     if not text:
         raise ValueError("PostgreSQL DSN must not be empty")
-    parsed = urlsplit(text)
+    parsed = _urlsplit(text)
     scheme = parsed.scheme.lower()
     base = scheme.split("+", 1)[0]
     if base not in {"postgresql", "postgres"}:
@@ -224,8 +255,8 @@ def _normalize_postgres_dsn(dsn: str) -> str:
 def redact_postgres_error(exc: BaseException, dsn: str | None = None) -> str:
     """Format an exception message while redacting embedded PostgreSQL credentials."""
     detail = f"{type(exc).__name__}: {exc}"
-    return redact_secrets(
-        redact_url_credentials(detail, dsn, placeholder="postgresql://[REDACTED]")
+    return _redact_secrets(
+        _redact_url_credentials(detail, dsn, placeholder="postgresql://[REDACTED]")
     )
 
 
@@ -236,17 +267,17 @@ def probe_postgres(
     name: str = "postgres",
     verify_write: bool = False,
     probe_table: str = "infra2_sdk_probe",
-) -> ProbeResult:
+) -> _ProbeResult:
     """Verify PostgreSQL connectivity (`SELECT 1`) and optional temp-table write round-trip."""
-    if not math.isfinite(connect_timeout) or connect_timeout <= 0:
+    if not _math.isfinite(connect_timeout) or connect_timeout <= 0:
         raise ValueError("connect_timeout must be positive")
     if not _PROBE_TABLE_RE.fullmatch(probe_table):
         raise ValueError("probe_table must be a valid SQL identifier")
-    psycopg = require_optional("psycopg", extra="postgres")
-    started = time.perf_counter()
+    psycopg = _require_optional("psycopg", extra="postgres")
+    started = _time.perf_counter()
     try:
         dsn = _normalize_postgres_dsn(url)
-        timeout_arg = max(1, int(math.ceil(connect_timeout)))
+        timeout_arg = max(1, int(_math.ceil(connect_timeout)))
         timeout_ms = timeout_arg * 1000
         with (
             psycopg.connect(
@@ -259,11 +290,11 @@ def probe_postgres(
             cur.execute("SELECT 1")
             row = cur.fetchone()
             if not row or row[0] != 1:
-                return ProbeResult(
+                return _ProbeResult(
                     name=name,
-                    status=DependencyStatus.ABSENT,
+                    status=_DependencyStatus.ABSENT,
                     detail="SELECT 1 returned unexpected result",
-                    duration_ms=(time.perf_counter() - started) * 1000,
+                    duration_ms=(_time.perf_counter() - started) * 1000,
                 )
             if verify_write:
                 cur.execute("SET LOCAL transaction_read_only = off")
@@ -279,24 +310,24 @@ def probe_postgres(
                 w_row = cur.fetchone()
                 cur.execute(f"DELETE FROM {probe_table} WHERE id = 'probe-1'")
                 if not w_row or w_row[0] != "ok":
-                    return ProbeResult(
+                    return _ProbeResult(
                         name=name,
-                        status=DependencyStatus.ABSENT,
+                        status=_DependencyStatus.ABSENT,
                         detail=f"temp-table round-trip returned {w_row!r}",
-                        duration_ms=(time.perf_counter() - started) * 1000,
+                        duration_ms=(_time.perf_counter() - started) * 1000,
                     )
-        return ProbeResult(
+        return _ProbeResult(
             name=name,
-            status=DependencyStatus.PRESENT,
+            status=_DependencyStatus.PRESENT,
             detail="ok (write verified)" if verify_write else "ok",
-            duration_ms=(time.perf_counter() - started) * 1000,
+            duration_ms=(_time.perf_counter() - started) * 1000,
         )
     except Exception as exc:  # noqa: BLE001
-        return ProbeResult(
+        return _ProbeResult(
             name=name,
-            status=DependencyStatus.ABSENT,
+            status=_DependencyStatus.ABSENT,
             detail=redact_postgres_error(exc, url),
-            duration_ms=(time.perf_counter() - started) * 1000,
+            duration_ms=(_time.perf_counter() - started) * 1000,
         )
 
 
@@ -304,7 +335,7 @@ def _validate_redis_url(value: str) -> tuple[str, int, str, str, int, bool]:
     text = value.strip()
     if not text:
         raise ValueError("Redis URL must not be empty")
-    parsed = urlsplit(text)
+    parsed = _urlsplit(text)
     scheme = parsed.scheme.lower()
     if scheme not in {"redis", "rediss"}:
         raise ValueError(f"unsupported Redis URL scheme {parsed.scheme!r}")
@@ -323,8 +354,8 @@ def _validate_redis_url(value: str) -> tuple[str, int, str, str, int, bool]:
     return (
         parsed.hostname,
         port,
-        unquote(parsed.username or ""),
-        unquote(parsed.password or ""),
+        _unquote(parsed.username or ""),
+        _unquote(parsed.password or ""),
         db_index,
         scheme == "rediss",
     )
@@ -333,10 +364,10 @@ def _validate_redis_url(value: str) -> tuple[str, int, str, str, int, bool]:
 class RedisSettings(_UrlConnectionSettings):
     """Redis connection configuration."""
 
-    _DEFAULT_ENV_VAR: ClassVar[str] = "REDIS_URL"
+    _DEFAULT_ENV_VAR: _ClassVar[str] = "REDIS_URL"
     tls_verify: bool = True
 
-    @field_validator("url")
+    @_field_validator("url")
     @classmethod
     def _validate_url(cls, value: str) -> str:
         _validate_redis_url(value)
@@ -346,7 +377,7 @@ class RedisSettings(_UrlConnectionSettings):
 def redact_redis_error(exc: BaseException, url: str | None = None) -> str:
     """Format an exception message while redacting embedded Redis credentials."""
     detail = f"{type(exc).__name__}: {exc}"
-    return redact_secrets(redact_url_credentials(detail, url, placeholder="redis://[REDACTED]"))
+    return _redact_secrets(_redact_url_credentials(detail, url, placeholder="redis://[REDACTED]"))
 
 
 def _encode_resp(*parts: str) -> bytes:
@@ -360,7 +391,7 @@ def _encode_resp(*parts: str) -> bytes:
 
 
 class _RespReader:
-    def __init__(self, sock: socket.socket) -> None:
+    def __init__(self, sock: _socket.socket) -> None:
         self._sock = sock
         self._buf = bytearray()
 
@@ -388,7 +419,7 @@ class _RespReader:
         del self._buf[: length + 2]
         return data
 
-    def read_reply(self) -> Any:
+    def read_reply(self) -> _Any:
         line = self._read_line()
         prefix, payload = line[:1], line[1:].decode("utf-8", errors="replace")
         if prefix == b"+":
@@ -411,22 +442,22 @@ def probe_redis(
     tls_verify: bool = True,
     write_probe: bool = True,
     name: str = "redis",
-) -> ProbeResult:
+) -> _ProbeResult:
     """Verify Redis connectivity with PING and optional ephemeral SETEX/GET/DEL round-trip."""
-    if not math.isfinite(connect_timeout) or connect_timeout <= 0:
+    if not _math.isfinite(connect_timeout) or connect_timeout <= 0:
         raise ValueError("connect_timeout must be positive")
-    started = time.perf_counter()
-    deadline = started + connect_timeout
-    raw_sock: socket.socket | None = None
-    sock: socket.socket | None = None
+    started = _time.perf_counter()
+    deadline = _time.monotonic() + connect_timeout
+    raw_sock: _socket.socket | None = None
+    sock: _socket.socket | None = None
     try:
         host, port, username, password, db_index, use_tls = _validate_redis_url(url)
-        raw_sock = socket.create_connection((host, port), timeout=connect_timeout)
+        raw_sock = _socket.create_connection((host, port), timeout=connect_timeout)
         if use_tls:
-            ctx = ssl.create_default_context()
+            ctx = _ssl.create_default_context()
             if not tls_verify:
                 ctx.check_hostname = False
-                ctx.verify_mode = ssl.CERT_NONE
+                ctx.verify_mode = _ssl.CERT_NONE
             sock = ctx.wrap_socket(raw_sock, server_hostname=host)
             raw_sock = None
         else:
@@ -435,9 +466,9 @@ def probe_redis(
 
         reader = _RespReader(sock)
 
-        def cmd(*args: str) -> Any:
+        def cmd(*args: str) -> _Any:
             assert sock is not None
-            remaining = deadline - time.monotonic()
+            remaining = deadline - _time.monotonic()
             if remaining <= 0:
                 raise TimeoutError("Redis probe exceeded timeout budget")
             sock.settimeout(remaining)
@@ -458,34 +489,34 @@ def probe_redis(
             raise RuntimeError("Redis PING did not return PONG")
 
         if write_probe:
-            key = f"{key_prefix}{secrets.token_hex(8)}"
-            token = secrets.token_hex(12)
+            key = f"{key_prefix}{_secrets.token_hex(8)}"
+            token = _secrets.token_hex(12)
             cmd("SETEX", key, "30", token)
             try:
                 fetched = cmd("GET", key)
                 if fetched != token:
                     raise RuntimeError(f"Redis GET returned {fetched!r}, expected {token!r}")
             finally:
-                with contextlib.suppress(Exception):
+                with _contextlib.suppress(Exception):
                     cmd("DEL", key)
 
-        return ProbeResult(
+        return _ProbeResult(
             name=name,
-            status=DependencyStatus.PRESENT,
+            status=_DependencyStatus.PRESENT,
             detail="ok",
-            duration_ms=(time.perf_counter() - started) * 1000,
+            duration_ms=(_time.perf_counter() - started) * 1000,
         )
     except Exception as exc:  # noqa: BLE001
-        return ProbeResult(
+        return _ProbeResult(
             name=name,
-            status=DependencyStatus.ABSENT,
+            status=_DependencyStatus.ABSENT,
             detail=redact_redis_error(exc, url),
-            duration_ms=(time.perf_counter() - started) * 1000,
+            duration_ms=(_time.perf_counter() - started) * 1000,
         )
     finally:
         for handle in (sock, raw_sock):
             if handle is not None:
-                with contextlib.suppress(OSError):
+                with _contextlib.suppress(OSError):
                     handle.close()
 
 
@@ -495,7 +526,7 @@ def _validate_readonly_sql(sql: str) -> str:
         raise ValueError("precondition SQL forbids dollar-quoted blocks")
     placeholder_tokens: list[str] = []
 
-    def _stash_literal(match: re.Match[str]) -> str:
+    def _stash_literal(match: _re.Match[str]) -> str:
         placeholder_tokens.append(match.group(0))
         return f"__SQL_LIT_{len(placeholder_tokens) - 1}__"
 
@@ -518,7 +549,7 @@ def _validate_readonly_sql(sql: str) -> str:
     return restored
 
 
-def _fetch_db_enums(cur: Any) -> dict[tuple[str, str], tuple[str, ...]]:
+def _fetch_db_enums(cur: _Any) -> dict[tuple[str, str], tuple[str, ...]]:
     cur.execute(_DB_ENUMS_SQL)
     grouped: dict[tuple[str, str], list[str]] = {}
     for schema_name, enum_name, enum_label in cur.fetchall():
@@ -526,7 +557,7 @@ def _fetch_db_enums(cur: Any) -> dict[tuple[str, str], tuple[str, ...]]:
     return {k: tuple(v) for k, v in grouped.items()}
 
 
-def _fetch_db_columns(cur: Any) -> dict[tuple[str, str], dict[str, str]]:
+def _fetch_db_columns(cur: _Any) -> dict[tuple[str, str], dict[str, str]]:
     cur.execute(_DB_TABLES_SQL)
     tables: dict[tuple[str, str], dict[str, str]] = {}
     for schema_name, table_name, column_name, udt_name in cur.fetchall():
@@ -534,7 +565,7 @@ def _fetch_db_columns(cur: Any) -> dict[tuple[str, str], dict[str, str]]:
     return tables
 
 
-def _fetch_db_enum_tables(cur: Any) -> dict[tuple[str, str], frozenset[tuple[str, str]]]:
+def _fetch_db_enum_tables(cur: _Any) -> dict[tuple[str, str], frozenset[tuple[str, str]]]:
     cur.execute(_DB_ENUM_TABLES_SQL)
     mapping: dict[tuple[str, str], set[tuple[str, str]]] = {}
     for enum_schema, enum_name, table_schema, table_name in cur.fetchall():
@@ -544,7 +575,7 @@ def _fetch_db_enum_tables(cur: Any) -> dict[tuple[str, str], frozenset[tuple[str
     return {k: frozenset(v) for k, v in mapping.items()}
 
 
-def _run_preconditions(cur: Any, queries: Sequence[str]) -> tuple[bool, list[str]]:
+def _run_preconditions(cur: _Any, queries: _Sequence[str]) -> tuple[bool, list[str]]:
     failures: list[str] = []
     for raw in queries:
         stmt = _validate_readonly_sql(raw)
@@ -565,7 +596,7 @@ def _run_preconditions(cur: Any, queries: Sequence[str]) -> tuple[bool, list[str
 
 
 def _check_alembic_pending(
-    cur: Any,
+    cur: _Any,
     *,
     alembic_config_path: str | None = None,
     alembic_script_location: str | None = None,
@@ -573,8 +604,8 @@ def _check_alembic_pending(
     if not alembic_config_path and not alembic_script_location:
         return False
     try:
-        alembic_cfg_mod = require_optional("alembic.config", extra="postgres")
-        alembic_script_mod = require_optional("alembic.script", extra="postgres")
+        alembic_cfg_mod = _require_optional("alembic.config", extra="postgres")
+        alembic_script_mod = _require_optional("alembic.script", extra="postgres")
     except RuntimeError:
         raise RuntimeError(
             "alembic is required in the application environment to evaluate pending migrations"
@@ -598,7 +629,7 @@ def _check_alembic_pending(
     return expected_heads != current_heads
 
 
-def _unwrap_native_enum(column_type: Any) -> Any | None:
+def _unwrap_native_enum(column_type: _Any) -> _Any | None:
     """Unwrap Enum, ARRAY(Enum), or TypeDecorator(Enum) when backed by PostgreSQL native ENUM."""
     for candidate in (
         column_type,
@@ -620,8 +651,8 @@ def _unwrap_native_enum(column_type: Any) -> Any | None:
 
 
 def _iter_metadata_enum_columns(
-    metadata: Any, *, default_schema: str = "public"
-) -> Iterator[tuple[str, str, str, str, tuple[str, ...]]]:
+    metadata: _Any, *, default_schema: str = "public"
+) -> _Iterator[tuple[str, str, str, str, tuple[str, ...]]]:
     if metadata is None or not hasattr(metadata, "tables"):
         raise ValueError("metadata with a .tables mapping is required")
     for table_key, table in metadata.tables.items():
@@ -637,8 +668,8 @@ def _iter_metadata_enum_columns(
 
 
 def _normalize_expected_tables(
-    expected_tables: Mapping[tuple[str, str], Mapping[str, str]] | None,
-    metadata: Any = None,
+    expected_tables: _Mapping[tuple[str, str], _Mapping[str, str]] | None,
+    metadata: _Any = None,
     *,
     default_schema: str = "public",
 ) -> dict[tuple[str, str], dict[str, str]]:
@@ -660,12 +691,12 @@ def _normalize_expected_tables(
     return out
 
 
-class _EnumSchemaSpec(ContractModel):
+class _EnumSchemaSpec(_ContractModel):
     schema_name: str = "public"
     name: str
     labels: tuple[str, ...]
 
-    @field_validator("schema_name", "name")
+    @_field_validator("schema_name", "name")
     @classmethod
     def _non_empty(cls, value: str) -> str:
         text = value.strip()
@@ -673,7 +704,7 @@ class _EnumSchemaSpec(ContractModel):
             raise ValueError("schema_name and name must be non-empty")
         return text
 
-    @field_validator("labels")
+    @_field_validator("labels")
     @classmethod
     def _validate_labels(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         if not value:
@@ -683,7 +714,7 @@ class _EnumSchemaSpec(ContractModel):
         return value
 
 
-_EnumDiscrepancyKind = Literal[
+_EnumDiscrepancyKind = _Literal[
     "missing_type",
     "extra_type",
     "additive_labels",
@@ -692,7 +723,7 @@ _EnumDiscrepancyKind = Literal[
 ]
 
 
-class _EnumDiscrepancy(ContractModel):
+class _EnumDiscrepancy(_ContractModel):
     schema_name: str = "public"
     name: str
     kind: _EnumDiscrepancyKind
@@ -702,14 +733,14 @@ class _EnumDiscrepancy(ContractModel):
     missing_in_code: tuple[str, ...] = ()
 
 
-class _TableColumn(ContractModel):
+class _TableColumn(_ContractModel):
     schema_name: str = "public"
     table_name: str
     column_name: str
     data_type: str = ""
 
 
-class _SchemaDiffReport(ContractModel):
+class _SchemaDiffReport(_ContractModel):
     additive_columns: tuple[_TableColumn, ...] = ()
     dropped_columns: tuple[_TableColumn, ...] = ()
     new_tables: tuple[tuple[str, str], ...] = ()
@@ -718,7 +749,7 @@ class _SchemaDiffReport(ContractModel):
     migrations_pending: bool = False
     preconditions_passed: bool = True
     precondition_failures: tuple[str, ...] = ()
-    rollback_class: Literal["A", "C"] = _ROLLBACK_CLASS_A
+    rollback_class: _Literal["A", "C"] = _ROLLBACK_CLASS_A
 
     @property
     def is_blocking(self) -> bool:
@@ -730,7 +761,7 @@ class _SchemaDiffReport(ContractModel):
 
 
 def _enums_from_metadata(
-    metadata: Any, *, default_schema: str = "public"
+    metadata: _Any, *, default_schema: str = "public"
 ) -> tuple[_EnumSchemaSpec, ...]:
     specs: dict[tuple[str, str], tuple[str, ...]] = {}
     for _t_schema, _t_name, enum_schema, enum_name, labels in _iter_metadata_enum_columns(
@@ -746,7 +777,7 @@ def _enums_from_metadata(
 
 
 def _enum_tables_from_metadata(
-    metadata: Any, *, default_schema: str = "public"
+    metadata: _Any, *, default_schema: str = "public"
 ) -> dict[tuple[str, str], frozenset[tuple[str, str]]]:
     refs: dict[tuple[str, str], set[tuple[str, str]]] = {}
     for t_schema, t_name, enum_schema, enum_name, _labels in _iter_metadata_enum_columns(
@@ -757,8 +788,8 @@ def _enum_tables_from_metadata(
 
 
 def _check_enums(
-    expected: Sequence[_EnumSchemaSpec],
-    actual: Mapping[tuple[str, str], Sequence[str]],
+    expected: _Sequence[_EnumSchemaSpec],
+    actual: _Mapping[tuple[str, str], _Sequence[str]],
 ) -> tuple[_EnumDiscrepancy, ...]:
     out: list[_EnumDiscrepancy] = []
     expected_keys: set[tuple[str, str]] = set()
@@ -822,14 +853,14 @@ def _check_enums(
 
 def _classify_rollback(
     *,
-    dropped_columns: Sequence[_TableColumn] = (),
-    new_tables: Collection[tuple[str, str]] = (),
-    dropped_tables: Collection[tuple[str, str]] = (),
-    enum_discrepancies: Sequence[_EnumDiscrepancy] = (),
-    enum_tables: Mapping[tuple[str, str], Collection[tuple[str, str]]] | None = None,
-    code_tables: Collection[tuple[str, str]] | None = None,
+    dropped_columns: _Sequence[_TableColumn] = (),
+    new_tables: _Collection[tuple[str, str]] = (),
+    dropped_tables: _Collection[tuple[str, str]] = (),
+    enum_discrepancies: _Sequence[_EnumDiscrepancy] = (),
+    enum_tables: _Mapping[tuple[str, str], _Collection[tuple[str, str]]] | None = None,
+    code_tables: _Collection[tuple[str, str]] | None = None,
     migrations_pending: bool = False,
-) -> Literal["A", "C"]:
+) -> _Literal["A", "C"]:
     dropped_table_set = {(str(s), str(t)) for s, t in dropped_tables}
     new_table_set = {(str(s), str(t)) for s, t in new_tables}
     code_table_set = {(str(s), str(t)) for s, t in code_tables} if code_tables is not None else None
@@ -864,16 +895,16 @@ def _classify_rollback(
 def _check_schema(
     database_url: str,
     *,
-    metadata: Any = None,
-    expected_tables: Mapping[tuple[str, str], Mapping[str, str]] | None = None,
-    expected_enums: Sequence[_EnumSchemaSpec] = (),
+    metadata: _Any = None,
+    expected_tables: _Mapping[tuple[str, str], _Mapping[str, str]] | None = None,
+    expected_enums: _Sequence[_EnumSchemaSpec] = (),
     alembic_config_path: str | None = None,
     alembic_script_location: str | None = None,
-    preconditions: Sequence[str] = (),
+    preconditions: _Sequence[str] = (),
     default_schema: str = "public",
     connect_timeout: float = _DEFAULT_TIMEOUT_SECONDS,
 ) -> _SchemaDiffReport:
-    psycopg = require_optional("psycopg", extra="postgres")
+    psycopg = _require_optional("psycopg", extra="postgres")
     dsn = _normalize_postgres_dsn(database_url)
     target_tables = _normalize_expected_tables(
         expected_tables, metadata=metadata, default_schema=default_schema
@@ -887,7 +918,7 @@ def _check_schema(
         merged_enums = list(by_key.values())
         code_enum_tables = _enum_tables_from_metadata(metadata, default_schema=default_schema)
 
-    timeout_arg = max(1, int(math.ceil(connect_timeout)))
+    timeout_arg = max(1, int(_math.ceil(connect_timeout)))
     opts = f"-c statement_timeout={timeout_arg * 1000} -c default_transaction_read_only=on"
     try:
         conn = psycopg.connect(dsn, connect_timeout=timeout_arg, options=opts)
@@ -970,29 +1001,29 @@ def _check_schema(
     )
 
 
-class S3Settings(ContractModel):
+class S3Settings(_ContractModel):
     """S3-compatible object storage configuration (path-style addressing enabled by default)."""
 
     endpoint_url: str
     bucket: str
     access_key_id: str
-    secret_access_key: str = Field(repr=False)
+    secret_access_key: str = _Field(repr=False)
     region: str = "us-east-1"
     use_path_style: bool = True
     public_endpoint_url: str | None = None
     connect_timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS
     read_timeout_seconds: float = 10.0
 
-    @field_validator("endpoint_url")
+    @_field_validator("endpoint_url")
     @classmethod
     def _validate_endpoint(cls, value: str) -> str:
         text = value.strip()
-        validate_http_url(text, label="S3 endpoint_url")
+        _validate_http_url(text, label="S3 endpoint_url")
         return text
 
-    @field_validator("public_endpoint_url", mode="before")
+    @_field_validator("public_endpoint_url", mode="before")
     @classmethod
-    def _validate_public_endpoint(cls, value: Any) -> str | None:
+    def _validate_public_endpoint(cls, value: _Any) -> str | None:
         if value is None:
             return None
         if not isinstance(value, str):
@@ -1000,10 +1031,10 @@ class S3Settings(ContractModel):
         text = value.strip()
         if not text:
             return None
-        validate_http_url(text, label="S3 public_endpoint_url")
+        _validate_http_url(text, label="S3 public_endpoint_url")
         return text
 
-    @field_validator("bucket", "access_key_id", "secret_access_key", "region")
+    @_field_validator("bucket", "access_key_id", "secret_access_key", "region")
     @classmethod
     def _require_non_empty(cls, value: str) -> str:
         text = value.strip()
@@ -1011,22 +1042,22 @@ class S3Settings(ContractModel):
             raise ValueError("S3 setting value must not be empty")
         return text
 
-    @field_validator("connect_timeout_seconds", "read_timeout_seconds")
+    @_field_validator("connect_timeout_seconds", "read_timeout_seconds")
     @classmethod
     def _validate_timeouts(cls, value: float) -> float:
-        if not math.isfinite(value) or value <= 0:
+        if not _math.isfinite(value) or value <= 0:
             raise ValueError("timeout must be positive")
         return float(value)
 
     @classmethod
     def from_env(
         cls,
-        environ: Mapping[str, str] | None = None,
+        environ: _Mapping[str, str] | None = None,
         *,
         bucket_env: str = "S3_BUCKET",
     ) -> S3Settings:
         """Build S3Settings from shared_env.yaml S3 variables and optional S3_USE_PATH_STYLE."""
-        env = os.environ if environ is None else environ
+        env = _os.environ if environ is None else environ
         style_raw = env.get("S3_USE_PATH_STYLE", "true").strip().lower()
         return cls(
             endpoint_url=env.get("S3_ENDPOINT", ""),
@@ -1039,10 +1070,10 @@ class S3Settings(ContractModel):
         )
 
 
-def create_s3_client(settings: S3Settings) -> Any:
+def create_s3_client(settings: S3Settings) -> _Any:
     """Create a configured boto3 S3 client."""
-    boto3 = require_optional("boto3", extra="s3")
-    botocore_config = require_optional("botocore.config", extra="s3")
+    boto3 = _require_optional("boto3", extra="s3")
+    botocore_config = _require_optional("botocore.config", extra="s3")
     cfg = botocore_config.Config(
         region_name=settings.region,
         signature_version="s3v4",
@@ -1063,14 +1094,14 @@ def create_s3_client(settings: S3Settings) -> Any:
 def is_not_found(exc: BaseException) -> bool:
     """Return True if a botocore/S3 exception represents a 404 not-found error."""
     resp = getattr(exc, "response", None)
-    if not isinstance(resp, Mapping):
+    if not isinstance(resp, _Mapping):
         return False
     code = str(resp.get("Error", {}).get("Code", ""))
     status = resp.get("ResponseMetadata", {}).get("HTTPStatusCode")
     return status == 404 or code in {"404", "NoSuchKey", "NoSuchBucket", "NotFound"}
 
 
-def ensure_bucket(client: Any, bucket: str, region: str = "us-east-1") -> None:
+def ensure_bucket(client: _Any, bucket: str, region: str = "us-east-1") -> None:
     """Create the bucket idempotently if head_bucket reports missing."""
     try:
         client.head_bucket(Bucket=bucket)
@@ -1078,20 +1109,20 @@ def ensure_bucket(client: Any, bucket: str, region: str = "us-east-1") -> None:
     except Exception as exc:
         if not is_not_found(exc):
             raise
-    kwargs: dict[str, Any] = {"Bucket": bucket}
+    kwargs: dict[str, _Any] = {"Bucket": bucket}
     if region and region != "us-east-1":
         kwargs["CreateBucketConfiguration"] = {"LocationConstraint": region}
     try:
         client.create_bucket(**kwargs)
     except Exception as exc:
         resp = getattr(exc, "response", None)
-        code = str(resp.get("Error", {}).get("Code", "")) if isinstance(resp, Mapping) else ""
+        code = str(resp.get("Error", {}).get("Code", "")) if isinstance(resp, _Mapping) else ""
         if code not in {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}:
             raise
 
 
 def put_object_bytes(
-    client: Any,
+    client: _Any,
     bucket: str,
     key: str,
     data: bytes,
@@ -1103,7 +1134,7 @@ def put_object_bytes(
     return str(resp.get("ETag", "")).strip('"')
 
 
-def read_object_bytes(client: Any, bucket: str, key: str) -> bytes:
+def read_object_bytes(client: _Any, bucket: str, key: str) -> bytes:
     """Download an S3 object body as bytes and close its stream."""
     resp = client.get_object(Bucket=bucket, Key=key)
     body = resp["Body"]
@@ -1112,13 +1143,13 @@ def read_object_bytes(client: Any, bucket: str, key: str) -> bytes:
     finally:
         close_fn = getattr(body, "close", None)
         if callable(close_fn):
-            with contextlib.suppress(Exception):
+            with _contextlib.suppress(Exception):
                 close_fn()
 
 
 def redact_presigned_url(url: str) -> str:
     """Strip presigned query tokens from an S3 URL for safe logging."""
-    return redact_url(url)
+    return _redact_url(url)
 
 
 def presign_get_url(
@@ -1130,7 +1161,7 @@ def presign_get_url(
     public: bool = True,
     response_content_disposition: str | None = None,
     response_content_type: str | None = None,
-    client: Any | None = None,
+    client: _Any | None = None,
 ) -> str:
     """Generate a presigned GET URL using the public endpoint when configured and enabled."""
     cleaned_key = key.strip()
@@ -1152,7 +1183,7 @@ def presign_get_url(
     if not target_bucket:
         raise ValueError("bucket must not be empty")
 
-    params: dict[str, Any] = {"Bucket": target_bucket, "Key": cleaned_key}
+    params: dict[str, _Any] = {"Bucket": target_bucket, "Key": cleaned_key}
     if response_content_disposition is not None:
         params["ResponseContentDisposition"] = response_content_disposition
     if response_content_type is not None:
@@ -1172,7 +1203,7 @@ def presign_get_url(
         )
     finally:
         if owned and hasattr(s3_client, "close") and callable(s3_client.close):
-            with contextlib.suppress(Exception):
+            with _contextlib.suppress(Exception):
                 s3_client.close()
 
 
@@ -1182,62 +1213,62 @@ def probe_s3(
     key_prefix: str = "sdk/probe/",
     name: str = "s3",
     round_trip: bool = False,
-    client: Any | None = None,
-) -> ProbeResult:
+    client: _Any | None = None,
+) -> _ProbeResult:
     """Verify S3 bucket reachability and optional write/read/delete round-trip."""
-    started = time.perf_counter()
+    started = _time.perf_counter()
     owned = client is None
-    s3_client: Any | None = client
+    s3_client: _Any | None = client
     try:
         if s3_client is None:
             s3_client = create_s3_client(settings)
         s3_client.head_bucket(Bucket=settings.bucket)
         if round_trip:
-            key = f"{key_prefix}{secrets.token_hex(8)}.txt"
-            payload = secrets.token_hex(8).encode("utf-8")
+            key = f"{key_prefix}{_secrets.token_hex(8)}.txt"
+            payload = _secrets.token_hex(8).encode("utf-8")
             put_object_bytes(s3_client, settings.bucket, key, payload, content_type="text/plain")
             try:
                 got = read_object_bytes(s3_client, settings.bucket, key)
             finally:
-                with contextlib.suppress(Exception):
+                with _contextlib.suppress(Exception):
                     s3_client.delete_object(Bucket=settings.bucket, Key=key)
             if got != payload:
                 raise RuntimeError("S3 round-trip content mismatch")
-        return ProbeResult(
+        return _ProbeResult(
             name=name,
-            status=DependencyStatus.PRESENT,
+            status=_DependencyStatus.PRESENT,
             detail="ok",
-            duration_ms=(time.perf_counter() - started) * 1000,
+            duration_ms=(_time.perf_counter() - started) * 1000,
         )
     except Exception as exc:  # noqa: BLE001
-        detail = redact_text(
+        detail = _redact_text(
             f"{type(exc).__name__}: {exc}",
             extra_secrets=(settings.access_key_id, settings.secret_access_key),
         )
-        return ProbeResult(
+        return _ProbeResult(
             name=name,
-            status=DependencyStatus.ABSENT,
+            status=_DependencyStatus.ABSENT,
             detail=detail,
-            duration_ms=(time.perf_counter() - started) * 1000,
+            duration_ms=(_time.perf_counter() - started) * 1000,
         )
     finally:
         if owned and s3_client is not None:
             close_fn = getattr(s3_client, "close", None)
             if callable(close_fn):
-                with contextlib.suppress(Exception):
+                with _contextlib.suppress(Exception):
                     close_fn()
 
 
-def _main(argv: Sequence[str] | None = None) -> int:
+def _main(argv: _Sequence[str] | None = None) -> int:
     """CLI entrypoint: ``python -m infra2_sdk.storage check-schema ...``."""
-    parser = argparse.ArgumentParser(prog="python -m infra2_sdk.storage")
+    parser = _argparse.ArgumentParser(prog="python -m infra2_sdk.storage")
     sub = parser.add_subparsers(dest="command", required=True)
     gate = sub.add_parser("check-schema", help="Run the PostgreSQL schema & migration gate.")
     gate.add_argument(
         "--database-url",
         "--db-url",
         dest="database_url",
-        default=os.environ.get("DATABASE_URL", ""),
+        default=_os.environ.get("DATABASE_URL", ""),
     )
     gate.add_argument(
         "--import",
@@ -1255,15 +1286,15 @@ def _main(argv: Sequence[str] | None = None) -> int:
 
     args = parser.parse_args(list(argv) if argv is not None else None)
     if not args.database_url:
-        print("DATABASE_URL is required", file=sys.stderr)
+        print("DATABASE_URL is required", file=_sys.stderr)
         return _EXIT_NOT_EVALUATED
     try:
         if args.import_modules:
-            if "" not in sys.path:
-                sys.path.insert(0, "")
+            if "" not in _sys.path:
+                _sys.path.insert(0, "")
             for mod_name in args.import_modules:
-                importlib.import_module(mod_name)
-        metadata = load_dotted_symbol(args.metadata) if args.metadata else None
+                _importlib.import_module(mod_name)
+        metadata = _load_dotted_symbol(args.metadata) if args.metadata else None
         report = _check_schema(
             args.database_url,
             metadata=metadata,
@@ -1272,13 +1303,13 @@ def _main(argv: Sequence[str] | None = None) -> int:
             preconditions=args.precondition,
         )
     except (_GateNotEvaluated, ValueError, ImportError, AttributeError) as exc:
-        print(str(exc), file=sys.stderr)
+        print(str(exc), file=_sys.stderr)
         return _EXIT_NOT_EVALUATED
     payload = report.to_dict()
     if args.label:
         payload["label"] = args.label
     if args.as_json:
-        print(json.dumps(payload, sort_keys=True))
+        print(_json.dumps(payload, sort_keys=True))
     else:
         prefix = f"[{args.label}] " if args.label else ""
         print(

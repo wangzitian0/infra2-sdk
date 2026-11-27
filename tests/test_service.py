@@ -229,7 +229,17 @@ def test_http_clients_retry_probe_and_rate_limit() -> None:
         sync_c._transport = httpx.MockTransport(_capture_sync)
         with _core.bind_request_id("cid-sync-1"):
             sync_c.get("https://example.com")
-    assert seen_req_hdrs[-1]["x-request-id"] == "cid-sync-1"
+    with service.create_http_client(
+        cfg,
+        base_url="https://api.example.com",
+        headers={"Authorization": "Bearer tok-1"},
+        propagate_trace=False,
+    ) as no_trace_c:
+        no_trace_c._transport = httpx.MockTransport(_capture_sync)
+        with _core.bind_request_id("cid-sync-suppressed"):
+            no_trace_c.get("/v1/ping")
+    assert seen_req_hdrs[-1]["authorization"] == "Bearer tok-1"
+    assert "x-request-id" not in seen_req_hdrs[-1]
 
     future_hdr = format_datetime(datetime.now(UTC) + timedelta(seconds=1))
     calls = 0
@@ -317,8 +327,6 @@ def test_http_clients_retry_probe_and_rate_limit() -> None:
 
 
 def test_sse_stream_response_and_serve(monkeypatch: pytest.MonkeyPatch) -> None:
-    import sys
-
     app = FastAPI()
 
     @app.get("/sse-ok")
@@ -374,9 +382,10 @@ def test_sse_stream_response_and_serve(monkeypatch: pytest.MonkeyPatch) -> None:
         assert 'event: delta\ndata: {"text": "chunk1"}' in mid.text
         assert 'event: error\ndata: {"error": "midstream scrubbed"}' in mid.text
 
+    import uvicorn
+
     seen_serve: list[dict[str, Any]] = []
-    fake_uvicorn = SimpleNamespace(run=lambda a, **kw: seen_serve.append({"app": a, **kw}))
-    monkeypatch.setitem(sys.modules, "uvicorn", fake_uvicorn)
+    monkeypatch.setattr(uvicorn, "run", lambda a, **kw: seen_serve.append({"app": a, **kw}))
     service.serve(app, host="127.0.0.1", port=9123, log_level="warning")
     assert seen_serve == [
         {"app": app, "host": "127.0.0.1", "port": 9123, "log_config": None, "log_level": "warning"}

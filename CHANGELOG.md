@@ -2,6 +2,22 @@
 
 Versions follow `README.md`. Release steps are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## 4.14.0 - 2026-11-27
+
+### Removed
+
+- `config`: remove public `read_runtime_env()` from `infra2_sdk.config` (internal reads stay in `infra2_sdk._core`; consumers use `RuntimeEnvKey` and typed settings).
+- `llm`: remove incompatible public `prompt_sha256()` and `request_sha256()` helpers (`60` -> `57` total exports across the 6 modules).
+
+### Fixed & Improved
+
+- `packaging`: add `uvicorn[standard]>=0.28,<1` to `[fastapi]` and `[all]` extras so `service.serve()` matches documented install requirements.
+- `service`: set explicit `ProbeResponse`, `CheckDetail`, and `HealthResponse` OpenAPI titles (fixing underscore-prefixed schema names), add optional `base_url`/`headers`/`verify`/`propagate_trace` args to `create_http_client()`/`create_async_http_client()`, and remove private `_DependencyCheck` from `init_service()` signature.
+- `llm`: check terminal Z.AI provider error codes before HTTP 429 in `is_retryable_llm_error()`, wire it as default `retry_on` in `create_llm_agent()`, and replace private `_ModelRole`/`_ThinkingLevel` annotations with public `Literal` types.
+- `storage`: use monotonic clock for deadline checks in `probe_redis()`.
+- `telemetry`: add `create_observable_gauge` and `create_up_down_counter` to `_NoopMeter`, and drop dead `set_global` parameter from `_core.bootstrap_telemetry()`.
+- `hygiene`: alias-privatize all non-`__all__` module imports so `vars(mod)` exposes zero unexported public attributes, and enforce `vars(mod)` / OpenAPI / optional-extra parity in `test_architecture_guards.py`.
+
 ## 4.13.2 - 2026-11-27
 
 ### Fixed

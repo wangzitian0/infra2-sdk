@@ -54,11 +54,11 @@ def test_tier_and_environment_resolution() -> None:
     assert env_rt.tier in _core.platform_owned_tiers()
 
     assert (
-        config.read_runtime_env(config.RuntimeEnvKey.ENVIRONMENT, {"ENVIRONMENT": " staging "})
+        _core.read_runtime_env(config.RuntimeEnvKey.ENVIRONMENT, {"ENVIRONMENT": " staging "})
         == "staging"
     )
     with pytest.raises(ValueError, match="ENVIRONMENT is required"):
-        config.read_runtime_env(config.RuntimeEnvKey.ENVIRONMENT, {}, required=True)
+        _core.read_runtime_env(config.RuntimeEnvKey.ENVIRONMENT, {}, required=True)
     with pytest.raises(ValueError, match="ENVIRONMENT is required"):
         _core.resolve_environment({}, required=True)
 
@@ -88,7 +88,7 @@ def test_manifest_lifecycle_offline_checks_and_cli(
             config.EnvironmentField(
                 field="x",
                 env="X_VAR",
-                source=config._FieldSource.RUNTIME,
+                source="runtime",
                 has_default=True,
                 required=False,
                 injected=False,
@@ -96,20 +96,20 @@ def test_manifest_lifecycle_offline_checks_and_cli(
             config.EnvironmentField(
                 field="y",
                 env="Y_VAR",
-                source=config._FieldSource.CODE,
+                source="code",
                 sensitive=True,
             ),
             config.EnvironmentField(
                 field="z",
                 env="Z_VAR",
-                source=config._FieldSource.BOOTSTRAP,
+                source="bootstrap",
                 injected=True,
                 composed_from="{MISSING_DEP}/{env:bad}",
             ),
             config.EnvironmentField(
                 field="w",
                 env="W_VAR",
-                source=config._FieldSource.RELEASE,
+                source="release",
                 injected=False,
             ),
         ),
@@ -241,21 +241,21 @@ def test_validate_offline_allows_sensitive_code_field_with_composed_from() -> No
     pw = config.EnvironmentField(
         field="app_pw",
         env="APP_SERVICE_DB_PASSWORD",
-        source=config._FieldSource.RUNTIME,
+        source="runtime",
         sensitive=True,
         empty_ok=True,
     )
     composed_dsn = config.EnvironmentField(
         field="database_url",
         env="DATABASE_URL",
-        source=config._FieldSource.CODE,
+        source="code",
         sensitive=True,
         composed_from="postgresql://app:{APP_SERVICE_DB_PASSWORD}@db:5432/app",
     )
     bad_default = config.EnvironmentField(
         field="api_key",
         env="API_KEY",
-        source=config._FieldSource.CODE,
+        source="code",
         sensitive=True,
     )
     assert (

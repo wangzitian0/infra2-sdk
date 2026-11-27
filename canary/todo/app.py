@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import html
+import json
 import logging
 import math
 import os
@@ -30,16 +32,13 @@ from infra2_sdk.config import (
     EnvironmentTier,
     RuntimeEnvKey,
     assert_env,
-    read_runtime_env,
 )
 from infra2_sdk.llm import (
     DecodingSpec,
     LlmSettings,
     create_llm_agent,
     llm_call_context,
-    prompt_sha256,
     redact_llm_error,
-    request_sha256,
     schema_sha256,
     stream_text,
 )
@@ -595,8 +594,10 @@ def _todo_health_extra(verdict: Mapping[str, Any] | None = None) -> dict[str, An
         "ok": canary_ok,
         "request_id": current_request_id(),
         "domain": _settings().canary_domain,
-        "environment": read_runtime_env(RuntimeEnvKey.ENVIRONMENT) or "unknown",
-        "configuration_sha256": read_runtime_env(RuntimeEnvKey.CONFIGURATION_SHA256) or "unknown",
+        "environment": os.environ.get(RuntimeEnvKey.ENVIRONMENT.value, "").strip() or "unknown",
+        "configuration_sha256": (
+            os.environ.get(RuntimeEnvKey.CONFIGURATION_SHA256.value, "").strip() or "unknown"
+        ),
         "sdk_version": _SDK_VERSION,
         "canary": {"ok": canary_ok, "checked_at": doc.get("timestamp")},
         "uptime_seconds": round(time.time() - SERVER_START_TIME, 1),
@@ -819,12 +820,21 @@ async def summarize_recent_todos(
         for item in items
     ]
     prompt_text = "Recent todos:\n" + ("\n".join(lines) if lines else "(none)")
-    p_sha = prompt_sha256(prompt_text)
+    p_sha = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()
     s_sha = schema_sha256(TodoSummaryOutput)
     model_label = settings.role_model("small")
-    r_sha = request_sha256(
-        model=model_label, prompt=prompt_text, schema=s_sha, decoding=TODO_SUMMARY_DECODING
-    )
+    r_sha = hashlib.sha256(
+        json.dumps(
+            {
+                "model": model_label,
+                "prompt": p_sha,
+                "schema": s_sha,
+                "decoding": TODO_SUMMARY_DECODING.to_model_settings(),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
 
     from pydantic_ai import UsageLimits
 
@@ -958,7 +968,7 @@ async def _stream_todos_summary_sse(
         for item in items
     ]
     prompt_text = "Recent todos:\n" + ("\n".join(lines) if lines else "(none)")
-    p_sha = prompt_sha256(prompt_text)
+    p_sha = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()
     model_label = settings.role_model("small")
     from pydantic_ai import UsageLimits
 

@@ -328,3 +328,7 @@ def test_probe_paths_and_worker_run_sigterm_and_flush(monkeypatch: pytest.Monkey
     assert sigterm_cb_fired[0] is True
     assert flushed[0] is True
     assert shut_down[0] is True
+
+    noop_meter = telemetry._NoopMeter()
+    noop_meter.create_observable_gauge("demo.gauge").record(1.0)
+    noop_meter.create_up_down_counter("demo.updown").add(1)

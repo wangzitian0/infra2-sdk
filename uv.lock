@@ -511,7 +511,7 @@ wheels = [
 
 [[package]]
 name = "infra2-sdk"
-version = "4.13.2"
+version = "4.14.0"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic", version = "2.13.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.15'" },
@@ -530,6 +530,7 @@ all = [
     { name = "opentelemetry-sdk" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic-ai-slim", extra = ["zai"] },
+    { name = "uvicorn", extra = ["standard"] },
 ]
 fastapi = [
     { name = "fastapi" },
@@ -538,6 +539,7 @@ fastapi = [
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-instrumentation-logging" },
     { name = "opentelemetry-sdk" },
+    { name = "uvicorn", extra = ["standard"] },
 ]
 http = [
     { name = "httpx" },
@@ -583,6 +585,7 @@ dev = [
     { name = "pytest-cov" },
     { name = "pytest-recording" },
     { name = "ruff" },
+    { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.metadata]
@@ -617,6 +620,8 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["zai"], marker = "extra == 'all'", specifier = ">=2.71.0,<3" },
     { name = "pydantic-ai-slim", extras = ["zai"], marker = "extra == 'llm'", specifier = ">=2.71.0,<3" },
     { name = "pyyaml", specifier = ">=6.0,<7" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'all'", specifier = ">=0.28,<1" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'fastapi'", specifier = ">=0.28,<1" },
 ]
 provides-extras = ["telemetry", "http", "fastapi", "postgres", "s3", "llm", "all"]
 
@@ -638,6 +643,7 @@ dev = [
     { name = "pytest-cov", specifier = ">=5,<8" },
     { name = "pytest-recording", specifier = ">=0.15,<1" },
     { name = "ruff", specifier = ">=0.12,<1" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.28,<1" },
 ]
 
 [[package]]
