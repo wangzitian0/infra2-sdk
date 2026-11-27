@@ -719,7 +719,6 @@ _EnumDiscrepancyKind = _Literal[
     "extra_type",
     "additive_labels",
     "destructive_labels",
-    "order_mismatch",
 ]
 
 
@@ -810,20 +809,15 @@ def _check_enums(
             )
             continue
         live = tuple(str(item) for item in actual[key])
-        if live == spec.labels:
-            continue
         live_set = set(live)
         exp_set = set(spec.labels)
+        if live_set == exp_set:
+            continue
         missing_in_db = tuple(label for label in spec.labels if label not in live_set)
         missing_in_code = tuple(label for label in live if label not in exp_set)
-        if not missing_in_code and [label for label in spec.labels if label in live_set] == list(
-            live
-        ):
-            kind: _EnumDiscrepancyKind = "additive_labels"
-        elif not missing_in_code and not missing_in_db:
-            kind = "order_mismatch"
-        else:
-            kind = "destructive_labels"
+        kind: _EnumDiscrepancyKind = (
+            "additive_labels" if not missing_in_code else "destructive_labels"
+        )
         out.append(
             _EnumDiscrepancy(
                 schema_name=spec.schema_name,
@@ -904,6 +898,8 @@ def _check_schema(
     default_schema: str = "public",
     connect_timeout: float = _DEFAULT_TIMEOUT_SECONDS,
 ) -> _SchemaDiffReport:
+    if not _math.isfinite(connect_timeout) or connect_timeout <= 0:
+        raise ValueError("connect_timeout must be finite and positive")
     psycopg = _require_optional("psycopg", extra="postgres")
     dsn = _normalize_postgres_dsn(database_url)
     target_tables = _normalize_expected_tables(
@@ -1282,6 +1278,12 @@ def check_schema_cli(argv: _Sequence[str] | None = None) -> int:
     gate.add_argument("--alembic-config")
     gate.add_argument("--alembic-script-location")
     gate.add_argument("--precondition", action="append", default=[])
+    gate.add_argument(
+        "--timeout",
+        type=float,
+        default=15.0,
+        help="Connection and statement timeout in seconds (default: 15.0)",
+    )
     gate.add_argument("--json", action="store_true", dest="as_json")
 
     args = parser.parse_args(list(argv) if argv is not None else None)
@@ -1301,8 +1303,9 @@ def check_schema_cli(argv: _Sequence[str] | None = None) -> int:
             alembic_config_path=args.alembic_config,
             alembic_script_location=args.alembic_script_location,
             preconditions=args.precondition,
+            connect_timeout=args.timeout,
         )
-    except (_GateNotEvaluated, ValueError, ImportError, AttributeError) as exc:
+    except (_GateNotEvaluated, RuntimeError, ValueError, ImportError, AttributeError) as exc:
         print(str(exc), file=_sys.stderr)
         return _EXIT_NOT_EVALUATED
     payload = report.to_dict()

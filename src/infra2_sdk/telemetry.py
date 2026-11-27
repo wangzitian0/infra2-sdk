@@ -223,21 +223,23 @@ def worker_run(
         signal.signal(signal.SIGTERM, _handle_sigterm)
         installed_sigterm = True
 
-    providers = init_worker(
-        name,
-        environ=merged_env,
-        strict=strict,
-        require_issued_identity=require_issued_identity,
-        log_level=log_level,
-        set_global=set_global,
-    )
+    providers: TelemetryProviders | None = None
     try:
+        providers = init_worker(
+            name,
+            environ=merged_env,
+            strict=strict,
+            require_issued_identity=require_issued_identity,
+            log_level=log_level,
+            set_global=set_global,
+        )
         yield providers
     finally:
         if providers is not None:
             with _contextlib.suppress(Exception):
                 providers.force_flush()
             providers.shutdown()
+            _atexit.unregister(providers.shutdown)
         if installed_sigterm:
             signal.signal(signal.SIGTERM, prev_sigterm)
 

@@ -35,11 +35,12 @@ def test_llm_settings_decoding_and_schema_digest() -> None:
     cfg = llm.LlmSettings.from_env(
         {
             "LLM_PROVIDER": "zai",
-            "LLM_API_KEY": "sk-test-secret",
+            "LLM_API_KEY": "  sk-test-secret\n",
             "LLM_SMALL_MODEL": "glm-5.3-flash",
             "LLM_LARGE_MODEL": "glm-5.3",
         }
     )
+    assert cfg.api_key == "sk-test-secret"
     assert cfg.role_model("small") == "glm-5.3-flash"
     assert cfg.role_model("large") == "glm-5.3"
     assert "sk-test-secret" not in repr(cfg)
@@ -184,8 +185,17 @@ def test_redact_errors_passthrough_and_streaming(caplog: pytest.LogCaptureFixtur
 def test_stream_text_zai_extra_body_retryable_and_midstream_redaction() -> None:
     dec = llm.DecodingSpec(decoding_version="stream.v1", max_tokens=256)
     cfg = llm.LlmSettings(provider="zai", api_key="test-key", small_model="glm-5.3-flash")
-    zai_agent = llm.create_llm_agent(cfg, decoding=dec, call_site="unit.zai")
+    zai_agent = llm.create_llm_agent(
+        cfg,
+        decoding=dec,
+        model_settings={"extra_body": {"thinking": {"type": "disabled"}}},
+        call_site="unit.zai",
+    )
     assert zai_agent.model.wrapped.settings["extra_body"]["max_tokens"] == 256
+    assert zai_agent.model_settings["extra_body"] == {
+        "thinking": {"type": "disabled"},
+        "max_tokens": 256,
+    }
 
     assert llm.is_retryable_llm_error(ModelHTTPError(429, "m", body="rate limited")) is True
     assert llm.is_retryable_llm_error(ModelHTTPError(500, "m", body="server error")) is True
@@ -339,5 +349,23 @@ def test_stream_text_zai_extra_body_retryable_and_midstream_redaction() -> None:
         assert await anext(it) == "first-"
         await it.aclose()
         assert cancelled is True
+
+        anon_stream_agent = llm.create_llm_agent(cfg, model=TestModel(custom_output_text="ok"))
+        seen_sites: list[str] = []
+        orig_warn = logging.getLogger("infra2_sdk.llm").warning
+
+        class _CaptureSiteHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                if "missing explicit call_site" in record.getMessage():
+                    seen_sites.append(record.getMessage())
+
+        cap_h = _CaptureSiteHandler()
+        logging.getLogger("infra2_sdk.llm").addHandler(cap_h)
+        try:
+            _ = [chunk async for chunk in llm.stream_text(anon_stream_agent, "hi")]
+        finally:
+            logging.getLogger("infra2_sdk.llm").removeHandler(cap_h)
+        assert callable(orig_warn)
+        assert seen_sites and "unknown.call" not in seen_sites[0]
 
     asyncio.run(_run_stream_checks())

@@ -690,13 +690,11 @@ class OtelSettings(ContractModel):
         require_issued_identity: bool = False,
         suppress_probe_telemetry: bool = False,
     ) -> OtelSettings:
-        from infra2_sdk.config import EnvironmentTier, RuntimeEnvKey, resolve_tier
+        from infra2_sdk.config import RuntimeEnvKey, resolve_tier
 
         values = os.environ if environ is None else environ
         if require_issued_identity:
-            rt = RuntimeEnvironment(
-                name=EnvironmentTier.LOCAL_DEV.value, tier=EnvironmentTier.LOCAL_DEV
-            )
+            rt = resolve_environment(values, required=False)
             env_is_set = False
         else:
             rt = resolve_environment(values, required=strict)

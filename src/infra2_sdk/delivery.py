@@ -54,6 +54,7 @@ from infra2_sdk._core import (
 
 _POLICY_VERSION = 1
 _HOOKS_SCHEMA_VERSION = 3
+_HEX_SHA_RE = _re.compile(r"^[0-9a-fA-F]{7,64}$")
 
 _FORBIDDEN_HOOK_ENV_NAMES: frozenset[str] = frozenset(
     {
@@ -374,6 +375,8 @@ def resolve_check_cells(
 
     for cell_name, policy in active_policies.items():
         if check.id == "smoke":
+            if check.writes and policy.stage == "prod":
+                continue
             if policy.check_list == "smoke" and needed <= set(policy.capabilities):
                 resolved.add(cell_name)
             continue
@@ -665,14 +668,18 @@ def _version_matches(expected: str, candidates: _Sequence[str]) -> bool:
     exp = expected.strip()
     if not exp:
         return True
+    exp_is_sha = bool(_HEX_SHA_RE.fullmatch(exp))
     for raw in candidates:
         cand = raw.strip()
         if not cand:
             continue
         if cand == exp:
             return True
-        if len(exp) >= 7 and len(cand) >= 7 and (cand.startswith(exp) or exp.startswith(cand)):
-            return True
+        if exp_is_sha and _HEX_SHA_RE.fullmatch(cand):
+            exp_l = exp.lower()
+            cand_l = cand.lower()
+            if cand_l.startswith(exp_l) or exp_l.startswith(cand_l):
+                return True
     return False
 
 
@@ -710,8 +717,10 @@ def _poll_until_healthy(
 
     while True:
         attempts += 1
+        remaining = deadline - monotonic()
+        effective_timeout = min(request_timeout_seconds, max(0.1, remaining))
         try:
-            status_code, body = getter(url, request_timeout_seconds)
+            status_code, body = getter(url, effective_timeout)
             last_status = status_code
             payload: _Mapping[str, _Any] = {}
             if body:

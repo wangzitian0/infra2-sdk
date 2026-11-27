@@ -541,7 +541,7 @@ def init_service(
     tags = ["Observability"]
 
     @app.get("/livez", tags=tags, response_model=_ProbeResponse)
-    def livez():
+    async def livez():
         return JSONResponse({"status": "alive", "service": name})
 
     @app.get(
@@ -573,6 +573,11 @@ def init_service(
                 extra = dict(health_extra())
             except Exception as exc:  # noqa: BLE001
                 extra = {"health_extra_error": type(exc).__name__}
+                body = {
+                    **body,
+                    "status": _HealthStatus.UNHEALTHY.value,
+                    "reasons": [*body.get("reasons", ()), f"health_extra:{type(exc).__name__}"],
+                }
                 code = _HTTP_UNAVAILABLE
         else:
             extra = {}
@@ -592,6 +597,10 @@ class HttpClientSettings(_ContractModel):
 
     @_model_validator(mode="after")
     def _validate_limits(self) -> HttpClientSettings:
+        if not _math.isfinite(self.timeout_seconds) or not _math.isfinite(
+            self.connect_timeout_seconds
+        ):
+            raise ValueError("timeout_seconds and connect_timeout_seconds must be finite")
         if self.max_keepalive_connections > self.max_connections:
             raise ValueError("max_keepalive_connections cannot exceed max_connections")
         return self
@@ -870,8 +879,14 @@ class RateLimitWindow:
         *,
         clock: _Callable[[], float] = _time.monotonic,
     ) -> None:
-        if max_requests <= 0 or window_seconds <= 0:
-            raise ValueError("max_requests and window_seconds must be positive")
+        if (
+            isinstance(max_requests, bool)
+            or isinstance(window_seconds, bool)
+            or max_requests <= 0
+            or not _math.isfinite(window_seconds)
+            or window_seconds <= 0
+        ):
+            raise ValueError("max_requests and window_seconds must be finite and positive")
         self.limit = max_requests
         self.window_seconds = float(window_seconds)
         self._clock = clock
@@ -887,7 +902,7 @@ class RateLimitWindow:
 
     def acquire(self, cost: int = 1) -> tuple[bool, float]:
         """Consume ``cost`` units when within budget; return ``(allowed, retry_after_seconds)``."""
-        if cost <= 0 or cost > self.limit:
+        if isinstance(cost, bool) or cost <= 0 or cost > self.limit:
             raise ValueError("cost must be between 1 and limit")
         with self._lock:
             now = self._clock()
