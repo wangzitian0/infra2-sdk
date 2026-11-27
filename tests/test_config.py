@@ -263,3 +263,34 @@ def test_validate_offline_allows_sensitive_code_field_with_composed_from() -> No
     )
     errs = config.EnvironmentManifest(source="app", fields=(bad_default,)).validate_offline()
     assert errs == ["API_KEY: a sensitive value cannot be a code default"]
+
+
+def test_environment_manifest_v2_wire_format_preserves_aliases() -> None:
+    raw = {
+        "contract_version": 2,
+        "source": "app/service",
+        "fields": [
+            {"field": "port", "env": "PORT", "aliases": []},
+            {"field": "api_key", "env": "API_KEY", "aliases": ["OLD_KEY"], "source": "runtime"},
+        ],
+    }
+    manifest = config.EnvironmentManifest.from_dict(raw)
+    assert [f.aliases for f in manifest.fields] == [(), ("OLD_KEY",)]
+    dumped = manifest.to_dict()
+    assert dumped["fields"][0]["aliases"] == []
+    assert dumped["fields"][1]["aliases"] == ["OLD_KEY"]
+
+    with pytest.raises(ValueError, match="duplicate environment alias"):
+        config.EnvironmentField(field="bad", env="FOO", aliases=("FOO",))
+
+    with pytest.raises(ValueError, match="shared by"):
+        config.EnvironmentManifest.from_dict(
+            {
+                "contract_version": 2,
+                "source": "app/conflict",
+                "fields": [
+                    {"field": "a", "env": "NEW_KEY", "aliases": ["SHARED_KEY"]},
+                    {"field": "b", "env": "SHARED_KEY", "aliases": []},
+                ],
+            }
+        )
