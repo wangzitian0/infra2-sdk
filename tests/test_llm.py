@@ -53,10 +53,8 @@ def test_llm_settings_decoding_and_binary_digests() -> None:
     with pytest.raises(ValueError):
         llm.DecodingSpec(seed=True)  # type: ignore[arg-type]
 
-    assert llm.prompt_sha256(b"\x80\x81") != llm.prompt_sha256(b"\x82\x83")
     s_hash = llm.schema_sha256(_Out)
-    r_hash = llm.request_sha256(model="glm-5.3-flash", prompt="hello", schema=s_hash, decoding=dec)
-    assert len(s_hash) == len(r_hash) == 64
+    assert len(s_hash) == 64
 
 
 def test_redact_errors_passthrough_and_streaming(caplog: pytest.LogCaptureFixture) -> None:
@@ -190,6 +188,18 @@ def test_stream_text_zai_extra_body_retryable_and_midstream_redaction() -> None:
     assert zai_agent.model.wrapped.settings["extra_body"]["max_tokens"] == 256
 
     assert llm.is_retryable_llm_error(ModelHTTPError(429, "m", body="rate limited")) is True
+    assert (
+        llm.is_retryable_llm_error(
+            ModelHTTPError(429, "m", body={"error": {"code": "1113", "message": "arrears"}})
+        )
+        is False
+    )
+    assert (
+        llm.is_retryable_llm_error(
+            ModelHTTPError(429, "m", provider_error_code="1310", body="quota exhausted")
+        )
+        is False
+    )
     assert llm.is_retryable_llm_error(ModelHTTPError(400, "m", body='{"code": "1302"}')) is True
     assert (
         llm.is_retryable_llm_error(
@@ -199,6 +209,51 @@ def test_stream_text_zai_extra_body_retryable_and_midstream_redaction() -> None:
     )
     assert llm.is_retryable_llm_error(ModelHTTPError(400, "m", body="bad input")) is False
     assert llm.is_retryable_llm_error(ValueError("bad")) is False
+
+    # create_llm_agent wires is_retryable_llm_error by default (terminal 429 fails fast).
+    async def _run_default_retry_wiring() -> None:
+        calls = 0
+
+        def _timeout_then_ok(_msgs: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise ModelRequestTimeout("m", 1.0)
+            return ModelResponse(parts=[TextPart("recovered")])
+
+        retrying = llm.create_llm_agent(
+            cfg,
+            model=FunctionModel(_timeout_then_ok),
+            call_site="unit.retry_timeout",
+            max_attempts=2,
+            initial_delay=0.01,
+        )
+        assert (await retrying.run("ping")).output == "recovered"
+        assert calls == 2
+
+        term_calls = 0
+
+        def _terminal_429(_msgs: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            nonlocal term_calls
+            term_calls += 1
+            raise ModelHTTPError(
+                429, "m", body={"error": {"code": "1113", "message": "insufficient balance"}}
+            )
+
+        fast_fail = llm.create_llm_agent(
+            cfg,
+            model=FunctionModel(_terminal_429),
+            call_site="unit.terminal_429",
+            max_attempts=3,
+            initial_delay=0.01,
+        )
+        with pytest.raises(ModelHTTPError):
+            await fast_fail.run("ping")
+        assert term_calls == 1
+
+    import asyncio
+
+    asyncio.run(_run_default_retry_wiring())
 
     async def _run_stream_checks() -> None:
         # Upstream HTTP fault occurring while caller consumes stream must still be scrubbed.

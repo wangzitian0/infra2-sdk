@@ -16,6 +16,7 @@ EXTRA_IMPORTS: dict[str, tuple[str, ...]] = {
     "fastapi": (
         "fastapi",
         "httpx",
+        "uvicorn",
         "opentelemetry.trace",
         "opentelemetry.sdk.trace",
         "opentelemetry.instrumentation.logging",

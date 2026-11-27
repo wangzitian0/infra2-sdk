@@ -1,6 +1,6 @@
 [project]
 name = "infra2-sdk"
-version = "4.13.2"
+version = "4.14.0"
 description = "Clean MECE environment contracts, telemetry, service, storage, LLM, and delivery SDK"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -26,6 +26,7 @@ http = [
 fastapi = [
     "fastapi>=0.162,<1",
     "httpx>=0.27,<1",
+    "uvicorn[standard]>=0.28,<1",
     "opentelemetry-api>=1.24,<2",
     "opentelemetry-sdk>=1.24,<2",
     "opentelemetry-exporter-otlp-proto-http>=1.24,<2",
@@ -49,6 +50,7 @@ all = [
     "boto3>=1.34,<2",
     "fastapi>=0.162,<1",
     "httpx>=0.27,<1",
+    "uvicorn[standard]>=0.28,<1",
     "opentelemetry-api>=1.24,<2",
     "opentelemetry-sdk>=1.24,<2",
     "opentelemetry-exporter-otlp-proto-http>=1.24,<2",
@@ -66,6 +68,7 @@ dev = [
     "build>=1.2,<2,!=1.5.1",
     "fastapi>=0.162,<1",
     "httpx>=0.27,<1",
+    "uvicorn[standard]>=0.28,<1",
     "opentelemetry-api>=1.24,<2",
     "opentelemetry-sdk>=1.24,<2",
     "opentelemetry-exporter-otlp-proto-http>=1.24,<2",

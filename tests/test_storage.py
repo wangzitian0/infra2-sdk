@@ -242,6 +242,26 @@ def test_redis_probe_roundtrip_unquoting_and_readonly() -> None:
     assert "secretpw" not in repr(cfg)
 
 
+def test_redis_probe_uses_monotonic_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _handle(conn: socket.socket) -> None:
+        conn.recv(1024)
+        conn.sendall(b"+PONG\r\n")
+
+    srv, port = _start_resp_server(_handle)
+    try:
+        # Skew perf_counter vs monotonic to verify clock mismatch cannot trigger a false timeout.
+        orig_perf = time.perf_counter
+        orig_mono = time.monotonic
+        monkeypatch.setattr(time, "perf_counter", lambda: orig_perf() + 5000.0)
+        monkeypatch.setattr(time, "monotonic", lambda: orig_mono() + 10.0)
+        res = storage.probe_redis(
+            f"redis://127.0.0.1:{port}/0", connect_timeout=1.0, write_probe=False
+        )
+        assert res.status is service.DependencyStatus.PRESENT
+    finally:
+        srv.close()
+
+
 def test_enum_diff_metadata_unwrapping_and_sql_safety_and_cli_import(tmp_path) -> None:
     @dataclass(frozen=True)
     class _BaseEnum:
@@ -581,7 +601,7 @@ def test_s3_public_endpoint_presign_and_alembic_error(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(
         storage,
-        "require_optional",
+        "_require_optional",
         lambda mod, *, extra: (_ for _ in ()).throw(RuntimeError(f"missing {mod} [{extra}]")),
     )
     with pytest.raises(RuntimeError, match="application environment"):

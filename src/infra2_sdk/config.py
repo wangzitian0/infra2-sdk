@@ -2,38 +2,60 @@
 
 from __future__ import annotations
 
-import argparse
-import difflib
-import functools
-import hashlib
-import json
-import os
-import re
-import sys
-from collections.abc import Collection, Mapping, Sequence
-from enum import StrEnum
+import argparse as _argparse
+import difflib as _difflib
+import functools as _functools
+import hashlib as _hashlib
+import json as _json
+import os as _os
+import re as _re
+import sys as _sys
+from collections.abc import Collection as _Collection
+from collections.abc import Mapping as _Mapping
+from collections.abc import Sequence as _Sequence
+from enum import StrEnum as _StrEnum
 from importlib.resources import files as _resource_files
-from pathlib import Path
-from typing import Any, Final, get_args
+from pathlib import Path as _Path
+from typing import Any as _Any
+from typing import Final as _Final
+from typing import Literal as _Literal
+from typing import get_args as _get_args
 
-import yaml
-from pydantic import BaseModel, SecretStr, field_validator, model_validator
+import yaml as _yaml
+from pydantic import (
+    BaseModel as _BaseModel,
+)
+from pydantic import (
+    SecretStr as _SecretStr,
+)
+from pydantic import (
+    field_validator as _field_validator,
+)
+from pydantic import (
+    model_validator as _model_validator,
+)
 
 from infra2_sdk._core import (
-    ContractModel,
-    canonical_sha256,
-    load_dotted_symbol,
-    require_contract_version,
+    ContractModel as _ContractModel,
+)
+from infra2_sdk._core import (
+    canonical_sha256 as _canonical_sha256,
 )
 from infra2_sdk._core import (
     is_preview_alias as _is_preview_alias,
 )
+from infra2_sdk._core import (
+    load_dotted_symbol as _load_dotted_symbol,
+)
+from infra2_sdk._core import (
+    require_contract_version as _require_contract_version,
+)
 
-_MANIFEST_CONTRACT_VERSION: Final[int] = 2
-_RETIRED_ENV_NAMES: Final[frozenset[str]] = frozenset({"app_env", "image_tag", "service_name"})
+_MANIFEST_CONTRACT_VERSION: _Final[int] = 2
+_RETIRED_ENV_NAMES: _Final[frozenset[str]] = frozenset({"app_env", "image_tag", "service_name"})
 
 
-class EnvironmentTier(StrEnum):
+class EnvironmentTier(_StrEnum):
     LOCAL_DEV = "local_dev"
     LOCAL_TEST = "local_test"
     GITHUB_CI = "github_ci"
@@ -42,7 +64,7 @@ class EnvironmentTier(StrEnum):
     PRODUCTION = "production"
 
 
-class RuntimeEnvKey(StrEnum):
+class RuntimeEnvKey(_StrEnum):
     ENVIRONMENT = "ENVIRONMENT"
     SERVICE_NAME = "OTEL_SERVICE_NAME"
     SERVICE_VERSION = "SERVICE_VERSION"
@@ -54,24 +76,17 @@ class RuntimeEnvKey(StrEnum):
     OTEL_RESOURCE_ATTRIBUTES = "OTEL_RESOURCE_ATTRIBUTES"
 
 
-class _FieldSource(StrEnum):
-    BOOTSTRAP = "bootstrap"
-    HUMAN = "human"
-    RUNTIME = "runtime"
-    RELEASE = "release"
-    DECISION = "decision"
-    CODE = "code"
-
-
-_STORE_BACKED_SOURCES = frozenset({_FieldSource.HUMAN, _FieldSource.RUNTIME})
-_COMPOSE_SOURCES = frozenset({_FieldSource.RELEASE, _FieldSource.DECISION})
+_FieldSourceLiteral = _Literal["bootstrap", "human", "runtime", "release", "decision", "code"]
+_VALID_FIELD_SOURCES = frozenset({"bootstrap", "human", "runtime", "release", "decision", "code"})
+_STORE_BACKED_SOURCES = frozenset({"human", "runtime"})
+_COMPOSE_SOURCES = frozenset({"release", "decision"})
 _FIELD_SCOPES = frozenset({"env", "project"})
 _CI_POLICIES = frozenset({"forbidden", "allowed"})
-_PROVIDED_BY_RE = re.compile(r"\A[a-z][a-z0-9_]*/[a-z][a-z0-9_-]*:[A-Za-z_][A-Za-z0-9_]*\Z")
-_PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
-_ENV_PLACEHOLDER_RE = re.compile(r"\{env:([A-Za-z_][A-Za-z0-9_]*)\}")
-_IDENT_RE = re.compile(r"\A[A-Za-z_][A-Za-z0-9_]*\Z")
-_ENV_VAR_RE = re.compile(r"\A[A-Z][A-Z0-9_]*\Z")
+_PROVIDED_BY_RE = _re.compile(r"\A[a-z][a-z0-9_]*/[a-z][a-z0-9_-]*:[A-Za-z_][A-Za-z0-9_]*\Z")
+_PLACEHOLDER_RE = _re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_ENV_PLACEHOLDER_RE = _re.compile(r"\{env:([A-Za-z_][A-Za-z0-9_]*)\}")
+_IDENT_RE = _re.compile(r"\A[A-Za-z_][A-Za-z0-9_]*\Z")
+_ENV_VAR_RE = _re.compile(r"\A[A-Z][A-Z0-9_]*\Z")
 _RENDER_KEYS = (
     "source",
     "provided_by",
@@ -111,28 +126,10 @@ def resolve_tier(value: str | EnvironmentTier, *, github_actions: bool = False) 
     raise ValueError(f"unknown environment: {value!r}")
 
 
-def read_runtime_env(
-    key: RuntimeEnvKey,
-    environ: Mapping[str, str] | None = None,
-    *,
-    default: str = "",
-    required: bool = False,
-) -> str:
-    """Read one canonical runtime variable from ``environ``."""
-    canonical = RuntimeEnvKey(key)
-    values = os.environ if environ is None else environ
-    raw = values.get(canonical.value)
-    if isinstance(raw, str) and raw.strip():
-        return raw.strip()
-    if required:
-        raise ValueError(f"{canonical.value} is required")
-    return default
-
-
-@functools.cache
-def _cached_shared_env_contract() -> dict[str, Any]:
+@_functools.cache
+def _cached_shared_env_contract() -> dict[str, _Any]:
     source = _resource_files("infra2_sdk").joinpath("data/shared_env.yaml")
-    data = yaml.safe_load(source.read_text(encoding="utf-8")) or {}
+    data = _yaml.safe_load(source.read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict) or not isinstance(data.get("groups"), dict):
         raise ValueError("shared_env.yaml: 'groups' must be a mapping")
     return data
@@ -163,7 +160,7 @@ def _check_shared_env(manifest: EnvironmentManifest) -> list[str]:
     return issues
 
 
-class EnvironmentField(ContractModel):
+class EnvironmentField(_ContractModel):
     """One environment variable declared by an application settings model."""
 
     field: str
@@ -175,7 +172,7 @@ class EnvironmentField(ContractModel):
     sensitive: bool = False
     group: str = "Application"
     description: str = ""
-    source: _FieldSource = _FieldSource.CODE
+    source: _Literal["bootstrap", "human", "runtime", "release", "decision", "code"] = "code"
     empty_ok: bool = False
     scope: str = "env"
     provided_by: str = ""
@@ -183,7 +180,7 @@ class EnvironmentField(ContractModel):
     store_key: str = ""
     ci: str = "forbidden"
 
-    @model_validator(mode="after")
+    @_model_validator(mode="after")
     def _validate_field(self) -> EnvironmentField:
         if not self.field or not self.env:
             raise ValueError("field and env must be non-empty")
@@ -222,34 +219,34 @@ class EnvironmentField(ContractModel):
         return tuple(dict.fromkeys(_ENV_PLACEHOLDER_RE.findall(self.composed_from)))
 
 
-def _is_secret_annotation(annotation: Any) -> bool:
+def _is_secret_annotation(annotation: _Any) -> bool:
     if annotation is None:
         return False
-    if annotation is SecretStr or (
-        isinstance(annotation, type) and issubclass(annotation, SecretStr)
+    if annotation is _SecretStr or (
+        isinstance(annotation, type) and issubclass(annotation, _SecretStr)
     ):
         return True
     name = getattr(annotation, "__name__", "")
     if isinstance(name, str) and "secret" in name.lower():
         return True
-    return any(_is_secret_annotation(arg) for arg in get_args(annotation))
+    return any(_is_secret_annotation(arg) for arg in _get_args(annotation))
 
 
-class EnvironmentManifest(ContractModel):
+class EnvironmentManifest(_ContractModel):
     """Versioned application configuration contract."""
 
     source: str
     fields: tuple[EnvironmentField, ...]
     contract_version: int = _MANIFEST_CONTRACT_VERSION
 
-    @field_validator("contract_version", mode="before")
+    @_field_validator("contract_version", mode="before")
     @classmethod
-    def _check_version(cls, value: Any) -> int:
-        return require_contract_version(
+    def _check_version(cls, value: _Any) -> int:
+        return _require_contract_version(
             value, _MANIFEST_CONTRACT_VERSION, label="environment manifest version"
         )
 
-    @model_validator(mode="after")
+    @_model_validator(mode="after")
     def _validate_manifest(self) -> EnvironmentManifest:
         if not self.source:
             raise ValueError("source is required")
@@ -274,19 +271,12 @@ class EnvironmentManifest(ContractModel):
         for f in self.fields:
             settled = f.empty_ok or f.required or f.injected
             if f.store_backed and f.has_default and not settled:
-                errors.append(
-                    f"{f.env}: {f.source.value} value must be required, injected or empty_ok"
-                )
+                errors.append(f"{f.env}: {f.source} value must be required, injected or empty_ok")
             if f.source in _COMPOSE_SOURCES and not f.injected:
-                errors.append(f"{f.env}: {f.source.value} value must be injected by the deployment")
-            if (
-                f.sensitive
-                and f.source is _FieldSource.CODE
-                and not f.provided_by
-                and not f.composed_from
-            ):
+                errors.append(f"{f.env}: {f.source} value must be injected by the deployment")
+            if f.sensitive and f.source == "code" and not f.provided_by and not f.composed_from:
                 errors.append(f"{f.env}: a sensitive value cannot be a code default")
-            if f.source is _FieldSource.BOOTSTRAP:
+            if f.source == "bootstrap":
                 errors.append(f"{f.env}: bootstrap values never enter an application manifest")
             provider_key = f.provided_by.split(":", 1)[1] if f.provided_by else ""
             own_key = f.store_key if f.store_key and f.store_backed and not f.empty_ok else ""
@@ -298,31 +288,31 @@ class EnvironmentManifest(ContractModel):
                     errors.append(f"{f.env}: composed_from env:{env_ref} must be uppercase POSIX")
         return errors
 
-    def fingerprint(self, environ: Mapping[str, str]) -> str:
+    def fingerprint(self, environ: _Mapping[str, str]) -> str:
         """Compute deterministic SHA-256 fingerprint across configured manifest values."""
         lines: list[str] = []
         for f in sorted(self.fields, key=lambda item: item.env):
             raw = environ.get(f.env)
             if isinstance(raw, str) and raw.strip():
                 val = raw if f.sensitive else raw.strip()
-                lines.append(f"{f.env}={hashlib.sha256(val.encode()).hexdigest()}")
-        return canonical_sha256(lines)
+                lines.append(f"{f.env}={_hashlib.sha256(val.encode()).hexdigest()}")
+        return _canonical_sha256(lines)
 
     @classmethod
-    def from_file(cls, path: str | Path) -> EnvironmentManifest:
-        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    def from_file(cls, path: str | _Path) -> EnvironmentManifest:
+        raw = _json.loads(_Path(path).read_text(encoding="utf-8"))
         return cls.from_dict(raw)
 
     @classmethod
     def from_model(
         cls,
-        model: type[Any],
+        model: type[_Any],
         *,
         source: str | None = None,
-        overrides: Mapping[str, Mapping[str, object]] | None = None,
+        overrides: _Mapping[str, _Mapping[str, object]] | None = None,
     ) -> EnvironmentManifest:
         """Extract an EnvironmentManifest from a Pydantic v2 BaseModel."""
-        if not (isinstance(model, type) and issubclass(model, BaseModel)):
+        if not (isinstance(model, type) and issubclass(model, _BaseModel)):
             raise TypeError("model must be a Pydantic BaseModel subclass")
         cfg = model.model_config
         prefix = cfg.get("env_prefix", "")
@@ -336,8 +326,10 @@ class EnvironmentManifest(ContractModel):
                 else [str(c) for c in getattr(raw_alias, "choices", ()) if isinstance(c, str)]
             )
             canonical = val_aliases[0] if val_aliases else f"{prefix}{info.alias or name}".upper()
-            extra = info.json_schema_extra if isinstance(info.json_schema_extra, Mapping) else {}
-            f_source = _FieldSource(str(extra.get("source") or _FieldSource.CODE.value))
+            extra = info.json_schema_extra if isinstance(info.json_schema_extra, _Mapping) else {}
+            f_source = str(extra.get("source") or "code")
+            if f_source not in _VALID_FIELD_SOURCES:
+                raise ValueError(f"{name}: invalid field source {f_source!r}")
             required = bool(info.is_required())
             fields.append(
                 EnvironmentField(
@@ -351,7 +343,7 @@ class EnvironmentManifest(ContractModel):
                     ),
                     group=str(extra.get("group", "Application")),
                     description=str(info.description or ""),
-                    source=f_source,
+                    source=f_source,  # type: ignore[arg-type]
                     empty_ok=bool(extra.get("empty_ok", False)),
                     scope=str(extra.get("scope") or "env"),
                     provided_by=str(extra.get("provided_by") or ""),
@@ -366,7 +358,7 @@ class EnvironmentManifest(ContractModel):
                 raise ValueError(f"overrides name unknown settings fields: {unknown}")
             for name, override in overrides.items():
                 changes = dict(override)
-                if str(changes.get("source", "")) in {s.value for s in _COMPOSE_SOURCES}:
+                if str(changes.get("source", "")) in _COMPOSE_SOURCES:
                     changes.setdefault("injected", True)
                 merged_field = {**fields[by_name[name]].model_dump(), **changes}
                 fields[by_name[name]] = EnvironmentField.model_validate(merged_field)
@@ -378,10 +370,10 @@ class EnvironmentManifest(ContractModel):
     @classmethod
     def merge(
         cls,
-        manifests: Sequence[tuple[str, EnvironmentManifest]],
+        manifests: _Sequence[tuple[str, EnvironmentManifest]],
         *,
         source: str,
-        exclude: Collection[str] = (),
+        exclude: _Collection[str] = (),
     ) -> EnvironmentManifest:
         """Merge several manifests in declaration order, failing on field metadata drift."""
         excluded = set(exclude)
@@ -403,8 +395,8 @@ class EnvironmentManifest(ContractModel):
 
 
 def assert_env(
-    manifest: EnvironmentManifest | str | Path,
-    environ: Mapping[str, str] | None = None,
+    manifest: EnvironmentManifest | str | _Path,
+    environ: _Mapping[str, str] | None = None,
     *,
     require_injected: bool = False,
 ) -> None:
@@ -413,12 +405,12 @@ def assert_env(
         loaded = manifest
         label = loaded.source
     else:
-        path = Path(manifest)
+        path = _Path(manifest)
         if not path.is_file():
             raise RuntimeError(f"environment manifest {path} is missing")
         loaded = EnvironmentManifest.from_file(path)
         label = str(path)
-    env = os.environ if environ is None else environ
+    env = _os.environ if environ is None else environ
     missing = [
         fld.env
         for fld in loaded.fields
@@ -430,22 +422,22 @@ def assert_env(
         raise RuntimeError(f"{label}: missing {len(missing)} variable(s): {names}")
 
 
-def _handle_export_or_check(args: argparse.Namespace, *, check_only: bool) -> int:
+def _handle_export_or_check(args: _argparse.Namespace, *, check_only: bool) -> int:
     manifest = EnvironmentManifest.from_model(
-        load_dotted_symbol(args.settings, require_type=True), source=args.source
+        _load_dotted_symbol(args.settings, require_type=True), source=args.source
     )
     if offline_errors := manifest.validate_offline():
         for err in offline_errors:
-            print(err, file=sys.stderr)
+            print(err, file=_sys.stderr)
         return 1
     text = manifest.to_json()
-    path: Path = args.json
+    path: _Path = args.json
     current = path.read_text(encoding="utf-8") if path.exists() else ""
     if current == text:
         return 0
     if check_only:
-        sys.stdout.writelines(
-            difflib.unified_diff(
+        _sys.stdout.writelines(
+            _difflib.unified_diff(
                 current.splitlines(keepends=True),
                 text.splitlines(keepends=True),
                 fromfile=str(path),
@@ -459,19 +451,19 @@ def _handle_export_or_check(args: argparse.Namespace, *, check_only: bool) -> in
     return 0
 
 
-def _main(argv: Sequence[str] | None = None) -> int:
+def _main(argv: _Sequence[str] | None = None) -> int:
     """CLI entrypoint: ``python -m infra2_sdk.config {export|check|validate} ...``."""
-    parser = argparse.ArgumentParser(prog="python -m infra2_sdk.config")
+    parser = _argparse.ArgumentParser(prog="python -m infra2_sdk.config")
     sub = parser.add_subparsers(dest="command", required=True)
 
     for cmd_name in ("export", "check"):
         sp = sub.add_parser(cmd_name)
         sp.add_argument("settings", help="settings class as module:Class")
         sp.add_argument("--source", default=None, help="manifest source label")
-        sp.add_argument("--json", type=Path, required=True, help="manifest JSON path")
+        sp.add_argument("--json", type=_Path, required=True, help="manifest JSON path")
 
     vp = sub.add_parser("validate")
-    vp.add_argument("manifest", type=Path, help="env.manifest.json path")
+    vp.add_argument("manifest", type=_Path, help="env.manifest.json path")
     vp.add_argument("--no-require-injected", action="store_true")
 
     args = parser.parse_args(list(argv) if argv is not None else None)
@@ -481,7 +473,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
     try:
         assert_env(args.manifest, require_injected=not args.no_require_injected)
     except (RuntimeError, ValueError, OSError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: {exc}", file=_sys.stderr)
         return 1
     print("environment ok")
     return 0
@@ -497,7 +489,6 @@ __all__ = (
     "EnvironmentTier",
     "RuntimeEnvKey",
     "assert_env",
-    "read_runtime_env",
     "resolve_tier",
 )
 

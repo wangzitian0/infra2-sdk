@@ -2,40 +2,78 @@
 
 from __future__ import annotations
 
-import contextlib
-import dataclasses
-import hashlib
-import inspect
-import json
-import logging
-import math
-import os
-import re
-import sys
-import threading
-import time
-from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
-from contextlib import asynccontextmanager, contextmanager
-from contextvars import ContextVar
-from pathlib import Path
-from typing import Any, Literal
-from weakref import WeakKeyDictionary
+import contextlib as _contextlib
+import dataclasses as _dataclasses
+import hashlib as _hashlib
+import inspect as _inspect
+import json as _json
+import logging as _logging
+import math as _math
+import os as _os
+import re as _re
+import sys as _sys
+import threading as _threading
+import time as _time
+from collections.abc import (
+    AsyncIterator as _AsyncIterator,
+)
+from collections.abc import (
+    Collection as _Collection,
+)
+from collections.abc import (
+    Iterator as _Iterator,
+)
+from collections.abc import (
+    Mapping as _Mapping,
+)
+from collections.abc import (
+    Sequence as _Sequence,
+)
+from contextlib import (
+    asynccontextmanager as _asynccontextmanager,
+)
+from contextlib import (
+    contextmanager as _contextmanager,
+)
+from contextvars import ContextVar as _ContextVar
+from pathlib import Path as _Path
+from typing import Any as _Any
+from typing import Literal as _Literal
+from weakref import WeakKeyDictionary as _WeakKeyDictionary
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import (
+    Field as _Field,
+)
+from pydantic import (
+    field_validator as _field_validator,
+)
+from pydantic import (
+    model_validator as _model_validator,
+)
 
 from infra2_sdk._core import (
-    ContractModel,
-    canonical_sha256,
-    require_optional,
-    sanitize_headers,
-    validate_http_url,
+    ContractModel as _ContractModel,
 )
-from infra2_sdk.telemetry import bind_log_context, get_meter
+from infra2_sdk._core import (
+    canonical_sha256 as _canonical_sha256,
+)
+from infra2_sdk._core import (
+    require_optional as _require_optional,
+)
+from infra2_sdk._core import (
+    sanitize_headers as _sanitize_headers,
+)
+from infra2_sdk._core import (
+    validate_http_url as _validate_http_url,
+)
+from infra2_sdk.telemetry import bind_log_context as _bind_log_context
+from infra2_sdk.telemetry import get_meter as _get_meter
 
-_LOGGER = logging.getLogger("infra2_sdk.llm")
+_LOGGER = _logging.getLogger("infra2_sdk.llm")
 
-_ModelRole = Literal["large", "small", "multimodal"]
-_ThinkingLevel = bool | Literal["minimal", "low", "medium", "high", "xhigh"]
+_TERMINAL_PROVIDER_CODES: frozenset[str] = frozenset(
+    {"1113", *(str(code) for code in range(1308, 1322))}
+)
 
 _DEFAULT_ZAI_BASE_URL = "https://api.z.ai/api/coding/paas/v4"
 _DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
@@ -49,8 +87,8 @@ _LLM_ENV_FIELDS = (
     ("multimodal_model", "LLM_MULTIMODAL_MODEL", False),
 )
 
-_CALL_SITE_RE = re.compile(r"^[a-z][a-z0-9_.-]{1,63}$")
-_SAFE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
+_CALL_SITE_RE = _re.compile(r"^[a-z][a-z0-9_.-]{1,63}$")
+_SAFE_TOKEN_RE = _re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 _FRAME_SKIP_PREFIXES = (
     "infra2_sdk.",
     "pydantic_ai",
@@ -87,27 +125,27 @@ _PASSTHROUGH_PA_EXC_NAMES = (
     "FallbackExceptionGroup",
 )
 
-_LLM_CONTEXT: ContextVar[Mapping[str, Any] | None] = ContextVar("infra2_llm_ctx", default=None)
-_PENDING_SYNC_CALLER: ContextVar[tuple[int, tuple[dict[str, str | int], str]] | None] = ContextVar(
-    "infra2_llm_pending_caller", default=None
+_LLM_CONTEXT: _ContextVar[_Mapping[str, _Any] | None] = _ContextVar("infra2_llm_ctx", default=None)
+_PENDING_SYNC_CALLER: _ContextVar[tuple[int, tuple[dict[str, str | int], str]] | None] = (
+    _ContextVar("infra2_llm_pending_caller", default=None)
 )
 
-_GUARDED_MODEL_CLS: type[Any] | None = None
-_HIST_LOCK = threading.Lock()
-_DURATION_HISTOGRAMS: WeakKeyDictionary[Any, Any] = WeakKeyDictionary()
+_GUARDED_MODEL_CLS: type[_Any] | None = None
+_HIST_LOCK = _threading.Lock()
+_DURATION_HISTOGRAMS: _WeakKeyDictionary[_Any, _Any] = _WeakKeyDictionary()
 
 
-def _reset_llm_context(tok: Any, prev: Mapping[str, Any]) -> None:
+def _reset_llm_context(tok: _Any, prev: _Mapping[str, _Any]) -> None:
     try:
         _LLM_CONTEXT.reset(tok)
     except ValueError:
         _LLM_CONTEXT.set(dict(prev) if prev else None)
 
 
-def _is_internal_agent_reentry(agent_id: int, prev: Mapping[str, Any]) -> bool:
+def _is_internal_agent_reentry(agent_id: int, prev: _Mapping[str, _Any]) -> bool:
     if prev.get("_infra2_agent_id") != agent_id:
         return False
-    frame = inspect.currentframe()
+    frame = _inspect.currentframe()
     try:
         cur = frame.f_back if frame is not None else None
         while cur is not None:
@@ -120,30 +158,30 @@ def _is_internal_agent_reentry(agent_id: int, prev: Mapping[str, Any]) -> bool:
         del frame
 
 
-def _normalize_hash_input(value: Any) -> Any:
+def _normalize_hash_input(value: _Any) -> _Any:
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     if isinstance(value, (bytes, bytearray)):
-        return {"__bytes_sha256__": hashlib.sha256(bytes(value)).hexdigest()}
-    if isinstance(value, Path):
+        return {"__bytes_sha256__": _hashlib.sha256(bytes(value)).hexdigest()}
+    if isinstance(value, _Path):
         return value.as_posix()
     if isinstance(value, type) and hasattr(value, "model_json_schema"):
         return _normalize_hash_input(value.model_json_schema())
     if hasattr(value, "model_dump") and callable(value.model_dump):
         return _normalize_hash_input(value.model_dump(mode="json"))
-    if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return _normalize_hash_input(dataclasses.asdict(value))
-    if isinstance(value, Mapping):
+    if _dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return _normalize_hash_input(_dataclasses.asdict(value))
+    if isinstance(value, _Mapping):
         return {str(k): _normalize_hash_input(v) for k, v in value.items()}
     if isinstance(value, (set, frozenset)):
         normalized = [_normalize_hash_input(x) for x in value]
-        return sorted(normalized, key=lambda x: json.dumps(x, sort_keys=True, ensure_ascii=True))
-    if isinstance(value, Sequence):
+        return sorted(normalized, key=lambda x: _json.dumps(x, sort_keys=True, ensure_ascii=True))
+    if isinstance(value, _Sequence):
         return [_normalize_hash_input(x) for x in value]
     return str(value)
 
 
-def _safe_token(raw: Any) -> str | None:
+def _safe_token(raw: _Any) -> str | None:
     if raw is None:
         return None
     text = str(raw).strip()
@@ -158,13 +196,13 @@ def _extract_provider_code(exc: BaseException) -> str | None:
         return _safe_token(direct)
     body = getattr(exc, "body", None)
     if isinstance(body, str):
-        with contextlib.suppress(ValueError):
-            body = json.loads(body)
-    if isinstance(body, Mapping):
+        with _contextlib.suppress(ValueError):
+            body = _json.loads(body)
+    if isinstance(body, _Mapping):
         if (code := body.get("code")) is not None:
             return _safe_token(code)
         err = body.get("error")
-        if isinstance(err, Mapping) and (code := err.get("code")) is not None:
+        if isinstance(err, _Mapping) and (code := err.get("code")) is not None:
             return _safe_token(code)
     return None
 
@@ -188,8 +226,8 @@ def _sanitize_code_path(filename: str) -> str:
 def _sanitize_fallback_site(module_name: str, func_name: str) -> str:
     mod_leaf = (module_name or "").rsplit(".", 1)[-1].lower()
     raw_fn = (func_name or "call").strip("<>").lower()
-    mod_clean = re.sub(r"[^a-z0-9_.-]+", "_", mod_leaf).strip("_.") or "app"
-    fn_clean = re.sub(r"[^a-z0-9_.-]+", "_", raw_fn).strip("_.") or "call"
+    mod_clean = _re.sub(r"[^a-z0-9_.-]+", "_", mod_leaf).strip("_.") or "app"
+    fn_clean = _re.sub(r"[^a-z0-9_.-]+", "_", raw_fn).strip("_.") or "call"
     site = f"{mod_clean}.{fn_clean}"
     if not site[0].isalpha():
         site = f"c_{site}"
@@ -197,7 +235,7 @@ def _sanitize_fallback_site(module_name: str, func_name: str) -> str:
 
 
 def _caller_frame_info() -> tuple[dict[str, str | int], str]:
-    frame = inspect.currentframe()
+    frame = _inspect.currentframe()
     try:
         cur = frame.f_back if frame is not None else None
         while cur is not None:
@@ -221,8 +259,8 @@ def _caller_frame_info() -> tuple[dict[str, str | int], str]:
         del frame
 
 
-def _stamp_current_span(attrs: Mapping[str, Any], *, agent_call_site: str | None = None) -> None:
-    otel_trace = sys.modules.get("opentelemetry.trace")
+def _stamp_current_span(attrs: _Mapping[str, _Any], *, agent_call_site: str | None = None) -> None:
+    otel_trace = _sys.modules.get("opentelemetry.trace")
     if otel_trace is None:
         try:
             import opentelemetry.trace as otel_trace  # type: ignore[no-redef]
@@ -236,11 +274,11 @@ def _stamp_current_span(attrs: Mapping[str, Any], *, agent_call_site: str | None
 
 
 def _record_llm_duration(
-    meter_provider: Any | None,
+    meter_provider: _Any | None,
     duration_seconds: float,
-    attrs: Mapping[str, str],
+    attrs: _Mapping[str, str],
 ) -> None:
-    otel_metrics = sys.modules.get("opentelemetry.metrics")
+    otel_metrics = _sys.modules.get("opentelemetry.metrics")
     if otel_metrics is None:
         try:
             import opentelemetry.metrics as otel_metrics  # type: ignore[no-redef]
@@ -250,12 +288,12 @@ def _record_llm_duration(
     with _HIST_LOCK:
         hist = _DURATION_HISTOGRAMS.get(provider)
         if hist is None:
-            hist = get_meter("infra2_sdk.llm", meter_provider=provider).create_histogram(
+            hist = _get_meter("infra2_sdk.llm", meter_provider=provider).create_histogram(
                 "gen_ai.client.operation.duration",
                 unit="s",
                 description="Duration of LLM client operations",
             )
-            with contextlib.suppress(TypeError):
+            with _contextlib.suppress(TypeError):
                 _DURATION_HISTOGRAMS[provider] = hist
     hist.record(duration_seconds, attributes=dict(attrs))
 
@@ -263,7 +301,7 @@ def _record_llm_duration(
 def _resolve_call_attrs(
     explicit_call_site: str | None,
     explicit_decoding_version: str | None,
-) -> tuple[dict[str, Any], str, str, dict[str, str | int], bool]:
+) -> tuple[dict[str, _Any], str, str, dict[str, str | int], bool]:
     ctx = dict(_LLM_CONTEXT.get() or {})
     if "code.file.path" in ctx and "_infra2_fallback_site" in ctx:
         code_attrs: dict[str, str | int] = {
@@ -279,7 +317,7 @@ def _resolve_call_attrs(
     if missing_site:
         resolved_site = fallback_site
     dec_ver = explicit_decoding_version or ctx.get("infra.llm.decoding_version") or "default"
-    attrs: dict[str, Any] = {
+    attrs: dict[str, _Any] = {
         **code_attrs,
         "infra.llm.call_site": str(resolved_site),
         "infra.llm.decoding_version": str(dec_ver),
@@ -295,21 +333,28 @@ def _resolve_call_attrs(
     return attrs, str(resolved_site), str(dec_ver), code_attrs, should_warn
 
 
-def _is_upstream_llm_error(exc: Exception, pa_exc: Any) -> bool:
+def _is_upstream_llm_error(exc: Exception, pa_exc: _Any) -> bool:
     model_api_err = getattr(pa_exc, "ModelAPIError", None) if pa_exc is not None else None
     if model_api_err is not None and isinstance(exc, model_api_err):
         return True
     return type(exc).__module__.startswith(("httpx", "httpcore", "openai"))
 
 
-def is_retryable_llm_error(exc: BaseException) -> bool:
+def is_retryable_llm_error(
+    exc: BaseException,
+    *,
+    terminal_codes: _Collection[str] = _TERMINAL_PROVIDER_CODES,
+) -> bool:
     """Return True for transient HTTP statuses, network faults, or retryable provider codes."""
+    code = _extract_provider_code(exc)
+    if code is not None and code in terminal_codes:
+        return False
+    if code in {"1302", "1305"}:
+        return True
     raw_status = getattr(exc, "status_code", None)
     if type(raw_status) is int and raw_status in {429, 502, 503, 504}:
         return True
-    if _extract_provider_code(exc) in {"1302", "1305"}:
-        return True
-    pa_exc = sys.modules.get("pydantic_ai.exceptions")
+    pa_exc = _sys.modules.get("pydantic_ai.exceptions")
     for name in ("ModelRequestTimeout", "ModelConnectionError"):
         cls = getattr(pa_exc, name, None) if pa_exc is not None else None
         if cls is not None and isinstance(exc, cls):
@@ -322,7 +367,7 @@ def is_retryable_llm_error(exc: BaseException) -> bool:
     )
 
 
-def _is_passthrough_exception(exc: Exception, pa_exc: Any) -> bool:
+def _is_passthrough_exception(exc: Exception, pa_exc: _Any) -> bool:
     if type(exc).__module__.startswith("vcr."):
         return True
     if isinstance(exc, RuntimeError) and "model requests are not allowed" in str(exc).lower():
@@ -335,10 +380,10 @@ def _is_passthrough_exception(exc: Exception, pa_exc: Any) -> bool:
 
 
 def _no_stream_usage_model(
-    base_cls: type[Any], omit_sentinel: Any, *args: Any, **kwargs: Any
-) -> Any:
+    base_cls: type[_Any], omit_sentinel: _Any, *args: _Any, **kwargs: _Any
+) -> _Any:
     class _NoUsageModel(base_cls):  # type: ignore[misc]
-        def _get_stream_options(self, _ms: Any) -> Any:
+        def _get_stream_options(self, _ms: _Any) -> _Any:
             return omit_sentinel
 
     return _NoUsageModel(*args, **kwargs)
@@ -350,28 +395,28 @@ def _build_provider_model(
     base_url: str,
     api_key: str | None,
     model_name: str,
-    model_settings: Mapping[str, Any] | None,
+    model_settings: _Mapping[str, _Any] | None,
     include_stream_usage: bool,
-) -> Any:
+) -> _Any:
     if not api_key or not api_key.strip():
         raise ValueError(f"LlmSettings.api_key is required for provider {provider_name!r}")
     prov = provider_name.strip().lower()
     raw_ms = dict(model_settings) if model_settings else None
-    openai_mod = require_optional("openai", extra="llm")
+    openai_mod = _require_optional("openai", extra="llm")
 
     if prov == "zai":
-        zai_mod = require_optional("pydantic_ai.models.zai", extra="llm")
-        zai_prov = require_optional("pydantic_ai.providers.zai", extra="llm")
+        zai_mod = _require_optional("pydantic_ai.models.zai", extra="llm")
+        zai_prov = _require_optional("pydantic_ai.providers.zai", extra="llm")
         if raw_ms and "max_tokens" in raw_ms:
             eb = dict(raw_ms.get("extra_body") or {})
             eb.setdefault("max_tokens", raw_ms["max_tokens"])
             raw_ms["extra_body"] = eb
         client = openai_mod.AsyncOpenAI(api_key=api_key, base_url=base_url, max_retries=0)
-        provider: Any = zai_prov.ZaiProvider(openai_client=client)
-        model_cls: Any = zai_mod.ZaiModel
+        provider: _Any = zai_prov.ZaiProvider(openai_client=client)
+        model_cls: _Any = zai_mod.ZaiModel
     elif prov in {"openai", "openai-compatible"}:
-        oai_mod = require_optional("pydantic_ai.models.openai", extra="llm")
-        oai_prov = require_optional("pydantic_ai.providers.openai", extra="llm")
+        oai_mod = _require_optional("pydantic_ai.models.openai", extra="llm")
+        oai_prov = _require_optional("pydantic_ai.providers.openai", extra="llm")
         eff_base = (
             base_url if (prov == "openai-compatible" or base_url != _DEFAULT_ZAI_BASE_URL) else None
         )
@@ -379,8 +424,8 @@ def _build_provider_model(
         provider = oai_prov.OpenAIProvider(openai_client=client)
         model_cls = oai_mod.OpenAIChatModel
     elif prov == "openrouter":
-        or_mod = require_optional("pydantic_ai.models.openrouter", extra="llm")
-        or_prov = require_optional("pydantic_ai.providers.openrouter", extra="llm")
+        or_mod = _require_optional("pydantic_ai.models.openrouter", extra="llm")
+        or_prov = _require_optional("pydantic_ai.providers.openrouter", extra="llm")
         eff_base = base_url if base_url != _DEFAULT_ZAI_BASE_URL else _DEFAULT_OPENROUTER_BASE_URL
         client = openai_mod.AsyncOpenAI(api_key=api_key, base_url=eff_base, max_retries=0)
         provider = or_prov.OpenRouterProvider(openai_client=client)
@@ -397,10 +442,10 @@ def _build_provider_model(
 
 def _resolve_instrumentation_settings(
     *,
-    tracer_provider: Any | None,
-    meter_provider: Any | None,
-) -> Any:
-    inst_mod = require_optional("pydantic_ai.models.instrumented", extra="llm")
+    tracer_provider: _Any | None,
+    meter_provider: _Any | None,
+) -> _Any:
+    inst_mod = _require_optional("pydantic_ai.models.instrumented", extra="llm")
     return inst_mod.InstrumentationSettings(
         tracer_provider=tracer_provider,
         meter_provider=meter_provider,
@@ -411,17 +456,17 @@ def _resolve_instrumentation_settings(
     )
 
 
-class LlmSettings(ContractModel):
+class LlmSettings(_ContractModel):
     """Typed LLM provider, role model names, and transport configuration."""
 
     provider: str = "zai"
     base_url: str = _DEFAULT_ZAI_BASE_URL
-    api_key: str | None = Field(default=None, repr=False)
+    api_key: str | None = _Field(default=None, repr=False)
     large_model: str = "glm-5.3-flash"
     small_model: str = "glm-5.3-flash"
     multimodal_model: str = "glm-5.3-flash"
 
-    @model_validator(mode="after")
+    @_model_validator(mode="after")
     def _validate_settings(self) -> LlmSettings:
         for role in _ROLES:
             rf = f"{role}_model"
@@ -429,20 +474,20 @@ class LlmSettings(ContractModel):
                 raise ValueError(f"{rf} must be non-empty")
         if not self.provider.strip():
             raise ValueError("provider must be non-empty")
-        validate_http_url(self.base_url, label="base_url")
+        _validate_http_url(self.base_url, label="base_url")
         return self
 
-    def role_model(self, role: _ModelRole) -> str:
+    def role_model(self, role: _Literal["large", "small", "multimodal"]) -> str:
         """Return configured model identifier for the given role."""
         if role not in _ROLES:
             raise ValueError(f"unknown model role: {role!r}")
         return str(getattr(self, f"{role}_model"))
 
     @classmethod
-    def from_env(cls, environ: Mapping[str, str] | None = None, **overrides: Any) -> LlmSettings:
+    def from_env(cls, environ: _Mapping[str, str] | None = None, **overrides: _Any) -> LlmSettings:
         """Build LlmSettings strictly from canonical shared_env.yaml LLM variables."""
-        env = os.environ if environ is None else environ
-        values: dict[str, Any] = {}
+        env = _os.environ if environ is None else environ
+        values: dict[str, _Any] = {}
         for attr, key, sensitive in _LLM_ENV_FIELDS:
             if attr in overrides and overrides[attr] is not None:
                 continue
@@ -453,25 +498,25 @@ class LlmSettings(ContractModel):
         return cls(**values)
 
 
-class DecodingSpec(ContractModel):
+class DecodingSpec(_ContractModel):
     """Versioned decoding parameters mapped onto PydanticAI ModelSettings."""
 
     decoding_version: str = "v1"
-    thinking: _ThinkingLevel | None = None
-    temperature: float | None = Field(default=None, ge=0.0)
-    top_p: float | None = Field(default=None, ge=0.0, le=1.0)
+    thinking: bool | _Literal["minimal", "low", "medium", "high", "xhigh"] | None = None
+    temperature: float | None = _Field(default=None, ge=0.0)
+    top_p: float | None = _Field(default=None, ge=0.0, le=1.0)
     seed: int | None = None
-    max_tokens: int | None = Field(default=None, ge=1)
-    timeout: float | None = Field(default=None, gt=0.0)
+    max_tokens: int | None = _Field(default=None, ge=1)
+    timeout: float | None = _Field(default=None, gt=0.0)
 
-    @field_validator("seed", "max_tokens", "temperature", "top_p", "timeout", mode="before")
+    @_field_validator("seed", "max_tokens", "temperature", "top_p", "timeout", mode="before")
     @classmethod
-    def _reject_bool_numbers(cls, value: Any) -> Any:
+    def _reject_bool_numbers(cls, value: _Any) -> _Any:
         if isinstance(value, bool):
             raise ValueError("boolean values are not valid numeric decoding settings")
         return value
 
-    @model_validator(mode="after")
+    @_model_validator(mode="after")
     def _validate_decoding(self) -> DecodingSpec:
         if not self.decoding_version.strip():
             raise ValueError("decoding_version must be non-empty")
@@ -481,48 +526,21 @@ class DecodingSpec(ContractModel):
             raise ValueError("seed and max_tokens must be integers")
         for label in ("temperature", "top_p", "timeout"):
             val = getattr(self, label)
-            if val is not None and not math.isfinite(float(val)):
+            if val is not None and not _math.isfinite(float(val)):
                 raise ValueError(f"{label} must be finite")
         return self
 
-    def to_model_settings(self) -> dict[str, Any]:
+    def to_model_settings(self) -> dict[str, _Any]:
         """Convert non-None fields into a PydanticAI ModelSettings dictionary."""
         keys = ("thinking", "temperature", "top_p", "seed", "max_tokens", "timeout")
         return {k: v for k in keys if (v := getattr(self, k)) is not None}
 
 
-def prompt_sha256(prompt: Any) -> str:
-    """Return canonical lowercase SHA-256 hex digest of a prompt or message sequence."""
-    return canonical_sha256(_normalize_hash_input(prompt))
-
-
-def schema_sha256(schema: Any) -> str:
+def schema_sha256(schema: _Any) -> str:
     """Return canonical lowercase SHA-256 hex digest of an output schema or Pydantic model."""
     if schema is None:
         raise ValueError("schema is required")
-    return canonical_sha256(_normalize_hash_input(schema))
-
-
-def request_sha256(
-    *,
-    model: str,
-    prompt: Any,
-    schema: Any = None,
-    decoding: DecodingSpec | Mapping[str, Any] | None = None,
-    extra: Mapping[str, Any] | None = None,
-) -> str:
-    """Return canonical lowercase SHA-256 hex digest for model, prompt, schema, and decoding."""
-    if not isinstance(model, str) or not model.strip():
-        raise ValueError("model must be non-empty")
-    return canonical_sha256(
-        {
-            "model": model.strip(),
-            "prompt": _normalize_hash_input(prompt),
-            "schema": _normalize_hash_input(schema),
-            "decoding": _normalize_hash_input(decoding),
-            "extra": _normalize_hash_input(extra or {}),
-        }
-    )
+    return _canonical_sha256(_normalize_hash_input(schema))
 
 
 def redact_llm_error(exc: BaseException) -> Exception:
@@ -535,7 +553,7 @@ def redact_llm_error(exc: BaseException) -> Exception:
         f"{cls_label} (http={status_code if status_code is not None else 'none'}, "
         f"provider_code={provider_code or 'none'})"
     )
-    pa_exc = sys.modules.get("pydantic_ai.exceptions")
+    pa_exc = _sys.modules.get("pydantic_ai.exceptions")
     model_api_err = getattr(pa_exc, "ModelAPIError", None) if pa_exc is not None else None
     if model_api_err is not None and isinstance(exc, model_api_err):
         safe_type = _safe_token(getattr(exc, "provider_error_type", None))
@@ -543,7 +561,7 @@ def redact_llm_error(exc: BaseException) -> Exception:
         in_stream = bool(getattr(exc, "in_stream", False))
         if isinstance(exc, pa_exc.ModelHTTPError):
             raw_hdrs = getattr(exc, "headers", None)
-            safe_hdrs = sanitize_headers(raw_hdrs) if isinstance(raw_hdrs, Mapping) else None
+            safe_hdrs = _sanitize_headers(raw_hdrs) if isinstance(raw_hdrs, _Mapping) else None
             return type(exc)(
                 status_code=exc.status_code,
                 model_name=exc.model_name,
@@ -579,7 +597,7 @@ def redact_llm_error(exc: BaseException) -> Exception:
     return RuntimeError(summary)
 
 
-@contextmanager
+@_contextmanager
 def llm_call_context(
     *,
     call_site: str | None = None,
@@ -587,9 +605,9 @@ def llm_call_context(
     domain_run_id: str | None = None,
     prompt_sha256: str | None = None,
     artifact_dependency_digest: str | None = None,
-) -> Iterator[dict[str, Any]]:
+) -> _Iterator[dict[str, _Any]]:
     """Bind dotted LLM call attributes across OTel spans, metrics, JSON logs, and OTLP logs."""
-    updates: dict[str, Any] = {}
+    updates: dict[str, _Any] = {}
     if call_site is not None:
         updates["infra.llm.call_site"] = _validate_call_site(call_site)
     for attr_key, attr_val in (
@@ -611,7 +629,7 @@ def llm_call_context(
     log_fields = {**code_attrs, **public}
     tok = _LLM_CONTEXT.set(merged)
     try:
-        with bind_log_context(**log_fields):
+        with _bind_log_context(**log_fields):
             yield public
     finally:
         _reset_llm_context(tok, prev)
@@ -622,12 +640,12 @@ class _GuardedLlmModel:
 
     def __new__(
         cls,
-        wrapped: Any,
+        wrapped: _Any,
         *,
         call_site: str | None = None,
         decoding_version: str | None = None,
-        meter_provider: Any | None = None,
-    ) -> Any:
+        meter_provider: _Any | None = None,
+    ) -> _Any:
         impl = _guarded_model_class()
         return impl(
             wrapped,
@@ -637,21 +655,21 @@ class _GuardedLlmModel:
         )
 
 
-def _guarded_model_class() -> type[Any]:
+def _guarded_model_class() -> type[_Any]:
     global _GUARDED_MODEL_CLS
     if _GUARDED_MODEL_CLS is not None:
         return _GUARDED_MODEL_CLS
-    wrapper_mod = require_optional("pydantic_ai.models.wrapper", extra="llm")
-    pa_exc = require_optional("pydantic_ai.exceptions", extra="llm")
+    wrapper_mod = _require_optional("pydantic_ai.models.wrapper", extra="llm")
+    pa_exc = _require_optional("pydantic_ai.exceptions", extra="llm")
 
     class _Impl(wrapper_mod.WrapperModel):  # type: ignore[misc]
         def __init__(
             self,
-            wrapped: Any,
+            wrapped: _Any,
             *,
             call_site: str | None = None,
             decoding_version: str | None = None,
-            meter_provider: Any | None = None,
+            meter_provider: _Any | None = None,
         ) -> None:
             if call_site is not None:
                 _validate_call_site(call_site)
@@ -679,23 +697,23 @@ def _guarded_model_class() -> type[Any]:
                 metric_attrs["error.type"] = error_type
             _record_llm_duration(
                 self._meter_provider,
-                max(time.perf_counter() - started, 0.0),
+                max(_time.perf_counter() - started, 0.0),
                 metric_attrs,
             )
 
-        @asynccontextmanager
+        @_asynccontextmanager
         async def _guarded_span(
             self,
             model_box: list[str],
             caller_active: list[bool] | None = None,
-        ) -> AsyncIterator[None]:
+        ) -> _AsyncIterator[None]:
             attrs, site, dec_ver, code_attrs, should_warn = _resolve_call_attrs(
                 self._call_site, self._decoding_version
             )
             _stamp_current_span(attrs)
-            started = time.perf_counter()
+            started = _time.perf_counter()
             error_type: str | None = None
-            with bind_log_context(**attrs):
+            with _bind_log_context(**attrs):
                 if should_warn:
                     _LOGGER.warning(
                         "LLM call missing explicit call_site at %s:%s; falling back to %s",
@@ -724,24 +742,24 @@ def _guarded_model_class() -> type[Any]:
 
         async def request(
             self,
-            messages: list[Any],
-            model_settings: Any | None,
-            model_request_parameters: Any,
-        ) -> Any:
+            messages: list[_Any],
+            model_settings: _Any | None,
+            model_request_parameters: _Any,
+        ) -> _Any:
             model_box = [str(self.wrapped.model_name)]
             async with self._guarded_span(model_box):
                 response = await super().request(messages, model_settings, model_request_parameters)
                 model_box[0] = str(getattr(response, "model_name", None) or model_box[0])
                 return response
 
-        @asynccontextmanager
+        @_asynccontextmanager
         async def request_stream(
             self,
-            messages: list[Any],
-            model_settings: Any | None,
-            model_request_parameters: Any,
-            run_context: Any | None = None,
-        ) -> AsyncIterator[Any]:
+            messages: list[_Any],
+            model_settings: _Any | None,
+            model_request_parameters: _Any,
+            run_context: _Any | None = None,
+        ) -> _AsyncIterator[_Any]:
             model_box = [str(self.wrapped.model_name)]
             caller_active = [False]
             async with (
@@ -765,15 +783,15 @@ def _guarded_model_class() -> type[Any]:
 
 def _build_guarded_model(
     cfg: LlmSettings,
-    spec: Any,
+    spec: _Any,
     *,
-    role: _ModelRole,
-    merged_settings: Mapping[str, Any] | None,
+    role: _Literal["large", "small", "multimodal"],
+    merged_settings: _Mapping[str, _Any] | None,
     call_site: str | None,
     decoding_version: str | None,
     include_stream_usage: bool,
-    meter_provider: Any | None,
-) -> Any:
+    meter_provider: _Any | None,
+) -> _Any:
     chosen = cfg.role_model(role) if spec is None else spec
     base = (
         _build_provider_model(
@@ -798,33 +816,33 @@ def _build_guarded_model(
 def create_llm_agent(
     settings: LlmSettings | None = None,
     *,
-    role: _ModelRole = "small",
-    model: Any | None = None,
+    role: _Literal["large", "small", "multimodal"] = "small",
+    model: _Any | None = None,
     call_site: str | None = None,
     decoding: DecodingSpec | None = None,
-    output_type: Any = str,
-    instructions: Any = None,
-    system_prompt: str | Sequence[str] = (),
-    deps_type: Any = object,
-    tools: Sequence[Any] = (),
-    toolsets: Sequence[Any] | None = None,
-    fallback_models: Sequence[Any] = (),
-    usage_limits: Any | None = None,
+    output_type: _Any = str,
+    instructions: _Any = None,
+    system_prompt: str | _Sequence[str] = (),
+    deps_type: _Any = object,
+    tools: _Sequence[_Any] = (),
+    toolsets: _Sequence[_Any] | None = None,
+    fallback_models: _Sequence[_Any] = (),
+    usage_limits: _Any | None = None,
     max_attempts: int = 3,
     initial_delay: float = 1.0,
     max_delay: float = 30.0,
-    retry_on: Any | None = None,
+    retry_on: _Any | None = None,
     include_stream_usage: bool = True,
-    tracer_provider: Any | None = None,
-    meter_provider: Any | None = None,
-    model_settings: Mapping[str, Any] | None = None,
-    capabilities: Sequence[Any] = (),
-    end_strategy: Any = "graceful",
+    tracer_provider: _Any | None = None,
+    meter_provider: _Any | None = None,
+    model_settings: _Mapping[str, _Any] | None = None,
+    capabilities: _Sequence[_Any] = (),
+    end_strategy: _Any = "graceful",
     retries: int = 1,
-    metadata: Mapping[str, Any] | None = None,
-) -> Any:
+    metadata: _Mapping[str, _Any] | None = None,
+) -> _Any:
     """Build the Agent entrypoint with OTel instrumentation, usage limits, and retries."""
-    pydantic_ai = require_optional("pydantic_ai", extra="llm")
+    pydantic_ai = _require_optional("pydantic_ai", extra="llm")
     pydantic_ai.BANNER_ENABLED = False
     if call_site is not None:
         _validate_call_site(call_site)
@@ -861,35 +879,34 @@ def create_llm_agent(
         tracer_provider=tracer_provider, meter_provider=meter_provider
     )
 
-    cap_mod = require_optional("pydantic_ai.capabilities", extra="llm")
+    cap_mod = _require_optional("pydantic_ai.capabilities", extra="llm")
 
     class _RunContextCapability(cap_mod.AbstractCapability):  # type: ignore[misc]
-        async def wrap_run(self, _ctx: Any, *, handler: Any) -> Any:
+        async def wrap_run(self, _ctx: _Any, *, handler: _Any) -> _Any:
             attrs, resolved_site, _dec, _code, _warn = _resolve_call_attrs(call_site, eff_dec)
             _stamp_current_span(attrs, agent_call_site=resolved_site)
             return await handler()
 
-    caps: list[Any] = [cap_mod.Instrumentation(isettings), _RunContextCapability()]
-    retry_kwargs: dict[str, Any] = {
+    caps: list[_Any] = [cap_mod.Instrumentation(isettings), _RunContextCapability()]
+    retry_kwargs: dict[str, _Any] = {
         "max_attempts": max_attempts,
         "initial_delay": initial_delay,
         "max_delay": max_delay,
+        "retry_on": retry_on if retry_on is not None else is_retryable_llm_error,
     }
-    if retry_on is not None:
-        retry_kwargs["retry_on"] = retry_on
     caps.append(cap_mod.RetryOnModelErrors(**retry_kwargs))
 
     if guarded_fbs:
         caps.append(cap_mod.ModelFallback(*guarded_fbs))
     caps.extend(capabilities)
 
-    @dataclasses.dataclass(init=False)
+    @_dataclasses.dataclass(init=False)
     class _LlmAgent(pydantic_ai.Agent):  # type: ignore[misc]
-        _default_usage_limits: Any = dataclasses.field(default=None, init=False, repr=False)
-        _call_site: str | None = dataclasses.field(default=None, init=False, repr=False)
-        _decoding_version: str | None = dataclasses.field(default=None, init=False, repr=False)
+        _default_usage_limits: _Any = _dataclasses.field(default=None, init=False, repr=False)
+        _call_site: str | None = _dataclasses.field(default=None, init=False, repr=False)
+        _decoding_version: str | None = _dataclasses.field(default=None, init=False, repr=False)
 
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
+        def __init__(self, *args: _Any, **kwargs: _Any) -> None:
             default_limits = kwargs.pop("_default_usage_limits", None)
             site = kwargs.pop("_call_site", None)
             dec_v = kwargs.pop("_decoding_version", None)
@@ -898,10 +915,10 @@ def create_llm_agent(
             self._call_site = site
             self._decoding_version = dec_v
 
-        @contextmanager
+        @_contextmanager
         def _bind_invocation(
             self, *, caller: tuple[dict[str, str | int], str] | None = None
-        ) -> Iterator[None]:
+        ) -> _Iterator[None]:
             prev = dict(_LLM_CONTEXT.get() or {})
             if caller is None:
                 pending = _PENDING_SYNC_CALLER.get()
@@ -940,7 +957,7 @@ def create_llm_agent(
                     if k in bound_ctx
                 },
             }
-            with bind_log_context(**log_attrs):
+            with _bind_log_context(**log_attrs):
                 if resolved_site is None:
                     _LOGGER.warning(
                         "LLM call missing explicit call_site at %s:%s; falling back to %s",
@@ -954,29 +971,29 @@ def create_llm_agent(
                 finally:
                     _reset_llm_context(tok, prev)
 
-        def run_sync(self, *args: Any, usage_limits: Any | None = None, **kwargs: Any) -> Any:
+        def run_sync(self, *args: _Any, usage_limits: _Any | None = None, **kwargs: _Any) -> _Any:
             eff_limits = self._default_usage_limits if usage_limits is None else usage_limits
             with self._bind_invocation():
                 return super().run_sync(*args, usage_limits=eff_limits, **kwargs)
 
-        async def run(self, *args: Any, usage_limits: Any | None = None, **kwargs: Any) -> Any:
+        async def run(self, *args: _Any, usage_limits: _Any | None = None, **kwargs: _Any) -> _Any:
             eff_limits = self._default_usage_limits if usage_limits is None else usage_limits
             with self._bind_invocation():
                 return await super().run(*args, usage_limits=eff_limits, **kwargs)
 
-        @asynccontextmanager
+        @_asynccontextmanager
         async def iter(
-            self, *args: Any, usage_limits: Any | None = None, **kwargs: Any
-        ) -> AsyncIterator[Any]:
+            self, *args: _Any, usage_limits: _Any | None = None, **kwargs: _Any
+        ) -> _AsyncIterator[_Any]:
             eff_limits = self._default_usage_limits if usage_limits is None else usage_limits
             with self._bind_invocation():
                 async with super().iter(*args, usage_limits=eff_limits, **kwargs) as agent_run:
                     yield agent_run
 
-        @asynccontextmanager
+        @_asynccontextmanager
         async def run_stream(
-            self, *args: Any, usage_limits: Any | None = None, **kwargs: Any
-        ) -> AsyncIterator[Any]:
+            self, *args: _Any, usage_limits: _Any | None = None, **kwargs: _Any
+        ) -> _AsyncIterator[_Any]:
             eff_limits = self._default_usage_limits if usage_limits is None else usage_limits
             with self._bind_invocation():
                 async with super().run_stream(
@@ -985,8 +1002,8 @@ def create_llm_agent(
                     yield stream_res
 
         def run_stream_sync(
-            self, *args: Any, usage_limits: Any | None = None, **kwargs: Any
-        ) -> Any:
+            self, *args: _Any, usage_limits: _Any | None = None, **kwargs: _Any
+        ) -> _Any:
             eff_limits = self._default_usage_limits if usage_limits is None else usage_limits
             caller = _caller_frame_info()
             tok = _PENDING_SYNC_CALLER.set((id(self), caller))
@@ -999,14 +1016,14 @@ def create_llm_agent(
                     _PENDING_SYNC_CALLER.set(None)
 
         def run_stream_events(
-            self, *args: Any, usage_limits: Any | None = None, **kwargs: Any
-        ) -> Any:
+            self, *args: _Any, usage_limits: _Any | None = None, **kwargs: _Any
+        ) -> _Any:
             eff_limits = self._default_usage_limits if usage_limits is None else usage_limits
             caller = _caller_frame_info()
             inner_cm = super().run_stream_events(*args, usage_limits=eff_limits, **kwargs)
 
-            @asynccontextmanager
-            async def _bound_events() -> AsyncIterator[Any]:
+            @_asynccontextmanager
+            async def _bound_events() -> _AsyncIterator[_Any]:
                 with self._bind_invocation(caller=caller):
                     async with inner_cm as events:
                         yield events
@@ -1034,23 +1051,23 @@ def create_llm_agent(
 
 
 async def stream_text(
-    agent: Any,
-    user_prompt: Any,
+    agent: _Any,
+    user_prompt: _Any,
     *,
     call_site: str | None = None,
     decoding_version: str | None = None,
     domain_run_id: str | None = None,
     prompt_sha256: str | None = None,
     artifact_dependency_digest: str | None = None,
-    usage_limits: Any | None = None,
+    usage_limits: _Any | None = None,
     usage_out: dict[str, int] | None = None,
-    **run_kwargs: Any,
-) -> AsyncIterator[str]:
+    **run_kwargs: _Any,
+) -> _AsyncIterator[str]:
     """Stream text deltas from an agent via a bounded single-producer queue with safe cancel."""
     import asyncio
 
-    queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue(maxsize=1)
-    pa_exc = sys.modules.get("pydantic_ai.exceptions")
+    queue: asyncio.Queue[tuple[str, _Any]] = asyncio.Queue(maxsize=1)
+    pa_exc = _sys.modules.get("pydantic_ai.exceptions")
 
     async def _produce() -> None:
         try:
@@ -1065,7 +1082,7 @@ async def stream_text(
                 )
                 if v is not None
             }
-            ctx_cm = llm_call_context(**ctx_kw) if ctx_kw else contextlib.nullcontext()
+            ctx_cm = llm_call_context(**ctx_kw) if ctx_kw else _contextlib.nullcontext()
             stream_kw = dict(run_kwargs)
             if usage_limits is not None:
                 stream_kw["usage_limits"] = usage_limits
@@ -1100,7 +1117,7 @@ async def stream_text(
     finally:
         if not producer.done():
             producer.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
+        with _contextlib.suppress(asyncio.CancelledError):
             await producer
 
 
@@ -1114,9 +1131,7 @@ __all__ = (
     "create_llm_agent",
     "is_retryable_llm_error",
     "llm_call_context",
-    "prompt_sha256",
     "redact_llm_error",
-    "request_sha256",
     "schema_sha256",
     "stream_text",
 )

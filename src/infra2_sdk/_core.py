@@ -342,10 +342,30 @@ def platform_owned_tiers() -> frozenset[Any]:
     return frozenset({EnvironmentTier.PREVIEW, EnvironmentTier.STAGING, EnvironmentTier.PRODUCTION})
 
 
+def read_runtime_env(
+    key: Any,
+    environ: Mapping[str, str] | None = None,
+    *,
+    default: str = "",
+    required: bool = False,
+) -> str:
+    """Read one canonical runtime variable from ``environ``."""
+    from infra2_sdk.config import RuntimeEnvKey
+
+    canonical = RuntimeEnvKey(key)
+    values = os.environ if environ is None else environ
+    raw = values.get(canonical.value)
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    if required:
+        raise ValueError(f"{canonical.value} is required")
+    return default
+
+
 def resolve_environment(
     environ: Mapping[str, str] | None = None, *, required: bool = False
 ) -> RuntimeEnvironment:
-    from infra2_sdk.config import EnvironmentTier, RuntimeEnvKey, read_runtime_env, resolve_tier
+    from infra2_sdk.config import EnvironmentTier, RuntimeEnvKey, resolve_tier
 
     values = os.environ if environ is None else environ
     raw = read_runtime_env(
@@ -670,7 +690,7 @@ class OtelSettings(ContractModel):
         require_issued_identity: bool = False,
         suppress_probe_telemetry: bool = False,
     ) -> OtelSettings:
-        from infra2_sdk.config import EnvironmentTier, RuntimeEnvKey, read_runtime_env, resolve_tier
+        from infra2_sdk.config import EnvironmentTier, RuntimeEnvKey, resolve_tier
 
         values = os.environ if environ is None else environ
         if require_issued_identity:
@@ -1002,12 +1022,11 @@ def bootstrap_telemetry(
     require_issued_identity: bool = False,
     suppress_probes: bool = False,
     log_level: int | None = logging.INFO,
-    set_global: bool = True,
     logger: logging.Logger | None = None,
     strict_hint: str = "",
 ) -> tuple[OtelSettings | None, OtelSettings | None, str, dict[str, str]]:
     """Parse OtelSettings, configure logging, and return settings/release metadata."""
-    from infra2_sdk.config import EnvironmentTier, RuntimeEnvKey, read_runtime_env
+    from infra2_sdk.config import EnvironmentTier, RuntimeEnvKey
 
     values = os.environ if environ is None else environ
     parsed_settings: OtelSettings | None = None

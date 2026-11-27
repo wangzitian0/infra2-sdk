@@ -22,7 +22,6 @@ EXPECTED_EXPORTS: dict[str, tuple[str, ...]] = {
         "EnvironmentTier",
         "RuntimeEnvKey",
         "assert_env",
-        "read_runtime_env",
         "resolve_tier",
     ),
     "telemetry": (
@@ -75,9 +74,7 @@ EXPECTED_EXPORTS: dict[str, tuple[str, ...]] = {
         "create_llm_agent",
         "is_retryable_llm_error",
         "llm_call_context",
-        "prompt_sha256",
         "redact_llm_error",
-        "request_sha256",
         "schema_sha256",
         "stream_text",
     ),
@@ -94,9 +91,12 @@ EXPECTED_EXPORTS: dict[str, tuple[str, ...]] = {
 def test_package_metadata_and_module_surface() -> None:
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     project = pyproject["project"]
-    assert project["version"] == "4.13.2"
+    assert project["version"] == "4.14.0"
     assert infra2_sdk.__all__ == EXPECTED_MODULES
     assert [n for n in dir(infra2_sdk) if not n.startswith("_")] == sorted(infra2_sdk.__all__)
+    assert sorted(
+        k for k in vars(infra2_sdk) if not k.startswith("_") and k != "annotations"
+    ) == sorted(infra2_sdk.__all__)
 
     core_deps = {
         dep.split(">")[0].split("<")[0].split("=")[0].strip() for dep in project["dependencies"]
@@ -106,6 +106,7 @@ def test_package_metadata_and_module_surface() -> None:
     opt_deps = project["optional-dependencies"]
     assert "dev" not in opt_deps
     assert "dev" in pyproject.get("dependency-groups", {})
+    assert any(d.startswith("uvicorn") for d in opt_deps["fastapi"])
     assert set(opt_deps["telemetry"]) <= set(opt_deps["fastapi"])
     assert set(opt_deps["http"]) <= set(opt_deps["fastapi"])
     assert set(opt_deps["telemetry"]) <= set(opt_deps["llm"])
@@ -133,10 +134,16 @@ def test_package_metadata_and_module_surface() -> None:
         assert [n for n in dir(mod) if not n.startswith("_")] == sorted(exports), (
             f"dir(infra2_sdk.{mod_name}) leaks non-exported names"
         )
+        leaked = sorted(
+            k
+            for k in vars(mod)
+            if not k.startswith("_") and k != "annotations" and k not in exports
+        )
+        assert leaked == [], f"vars(infra2_sdk.{mod_name}) leaks non-exported names: {leaked}"
         for sym in exports:
             assert hasattr(mod, sym), f"{mod_name}.__all__ lists missing symbol {sym!r}"
         total += len(exports)
-    assert total == 60
+    assert total == 57
 
 
 def test_no_unexported_public_defs_cross_private_imports_or_eager_io() -> None:
@@ -183,7 +190,7 @@ def test_no_unexported_public_defs_cross_private_imports_or_eager_io() -> None:
         "im.version = lambda n: (ver_calls.append(n), orig_ver(n))[1]; "
         "import infra2_sdk; "
         "assert opened == [] and ver_calls == [], (opened, ver_calls); "
-        "assert infra2_sdk.__version__ == '4.13.2'; "
+        "assert infra2_sdk.__version__ == '4.14.0'; "
         "assert len(ver_calls) == 1"
     )
     proc_root = subprocess.run(
@@ -215,9 +222,9 @@ def test_no_unexported_public_defs_cross_private_imports_or_eager_io() -> None:
 
 def test_readme_version_and_module_surface_table_parity() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "v4.13.2" in readme and "4.13.2" in readme
-    assert "v4.13.2" in (ROOT / "docs" / "app-integration-contract.md").read_text(encoding="utf-8")
-    assert "4.12." not in readme and "4.11." not in readme and "4.10." not in readme
+    assert "v4.14.0" in readme and "4.14.0" in readme
+    assert "v4.14.0" in (ROOT / "docs" / "app-integration-contract.md").read_text(encoding="utf-8")
+    assert "4.13." not in readme and "4.12." not in readme and "4.11." not in readme
 
     table_rows = re.findall(r"^\|\s*`infra2_sdk\.([a-z]+)`\s*\|[^|]+\|\s*([^|]+)\|", readme, re.M)
     by_mod = {mod: cols for mod, cols in table_rows}
@@ -231,3 +238,48 @@ def test_readme_version_and_module_surface_table_parity() -> None:
         assert listed == set(expected), (
             f"README.md {mod_name}: got {sorted(listed)}, expected {sorted(expected)}"
         )
+
+
+def test_optional_extra_parity_and_public_openapi_schemas() -> None:
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    opt_deps = pyproject["project"]["optional-dependencies"]
+    declared_by_extra = {
+        extra: {re.split(r"[<>=!\[]", dep, maxsplit=1)[0].strip().replace("-", "_") for dep in deps}
+        for extra, deps in opt_deps.items()
+    }
+    pkg_alias = {
+        "pydantic_ai": "pydantic_ai_slim",
+        "openai": "pydantic_ai_slim",
+        "botocore": "boto3",
+    }
+    for py_path in SRC_DIR.glob("*.py"):
+        tree = ast.parse(py_path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id.lstrip("_") == "require_optional"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+            ):
+                target_pkg = node.args[0].value.split(".", 1)[0]
+                if target_pkg == "alembic":
+                    continue
+                extra_kw = next((kw for kw in node.keywords if kw.arg == "extra"), None)
+                assert extra_kw is not None and isinstance(extra_kw.value, ast.Constant)
+                extra_name = str(extra_kw.value.value)
+                dist_name = pkg_alias.get(target_pkg, target_pkg)
+                assert dist_name in declared_by_extra[extra_name], (
+                    f"{py_path.name}: {target_pkg} needs extra={extra_name!r}, missing in pyproject"
+                )
+
+    from fastapi import FastAPI
+
+    from infra2_sdk.service import init_service
+
+    app = FastAPI()
+    init_service(app, "guard-test", enable_otel=False, log_level=None)
+    schemas = sorted(app.openapi().get("components", {}).get("schemas", {}).keys())
+    assert schemas == ["CheckDetail", "HealthResponse", "ProbeResponse"]
+    assert not any(name.startswith("_") for name in schemas)
