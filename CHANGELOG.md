@@ -2,6 +2,12 @@
 
 Versions follow `README.md`. Release steps are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## 4.13.2 - 2026-11-27
+
+### Fixed
+
+- `config`: restore `EnvironmentField.aliases: tuple[str, ...] = ()` and duplicate/shared-name validators for `contract_version: 2` wire compatibility with existing serialized manifests.
+
 ## 4.13.1 - 2026-11-27
 
 ### Fixed & Cleaned

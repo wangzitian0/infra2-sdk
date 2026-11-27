@@ -1,4 +1,4 @@
-# infra2-sdk (`v4.13.1`)
+# infra2-sdk (`v4.13.2`)
 
 Standalone cross-repository runtime contracts and explicit open-protocol adapters for `infra2`, consumer applications, and `canary/todo`.
 
@@ -12,14 +12,14 @@ Standalone cross-repository runtime contracts and explicit open-protocol adapter
 
 | Install Spec | Packages Added | Capabilities Unlocked |
 |---|---|---|
-| `infra2-sdk==4.13.1` | `pydantic`, `pyyaml` | All 6 modules (contracts, `probe_redis`, hooks/schema/config CLIs) |
-| `infra2-sdk[telemetry]==4.13.1` | `opentelemetry-api/sdk/exporter-otlp-proto-http/instrumentation-logging` | `telemetry.init_worker`, `telemetry.worker_run`, `telemetry.get_tracer`, `telemetry.get_meter`, `TelemetryProviders` |
-| `infra2-sdk[http]==4.13.1` | `httpx` | `service.create_http_client`, `service.create_async_http_client`, `service.request_with_retry`, `service.async_request_with_retry`, `service.probe_http` |
-| `infra2-sdk[fastapi]==4.13.1` | `fastapi`, `telemetry` extra, `http` extra | `service.init_service`, `service.sse_stream_response`, `service.serve` (`/livez`, `/readyz`, `/health`, OTel lifespan, probe exclusion, `X-Request-ID`) |
-| `infra2-sdk[postgres]==4.13.1` | `psycopg[binary]` | `storage.probe_postgres`, `python -m infra2_sdk.storage check-schema` |
-| `infra2-sdk[s3]==4.13.1` | `boto3` | `storage.create_s3_client`, `storage.ensure_bucket`, `storage.probe_s3`, `storage.put_object_bytes`, `storage.read_object_bytes`, `storage.presign_get_url` |
-| `infra2-sdk[llm]==4.13.1` | `pydantic-ai-slim[zai]`, `http` extra, `telemetry` extra | `llm.create_llm_agent`, `llm.llm_call_context`, `llm.redact_llm_error`, `llm.DecodingSpec`, `llm.stream_text`, `llm.is_retryable_llm_error` |
-| `infra2-sdk[all]==4.13.1` | All optional extras | Full SDK runtime surface |
+| `infra2-sdk==4.13.2` | `pydantic`, `pyyaml` | All 6 modules (contracts, `probe_redis`, hooks/schema/config CLIs) |
+| `infra2-sdk[telemetry]==4.13.2` | `opentelemetry-api/sdk/exporter-otlp-proto-http/instrumentation-logging` | `telemetry.init_worker`, `telemetry.worker_run`, `telemetry.get_tracer`, `telemetry.get_meter`, `TelemetryProviders` |
+| `infra2-sdk[http]==4.13.2` | `httpx` | `service.create_http_client`, `service.create_async_http_client`, `service.request_with_retry`, `service.async_request_with_retry`, `service.probe_http` |
+| `infra2-sdk[fastapi]==4.13.2` | `fastapi`, `telemetry` extra, `http` extra | `service.init_service`, `service.sse_stream_response`, `service.serve` (`/livez`, `/readyz`, `/health`, OTel lifespan, probe exclusion, `X-Request-ID`) |
+| `infra2-sdk[postgres]==4.13.2` | `psycopg[binary]` | `storage.probe_postgres`, `python -m infra2_sdk.storage check-schema` |
+| `infra2-sdk[s3]==4.13.2` | `boto3` | `storage.create_s3_client`, `storage.ensure_bucket`, `storage.probe_s3`, `storage.put_object_bytes`, `storage.read_object_bytes`, `storage.presign_get_url` |
+| `infra2-sdk[llm]==4.13.2` | `pydantic-ai-slim[zai]`, `http` extra, `telemetry` extra | `llm.create_llm_agent`, `llm.llm_call_context`, `llm.redact_llm_error`, `llm.DecodingSpec`, `llm.stream_text`, `llm.is_retryable_llm_error` |
+| `infra2-sdk[all]==4.13.2` | All optional extras | Full SDK runtime surface |
 
 ## 3. Public Module Surface (MECE 6-Module Contract — 60 Exports)
 
